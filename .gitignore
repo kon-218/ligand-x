@@ -1,0 +1,86 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Virtual Environment
+venv/
+env/
+ENV/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Application data (job outputs, uploads)
+data/
+
+# External libraries
+node_modules/
+/molstar/
+opi/
+
+# Build artifacts
+*.log
+*.tmp
+*.npz
+*.pkl
+*.dcd
+*.tsbuildinfo
+
+# Test outputs
+test_*.json
+*_TEST/
+*_ORCA_TEST/
+
+# Conda
+environment.yml
+
+# Environment and secrets
+.env
+.env.local
+.env.production
+.windsurf
+
+# Claude config
+CLAUDE.md
+.claude/
+
+# Tests (add manually when ready)
+tests/
+
+# Pixi
+.pixi/
+
+# Temporary files
+*.bak
+*.backup
+vina
+
+# History rebuild scripts (meta)
+scripts/generate-history.sh
+scripts/generate-history-new.sh
+scripts/rebuild-history.sh

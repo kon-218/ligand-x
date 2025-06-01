@@ -1,0 +1,350 @@
+# ============================================================
+# Ligand-X Development Override
+# ============================================================
+# This file is automatically loaded by docker-compose in development.
+# It adds volume mounts for hot-reloading and removes resource constraints.
+#
+# Usage:
+#   Development: docker-compose up (auto-loads this file)
+#   Production:  docker-compose -f docker-compose.yml up -d (ignores this file)
+#
+# To disable temporarily:
+#   mv docker-compose.override.yml docker-compose.override.yml.bak
+# ============================================================
+
+services:
+  # ============================================================
+  # Gateway
+  # ============================================================
+  gateway:
+    volumes:
+      - ./gateway:/app/gateway
+      - ./lib:/app/lib
+    environment:
+      - LOG_LEVEL=DEBUG
+    # Remove resource limits for development (set very high values)
+    deploy:
+      resources:
+        limits:
+          cpus: '32'
+          memory: 32G
+        reservations: {}
+
+  # ============================================================
+  # Lightweight Services
+  # ============================================================
+  structure:
+    volumes:
+      - ./services/structure:/app/services/structure
+      - ./lib:/app/lib
+    environment:
+      - LOG_LEVEL=DEBUG
+    deploy:
+      resources:
+        limits:
+          cpus: '32'
+          memory: 32G
+        reservations: {}
+
+  alignment:
+    volumes:
+      - ./services/alignment:/app/services/alignment
+      - ./lib:/app/lib
+    environment:
+      - LOG_LEVEL=DEBUG
+    deploy:
+      resources:
+        limits:
+          cpus: '32'
+          memory: 32G
+        reservations: {}
+
+  ketcher:
+    volumes:
+      - ./services/ketcher:/app/services/ketcher
+      - ./lib:/app/lib
+    environment:
+      - LOG_LEVEL=DEBUG
+    deploy:
+      resources:
+        limits:
+          cpus: '32'
+          memory: 32G
+        reservations: {}
+
+  msa:
+    volumes:
+      - ./services/msa:/app/services/msa
+      - ./lib:/app/lib
+      - msa_cache:/app/data/msa_cache
+    environment:
+      - LOG_LEVEL=DEBUG
+    deploy:
+      resources:
+        limits:
+          cpus: '32'
+          memory: 32G
+        reservations: {}
+
+  # ============================================================
+  # Docking Service
+  # ============================================================
+  docking:
+    user: "${UID:-1000}:${GID:-1000}"
+    volumes:
+      - ./services/docking:/app/services/docking
+      - ./lib:/app/lib
+      - ./data/docking_outputs:/app/data/docking_outputs
+    environment:
+      - LOG_LEVEL=DEBUG
+    deploy:
+      resources:
+        limits:
+          cpus: '32'
+          memory: 32G
+        reservations: {}
+
+  # ============================================================
+  # GPU Services
+  # ============================================================
+  md:
+    user: "${UID:-1000}:${GID:-1000}"
+    volumes:
+      - ./services/md:/app/services/md
+      - ./lib:/app/lib
+      - ./data/md_outputs:/app/data/md_outputs
+    environment:
+      - LOG_LEVEL=DEBUG
+    deploy:
+      resources:
+        limits:
+          cpus: '32'
+          memory: 64G
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+
+  abfe:
+    user: "${UID:-1000}:${GID:-1000}"
+    volumes:
+      - ./services/abfe:/app/services/abfe
+      - ./lib:/app/lib
+      - ./data/abfe_outputs:/app/data/abfe_outputs
+    environment:
+      - LOG_LEVEL=DEBUG
+    deploy:
+      resources:
+        limits:
+          cpus: '32'
+          memory: 64G
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+
+  rbfe:
+    user: "${UID:-1000}:${GID:-1000}"
+    volumes:
+      - ./services/rbfe:/app/services/rbfe
+      - ./lib:/app/lib
+      - ./data/rbfe_outputs:/app/data/rbfe_outputs
+    environment:
+      - LOG_LEVEL=DEBUG
+    deploy:
+      resources:
+        limits:
+          cpus: '32'
+          memory: 64G
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+
+  # ============================================================
+  # ADMET Service
+  # ============================================================
+  admet:
+    volumes:
+      - ./services/admet:/app/services/admet
+      - ./lib:/app/lib
+    environment:
+      - LOG_LEVEL=DEBUG
+    deploy:
+      resources:
+        limits:
+          cpus: '32'
+          memory: 32G
+        reservations: {}
+
+  # ============================================================
+  # Boltz2 Service
+  # ============================================================
+  boltz2:
+    user: "${UID:-1000}:${GID:-1000}"
+    volumes:
+      - ./services/boltz2:/app/services/boltz2
+      - ./services/alignment:/app/services/alignment
+      - ./lib:/app/lib
+      - msa_cache:/app/data/msa_cache
+      - ./data/boltz_outputs:/app/data/boltz_results_input/outputs
+    environment:
+      - LOG_LEVEL=DEBUG
+    deploy:
+      resources:
+        limits:
+          cpus: '32'
+          memory: 64G
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+
+  # ============================================================
+  # QC Service
+  # ============================================================
+  qc:
+    user: "${UID:-1000}:${GID:-1000}"
+    volumes:
+      - ./services/qc:/app/services/qc
+      - ./lib:/app/lib
+      - ./data/qc_jobs:/app/data/qc_jobs
+      - ./data/qc_results_db:/app/data/qc_results_db
+      - ${ORCA_HOST_PATH:-/home/konstantin-nomerotski/orca_6_1_0}:/opt/orca
+    environment:
+      - LOG_LEVEL=DEBUG
+    deploy:
+      resources:
+        limits:
+          cpus: '32'
+          memory: 32G
+        reservations: {}
+
+  # ============================================================
+  # Celery Workers
+  # ============================================================
+  worker-qc:
+    user: "${UID:-1000}:${GID:-1000}"
+    volumes:
+      - ./services/qc:/app/services/qc
+      - ./lib:/app/lib
+      - ./data/qc_jobs:/app/data/qc_jobs
+      - ./data/qc_results_db:/app/data/qc_results_db
+      - ${ORCA_HOST_PATH:-/home/konstantin-nomerotski/orca_6_1_0}:/opt/orca
+    deploy:
+      resources:
+        limits:
+          cpus: '32'
+          memory: 64G
+        reservations: {}
+
+  worker-gpu-short:
+    user: "${UID:-1000}:${GID:-1000}"
+    volumes:
+      - ./services/md:/app/services/md
+      - ./lib:/app/lib
+      - ./data/md_outputs:/app/data/md_outputs
+    deploy:
+      resources:
+        limits:
+          cpus: '32'
+          memory: 64G
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+
+  worker-gpu-long:
+    user: "${UID:-1000}:${GID:-1000}"
+    volumes:
+      - ./services/abfe:/app/services/abfe
+      - ./services/rbfe:/app/services/rbfe
+      - ./lib:/app/lib
+      - ./data/abfe_outputs:/app/data/abfe_outputs
+      - ./data/rbfe_outputs:/app/data/rbfe_outputs
+    deploy:
+      resources:
+        limits:
+          cpus: '32'
+          memory: 64G
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+
+  worker-cpu:
+    user: "${UID:-1000}:${GID:-1000}"
+    volumes:
+      - ./services/docking:/app/services/docking
+      - ./lib:/app/lib
+      - ./data/docking_outputs:/app/data/docking_outputs
+    deploy:
+      resources:
+        limits:
+          cpus: '32'
+          memory: 64G
+        reservations: {}
+
+  # ============================================================
+  # Frontend - Development Mode
+  # ============================================================
+  frontend:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.frontend.dev  # Use dev Dockerfile
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules  # Prevent overwriting node_modules
+    environment:
+      - NODE_ENV=development
+      - WATCHPACK_POLLING=true
+    deploy:
+      resources:
+        limits:
+          cpus: '32'
+          memory: 32G
+        reservations: {}
+
+  # ============================================================
+  # Infrastructure - No port exposure (avoids conflicts)
+  # ============================================================
+  redis:
+    # Development: Disable Redis persistence to prevent task state from surviving restarts
+    # This ensures a clean slate on each restart
+    command: redis-server --save "" --appendonly no
+    deploy:
+      resources:
+        limits:
+          cpus: '8'
+          memory: 8G
+        reservations: {}
+
+  postgres:
+    deploy:
+      resources:
+        limits:
+          cpus: '8'
+          memory: 8G
+        reservations: {}
+
+  rabbitmq:
+    deploy:
+      resources:
+        limits:
+          cpus: '8'
+          memory: 8G
+        reservations: {}
+
+  flower:
+    deploy:
+      resources:
+        limits:
+          cpus: '8'
+          memory: 8G
+        reservations: {}

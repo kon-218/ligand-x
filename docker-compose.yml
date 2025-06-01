@@ -1,0 +1,926 @@
+# ============================================================
+# Ligand-X Docker Compose Configuration (Production-Ready)
+# ============================================================
+# This is the base configuration suitable for production deployment.
+#
+# Development: docker-compose up (auto-loads docker-compose.override.yml)
+# Production:  docker-compose -f docker-compose.yml up -d
+# Testing:     docker-compose -f docker-compose.yml -f docker-compose.test.yml up
+#
+# Production Standards:
+# - Security: No hardcoded passwords, environment-based secrets
+# - Reliability: Health checks, restart policies, graceful shutdown
+# - Resource Management: CPU/memory limits for all services
+# ============================================================
+
+# ============================================================
+# Networks
+# ============================================================
+networks:
+  frontend:
+    driver: bridge
+  backend:
+    driver: bridge
+    # Note: Backend services need external access for PDB files, MSA APIs, etc.
+    # For production security, use firewall rules at infrastructure level instead
+
+services:
+  # ============================================================
+  # Gateway Service
+  # ============================================================
+  gateway:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.backend
+      target: service-gateway
+    command: [ "gateway" ]
+    ports:
+      - "${GATEWAY_PORT:-8000}:8000"
+    networks:
+      - frontend
+      - backend
+    environment:
+      - REDIS_URL=${REDIS_URL:-redis://redis:6379/0}
+      - DATABASE_URL=${DATABASE_URL:-postgresql://ligandx:${POSTGRES_PASSWORD:-ligandx}@postgres:5432/ligandx}
+      - STRUCTURE_URL=http://structure:8001
+      - DOCKING_URL=http://docking:8002
+      - MD_URL=http://md:8003
+      - ADMET_URL=http://admet:8004
+      - BOLTZ2_URL=http://boltz2:8005
+      - QC_URL=http://qc:8006
+      - ALIGNMENT_URL=http://alignment:8007
+      - KETCHER_URL=http://ketcher:8008
+      - MSA_URL=http://msa:8009
+      - ABFE_URL=http://abfe:8010
+      - RBFE_URL=http://rbfe:8011
+    depends_on:
+      redis:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: '2'
+          memory: 2G
+        reservations:
+          cpus: '0.5'
+          memory: 512M
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # ============================================================
+  # Lightweight Microservices (base environment ~1.5GB)
+  # ============================================================
+  structure:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.backend
+      target: service-structure
+    command: [ "structure", "8001" ]
+    networks:
+      - backend
+    expose:
+      - "8001"
+    environment:
+      - PYTHONUNBUFFERED=1
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8001/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: '2'
+          memory: 4G
+        reservations:
+          cpus: '0.5'
+          memory: 1G
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  alignment:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.backend
+      target: service-alignment
+    command: [ "alignment", "8007" ]
+    networks:
+      - backend
+    expose:
+      - "8007"
+    environment:
+      - PYTHONUNBUFFERED=1
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8007/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: '1'
+          memory: 2G
+        reservations:
+          cpus: '0.25'
+          memory: 512M
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  ketcher:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.backend
+      target: service-ketcher
+    command: [ "ketcher", "8008" ]
+    networks:
+      - backend
+    expose:
+      - "8008"
+    environment:
+      - PYTHONUNBUFFERED=1
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8008/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: '1'
+          memory: 2G
+        reservations:
+          cpus: '0.25'
+          memory: 512M
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  msa:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.backend
+      target: service-msa
+    command: [ "msa", "8009" ]
+    networks:
+      - backend
+    volumes:
+      - msa_cache:/app/data/msa_cache
+    expose:
+      - "8009"
+    environment:
+      - PYTHONUNBUFFERED=1
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8009/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: '2'
+          memory: 4G
+        reservations:
+          cpus: '0.5'
+          memory: 1G
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # ============================================================
+  # Docking Service (~2.5GB)
+  # ============================================================
+  docking:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.backend
+      target: service-docking
+    command: [ "docking", "8002" ]
+    networks:
+      - backend
+    volumes:
+      - docking_outputs:/app/data/docking_outputs
+    expose:
+      - "8002"
+    environment:
+      - PYTHONUNBUFFERED=1
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8002/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: '4'
+          memory: 8G
+        reservations:
+          cpus: '1'
+          memory: 2G
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # ============================================================
+  # GPU Services (MD environment ~4GB)
+  # ============================================================
+  md:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.backend
+      target: service-md
+    command: [ "md", "8003" ]
+    networks:
+      - backend
+    volumes:
+      - md_outputs:/app/data/md_outputs
+    expose:
+      - "8003"
+    environment:
+      - PYTHONUNBUFFERED=1
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8003/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: '4'
+          memory: 16G
+        reservations:
+          cpus: '2'
+          memory: 4G
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  abfe:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.backend
+      target: service-abfe
+    command: [ "abfe", "8010" ]
+    networks:
+      - backend
+    volumes:
+      - abfe_outputs:/app/data/abfe_outputs
+    expose:
+      - "8010"
+    environment:
+      - PYTHONUNBUFFERED=1
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8010/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: '4'
+          memory: 16G
+        reservations:
+          cpus: '2'
+          memory: 4G
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  rbfe:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.backend
+      target: service-rbfe
+    command: [ "rbfe", "8011" ]
+    networks:
+      - backend
+    volumes:
+      - rbfe_outputs:/app/data/rbfe_outputs
+    expose:
+      - "8011"
+    environment:
+      - PYTHONUNBUFFERED=1
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+      - RBFE_OUTPUT_DIR=/app/data/rbfe_outputs
+      - DOCKING_URL=http://docking:8002
+    depends_on:
+      - docking
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8011/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: '4'
+          memory: 16G
+        reservations:
+          cpus: '2'
+          memory: 4G
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # ============================================================
+  # ADMET Service (~3GB with PyTorch)
+  # ============================================================
+  admet:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.backend
+      target: service-admet
+    command: [ "admet", "8004" ]
+    networks:
+      - backend
+    expose:
+      - "8004"
+    environment:
+      - PYTHONUNBUFFERED=1
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8004/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: '2'
+          memory: 8G
+        reservations:
+          cpus: '0.5'
+          memory: 2G
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # ============================================================
+  # Boltz2 Service (~6GB with PyTorch + CUDA)
+  # ============================================================
+  boltz2:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.backend
+      target: service-boltz2
+    command: [ "boltz2", "8005" ]
+    networks:
+      - backend
+    volumes:
+      - msa_cache:/app/data/msa_cache
+      - boltz_outputs:/app/data/boltz_results_input/outputs
+    expose:
+      - "8005"
+    environment:
+      - PYTHONUNBUFFERED=1
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+      - BOLTZ_MSA_USERNAME=${BOLTZ_MSA_USERNAME:-}
+      - BOLTZ_MSA_PASSWORD=${BOLTZ_MSA_PASSWORD:-}
+      - MSA_API_KEY_VALUE=${MSA_API_KEY_VALUE:-}
+      - API_KEY_HEADER=${API_KEY_HEADER:-X-API-Key}
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8005/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: '4'
+          memory: 16G
+        reservations:
+          cpus: '2'
+          memory: 6G
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    shm_size: '8gb'
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # ============================================================
+  # QC Service (~2.5GB)
+  # ============================================================
+  qc:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.backend
+      target: service-qc
+    command: [ "qc", "8006" ]
+    networks:
+      - backend
+    expose:
+      - "8006"
+    environment:
+      - CELERY_BROKER_URL=${CELERY_BROKER_URL:-amqp://ligandx:${RABBITMQ_PASSWORD:-ligandx}@rabbitmq:5672/}
+      - CELERY_RESULT_BACKEND=${CELERY_RESULT_BACKEND:-redis://redis:6379/0}
+      - DATABASE_URL=${DATABASE_URL:-postgresql://ligandx:${POSTGRES_PASSWORD:-ligandx}@postgres:5432/ligandx}
+      - ORCA_PATH=/opt/orca/orca
+      - SECRET_KEY=${QC_SECRET_KEY:-change_in_production}
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+    volumes:
+      - qc_jobs:/app/data/qc_jobs
+      - qc_results:/app/data/qc_results_db
+      - ${ORCA_HOST_PATH:-/opt/orca}:/opt/orca:ro
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8006/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: '4'
+          memory: 8G
+        reservations:
+          cpus: '1'
+          memory: 2G
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # ============================================================
+  # Celery Workers
+  # ============================================================
+
+  # QC Worker for quantum chemistry calculations
+  worker-qc:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.backend
+      target: worker-qc
+    command: [ "worker-qc" ]
+    networks:
+      - backend
+    environment:
+      - CELERY_BROKER_URL=${CELERY_BROKER_URL:-amqp://ligandx:${RABBITMQ_PASSWORD:-ligandx}@rabbitmq:5672/}
+      - CELERY_RESULT_BACKEND=${CELERY_RESULT_BACKEND:-redis://redis:6379/0}
+      - DATABASE_URL=${DATABASE_URL:-postgresql://ligandx:${POSTGRES_PASSWORD:-ligandx}@postgres:5432/ligandx}
+      - ORCA_PATH=/opt/orca/orca
+      - SECRET_KEY=${QC_SECRET_KEY:-change_in_production}
+      - OMPI_ALLOW_RUN_AS_ROOT=1
+      - OMPI_ALLOW_RUN_AS_ROOT_CONFIRM=1
+      - CELERY_CONCURRENCY=${QC_WORKER_CONCURRENCY:-2}
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+      qc:
+        condition: service_healthy
+    volumes:
+      - qc_jobs:/app/data/qc_jobs
+      - qc_results:/app/data/qc_results_db
+      - ${ORCA_HOST_PATH:-/opt/orca}:/opt/orca:ro
+    healthcheck:
+      test: ["CMD", "celery", "-A", "services.qc.tasks", "inspect", "ping"]
+      interval: 60s
+      timeout: 30s
+      retries: 3
+      start_period: 60s
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: '8'
+          memory: 16G
+        reservations:
+          cpus: '2'
+          memory: 4G
+    shm_size: '2gb'
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # GPU Worker for short/fast tasks (MD, Boltz2, ADMET)
+  worker-gpu-short:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.backend
+      target: worker-gpu
+    command: [ "worker-gpu-short" ]
+    networks:
+      - backend
+    environment:
+      - CELERY_BROKER_URL=${CELERY_BROKER_URL:-amqp://ligandx:${RABBITMQ_PASSWORD:-ligandx}@rabbitmq:5672/}
+      - CELERY_RESULT_BACKEND=${CELERY_RESULT_BACKEND:-redis://redis:6379/0}
+      - DATABASE_URL=${DATABASE_URL:-postgresql://ligandx:${POSTGRES_PASSWORD:-ligandx}@postgres:5432/ligandx}
+      - CELERY_CONCURRENCY=${GPU_SHORT_CONCURRENCY:-2}
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+    volumes:
+      - md_outputs:/app/data/md_outputs
+    healthcheck:
+      test: ["CMD", "celery", "-A", "lib.tasks.gpu_tasks", "inspect", "ping"]
+      interval: 60s
+      timeout: 30s
+      retries: 3
+      start_period: 60s
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: '8'
+          memory: 32G
+        reservations:
+          cpus: '4'
+          memory: 8G
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # GPU Worker for long-running tasks (ABFE, RBFE)
+  worker-gpu-long:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.backend
+      target: worker-gpu
+    command: [ "worker-gpu-long" ]
+    networks:
+      - backend
+    environment:
+      - CELERY_BROKER_URL=${CELERY_BROKER_URL:-amqp://ligandx:${RABBITMQ_PASSWORD:-ligandx}@rabbitmq:5672/}
+      - CELERY_RESULT_BACKEND=${CELERY_RESULT_BACKEND:-redis://redis:6379/0}
+      - DATABASE_URL=${DATABASE_URL:-postgresql://ligandx:${POSTGRES_PASSWORD:-ligandx}@postgres:5432/ligandx}
+      - CELERY_CONCURRENCY=${GPU_LONG_CONCURRENCY:-1}
+      - RBFE_OUTPUT_DIR=/app/data/rbfe_outputs
+      - ABFE_OUTPUT_DIR=/app/data/abfe_outputs
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+    volumes:
+      - abfe_outputs:/app/data/abfe_outputs
+      - rbfe_outputs:/app/data/rbfe_outputs
+    healthcheck:
+      test: ["CMD", "celery", "-A", "lib.tasks.gpu_tasks", "inspect", "ping"]
+      interval: 60s
+      timeout: 30s
+      retries: 3
+      start_period: 60s
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: '12'
+          memory: 48G
+        reservations:
+          cpus: '4'
+          memory: 16G
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # CPU Worker for batch docking
+  worker-cpu:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.backend
+      target: worker-docking
+    command: [ "worker-cpu" ]
+    networks:
+      - backend
+    environment:
+      - CELERY_BROKER_URL=${CELERY_BROKER_URL:-amqp://ligandx:${RABBITMQ_PASSWORD:-ligandx}@rabbitmq:5672/}
+      - CELERY_RESULT_BACKEND=${CELERY_RESULT_BACKEND:-redis://redis:6379/0}
+      - DATABASE_URL=${DATABASE_URL:-postgresql://ligandx:${POSTGRES_PASSWORD:-ligandx}@postgres:5432/ligandx}
+      - CELERY_CONCURRENCY=${CPU_WORKER_CONCURRENCY:-4}
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+    volumes:
+      - docking_outputs:/app/data/docking_outputs
+    healthcheck:
+      test: ["CMD", "celery", "-A", "lib.tasks.cpu_tasks", "inspect", "ping"]
+      interval: 60s
+      timeout: 30s
+      retries: 3
+      start_period: 60s
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: '16'
+          memory: 32G
+        reservations:
+          cpus: '4'
+          memory: 8G
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # ============================================================
+  # Infrastructure
+  # ============================================================
+
+  # RabbitMQ Message Broker for Celery
+  rabbitmq:
+    image: rabbitmq:3.13-management-alpine
+    container_name: ligandx-rabbitmq
+    hostname: rabbitmq
+    networks:
+      - backend
+    ports:
+      - "${RABBITMQ_MGMT_PORT:-15672}:15672"
+    environment:
+      - RABBITMQ_DEFAULT_USER=${RABBITMQ_USER:-ligandx}
+      - RABBITMQ_DEFAULT_PASS=${RABBITMQ_PASSWORD:-ligandx}
+      - RABBITMQ_DEFAULT_VHOST=/
+    volumes:
+      - rabbitmq_data:/var/lib/rabbitmq
+      - ./config/rabbitmq.conf:/etc/rabbitmq/rabbitmq.conf:ro
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: '2'
+          memory: 4G
+        reservations:
+          cpus: '0.5'
+          memory: 1G
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  redis:
+    image: redis:7-alpine
+    container_name: ligandx-redis
+    hostname: redis
+    networks:
+      - backend
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: '1'
+          memory: 2G
+        reservations:
+          cpus: '0.25'
+          memory: 512M
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  postgres:
+    image: postgres:16-alpine
+    container_name: ligandx-postgres
+    networks:
+      - backend
+    environment:
+      - POSTGRES_USER=${POSTGRES_USER:-ligandx}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-ligandx}
+      - POSTGRES_DB=${POSTGRES_DB:-ligandx}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-ligandx}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: '2'
+          memory: 4G
+        reservations:
+          cpus: '0.5'
+          memory: 1G
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # Celery Flower - Task monitoring dashboard
+  flower:
+    image: mher/flower:2.0
+    container_name: ligandx-flower
+    command: celery --broker=amqp://ligandx:${RABBITMQ_PASSWORD:-ligandx}@rabbitmq:5672/ flower --port=5555 --url_prefix=flower --broker_api=http://ligandx:${RABBITMQ_PASSWORD:-ligandx}@rabbitmq:15672/api/
+    networks:
+      - backend
+      - frontend
+    ports:
+      - "${FLOWER_PORT:-5555}:5555"
+    environment:
+      - CELERY_BROKER_URL=amqp://ligandx:${RABBITMQ_PASSWORD:-ligandx}@rabbitmq:5672/
+      - CELERY_RESULT_BACKEND=redis://redis:6379/0
+      - FLOWER_BASIC_AUTH=${FLOWER_USER:-admin}:${FLOWER_PASSWORD:-admin}
+      - FLOWER_PERSISTENT=true
+      - FLOWER_MAX_TASKS=10000
+      - FLOWER_SHOW_POOL=true
+      - FLOWER_TASK_TRACK_STARTED=true
+      - FLOWER_REFRESH_INTERVAL=5000
+    volumes:
+      - ./config/flower_config.py:/app/flower_config.py:ro
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5555/healthcheck"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: '1'
+          memory: 1G
+        reservations:
+          cpus: '0.25'
+          memory: 256M
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # ============================================================
+  # Frontend
+  # ============================================================
+  frontend:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.frontend
+    networks:
+      - frontend
+    ports:
+      - "${FRONTEND_PORT:-3000}:3000"
+    environment:
+      - NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL:-http://localhost:8000}
+      - NODE_ENV=${NODE_ENV:-production}
+    depends_on:
+      - gateway
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:3000"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: '2'
+          memory: 4G
+        reservations:
+          cpus: '0.5'
+          memory: 1G
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+# ============================================================
+# Named Volumes
+# ============================================================
+volumes:
+  # Data volumes
+  docking_outputs:
+  md_outputs:
+  abfe_outputs:
+  rbfe_outputs:
+  boltz_outputs:
+  qc_jobs:
+  qc_results:
+  msa_cache:
+
+  # Infrastructure volumes
+  redis_data:
+  postgres_data:
+  rabbitmq_data:

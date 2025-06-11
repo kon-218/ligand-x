@@ -1,0 +1,777 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Ketcher Editor - Ensure proper rendering and dimensions */
+[class*="Editor-module_editor"],
+[class*="App-module_app"] {
+  height: 100% !important;
+  width: 100% !important;
+  min-height: 400px !important;
+}
+
+/* Ensure Ketcher's internal grid layout works */
+[class*="App-module_app"] {
+  display: grid !important;
+}
+
+:root {
+  --background: #111827;
+  --text: #ffffff;
+}
+
+body {
+  background-color: var(--background);
+  color: var(--text);
+}
+
+/* Custom scrollbar - Dark/Navy Theme */
+.custom-scrollbar::-webkit-scrollbar {
+  width: 10px;
+}
+
+.custom-scrollbar::-webkit-scrollbar-track {
+  background-color: #1f2937; /* Dark gray-800 */
+  border-radius: 5px;
+}
+
+.custom-scrollbar::-webkit-scrollbar-thumb {
+  background-color: #374151; /* Gray-700 */
+  border-radius: 5px;
+  border: 2px solid #1f2937;
+}
+
+.custom-scrollbar::-webkit-scrollbar-thumb:hover {
+  background-color: #4b5563; /* Gray-600 */
+}
+
+/* Firefox scrollbar */
+.custom-scrollbar {
+  scrollbar-width: thin;
+  scrollbar-color: #374151 #1f2937;
+}
+
+/* Shimmer animation for progress bars */
+@keyframes shimmer {
+  0% {
+    transform: translateX(-100%);
+  }
+  100% {
+    transform: translateX(100%);
+  }
+}
+
+.animate-shimmer {
+  animation: shimmer 2s infinite;
+}
+
+/* Smooth panel transitions - prevent white flashes */
+* {
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* Hardware acceleration for smooth animations */
+.motion-safe {
+  backface-visibility: hidden;
+  -webkit-backface-visibility: hidden;
+  transform: translateZ(0);
+  -webkit-transform: translateZ(0);
+}
+
+/* Prevent layout shift during animations */
+[data-radix-popper-content-wrapper] {
+  will-change: transform;
+}
+
+/* Optimize sidebar animations */
+.sidebar-container {
+  contain: layout style;
+  will-change: width;
+}
+
+/* Prevent white flash during transitions */
+body, #__next, main {
+  background-color: var(--background);
+  overflow-x: hidden;
+}
+
+/* Molstar Dark Theme - Comprehensive styling */
+/* Main viewport (3D view + logo area) uses white background for clean look */
+.msp-viewport,
+.msp-plugin .msp-viewport {
+  background-color: #ffffff !important;
+}
+
+/* Fix non-passive event listener warnings - allow browser to optimize scroll performance */
+.msp-plugin,
+.msp-viewport,
+[class*="msp-plugin"],
+[class*="msp-viewport"] {
+  touch-action: manipulation;
+  pointer-events: auto;
+}
+/* Other Molstar containers - dark theme for panels */
+.msp-plugin,
+[class*="msp-plugin"],
+.msp-plugin > div {
+  background-color: #111827 !important;
+}
+[class*="msp-viewport"] {
+  background-color: #ffffff !important;
+}
+
+/* Canvas elements - only remove background images, NOT set background-color */
+.msp-plugin canvas,
+div[class*="msp"] canvas,
+canvas[style*="background"],
+.msp-plugin > div > canvas {
+  background-image: none !important;
+  /* DO NOT set background-color here - it overlays the WebGL rendering */
+}
+
+/* Force dark background on Molstar root/layout (viewport stays white for viewer + logo) */
+div[class*="msp-plugin"],
+div[class*="msp-layout"] {
+  background-color: #111827 !important;
+}
+
+/* Target the root container that Molstar creates */
+div[id*="molstar"],
+div[class*="molstar"],
+div[data-molstar] {
+  background-color: #111827 !important;
+}
+
+/* Target canvas within Molstar containers - only remove background images,
+   NOT set background-color (that overlays WebGL rendering) */
+.msp-plugin canvas,
+.msp-viewport canvas,
+[class*="msp"] canvas,
+div[class*="msp-plugin"] canvas,
+div[class*="msp-viewport"] canvas {
+  background-image: none !important;
+  /* DO NOT set background-color here - it overlays the WebGL rendering */
+}
+
+/* Target canvas with the specific checkered background pattern */
+canvas[style*="background-image: linear-gradient"] {
+  background-image: none !important;
+  /* DO NOT set background-color here - it overlays the WebGL rendering */
+}
+
+/* Remove checkered/gradient backgrounds from canvas - but DON'T set background-color
+   as that creates an overlay that hides the WebGL rendering. The background should
+   be set via Molstar's API (WebGL clear color), not CSS. */
+canvas {
+  background-image: none !important;
+  /* DO NOT set background-color here - it overlays the WebGL rendering */
+}
+
+/* Remove gradient backgrounds from Molstar canvas elements */
+.msp-plugin canvas,
+.msp-viewport canvas,
+canvas[class*="msp"],
+canvas[data-molstar] {
+  background-image: none !important;
+  /* DO NOT set background-color here - it overlays the WebGL rendering */
+}
+
+/* Target canvas with gradient backgrounds - only remove the gradient */
+canvas[style*="linear-gradient"] {
+  background-image: none !important;
+  /* DO NOT set background-color here - it overlays the WebGL rendering */
+}
+
+/* Molstar UI panels and controls - dark theme */
+.msp-plugin .msp-layout,
+.msp-plugin .msp-layout-panel,
+.msp-plugin .msp-plugin-ui,
+.msp-plugin .msp-plugin-ui-panel,
+.msp-plugin [class*="layout"],
+.msp-plugin [class*="panel"],
+.msp-plugin [class*="ui"],
+div[class*="msp"][class*="layout"],
+div[class*="msp"][class*="panel"] {
+  background-color: #1f2937 !important; /* gray-800 */
+  color: #ffffff !important;
+}
+
+/* Target UI panels - be more specific to avoid affecting canvas containers */
+.msp-plugin .msp-plugin-ui > div,
+.msp-plugin .msp-layout > div:not(:first-child),
+.msp-plugin [class*="control"],
+.msp-plugin [class*="settings"],
+.msp-plugin [class*="toolbar"] {
+  background-color: #1f2937 !important;
+  color: #ffffff !important;
+}
+
+/* All divs within msp-plugin that aren't canvas containers */
+.msp-plugin div:not([class*="canvas"]):not([class*="viewport"]):not([class*="webgl"]) {
+  background-color: #1f2937 !important;
+  color: #e5e7eb !important;
+}
+
+/* Target specific leftover components */
+.msp-plugin .msp-btn-block,
+.msp-plugin [class*="btn-block"],
+.msp-plugin .msp-focus-wrapper,
+.msp-plugin [class*="focus"],
+.msp-plugin .msp-assembly-select,
+.msp-plugin [class*="assembly"],
+.msp-plugin .msp-nothing-focused,
+.msp-plugin [class*="nothing"] {
+  background-color: #1f2937 !important;
+  color: #e5e7eb !important;
+}
+
+/* Catch all button variants - more comprehensive */
+.msp-plugin .msp-btn,
+.msp-plugin button.msp-btn,
+.msp-plugin [class*="msp-btn"],
+.msp-plugin button[class*="btn"],
+.msp-plugin .msp-form-control,
+.msp-plugin [class*="form-control"],
+.msp-plugin .msp-control-group,
+.msp-plugin [class*="control-group"] {
+  background-color: #374151 !important; /* gray-700 */
+  color: #ffffff !important;
+  border-color: #4b5563 !important; /* gray-600 */
+}
+
+/* Force all buttons with light backgrounds to dark */
+.msp-plugin button[style*="background"],
+.msp-plugin .msp-btn[style*="background"],
+.msp-plugin [class*="btn"][style*="background"] {
+  background-color: #374151 !important;
+  color: #ffffff !important;
+}
+
+/* Form controls and inputs that might have light backgrounds */
+.msp-plugin .msp-form-control-wrapper,
+.msp-plugin [class*="form-control-wrapper"],
+.msp-plugin .msp-control-wrapper,
+.msp-plugin [class*="control-wrapper"] {
+  background-color: #1f2937 !important;
+  color: #e5e7eb !important;
+}
+
+/* Any element with light beige/cream backgrounds */
+.msp-plugin [style*="background-color: rgb(238, 236, 231)"],
+.msp-plugin [style*="background-color: rgb(235, 232, 227)"],
+.msp-plugin [style*="background-color: rgb(224, 221, 212)"],
+.msp-plugin [style*="background-color: rgb(240, 240, 240)"],
+.msp-plugin [style*="background-color: #EEECE7"],
+.msp-plugin [style*="background-color: #EBE8E3"],
+.msp-plugin [style*="background-color: #E0DDD4"],
+.msp-plugin [style*="background-color: #F0F0F0"] {
+  background-color: #1f2937 !important;
+  color: #e5e7eb !important;
+}
+
+/* Dropdown menus and popovers */
+.msp-plugin .msp-dropdown-menu,
+.msp-plugin [class*="dropdown"],
+.msp-plugin .msp-popover,
+.msp-plugin [class*="popover"],
+.msp-plugin .msp-menu-item {
+  background-color: #1f2937 !important;
+  color: #e5e7eb !important;
+  border-color: #374151 !important;
+}
+
+/* Tooltips */
+.msp-plugin .msp-tooltip,
+.msp-plugin [title],
+.msp-plugin [data-tooltip] {
+  background-color: #374151 !important; /* Slightly lighter for tooltips */
+  color: #ffffff !important;
+  border-color: #4b5563 !important;
+}
+
+/* Override any light backgrounds on specific sections */
+.msp-plugin .msp-section,
+.msp-plugin [class*="section"],
+.msp-plugin .msp-panel,
+.msp-plugin [class*="panel"] {
+  background-color: #1f2937 !important;
+  color: #ffffff !important;
+}
+
+/* Molstar buttons and controls */
+.msp-plugin button,
+.msp-plugin .msp-button,
+.msp-plugin .msp-control-button,
+.msp-plugin button.msp-btn,
+.msp-plugin .msp-btn {
+  background-color: #374151 !important; /* gray-700 */
+  color: #ffffff !important;
+  border-color: #4b5563 !important; /* gray-600 */
+}
+
+/* Quick Styles buttons and similar control buttons */
+.msp-plugin .msp-button-group button,
+.msp-plugin .msp-button-group .msp-button,
+.msp-plugin [class*="button-group"] button,
+.msp-plugin [class*="quick"] button,
+.msp-plugin [class*="style"] button {
+  background-color: #374151 !important; /* gray-700 */
+  color: #ffffff !important;
+  border-color: #4b5563 !important; /* gray-600 */
+}
+
+/* Active/selected buttons */
+.msp-plugin button.msp-active,
+.msp-plugin .msp-button.msp-active,
+.msp-plugin button[class*="active"] {
+  background-color: #1e40af !important; /* blue-800 */
+  color: #ffffff !important;
+}
+
+.msp-plugin button:hover,
+.msp-plugin .msp-button:hover,
+.msp-plugin .msp-control-button:hover {
+  background-color: #4b5563 !important; /* gray-600 */
+}
+
+/* Molstar input fields */
+.msp-plugin input,
+.msp-plugin .msp-input,
+.msp-plugin textarea,
+.msp-plugin select {
+  background-color: #1f2937 !important; /* gray-800 */
+  color: #ffffff !important;
+  border-color: #374151 !important; /* gray-700 */
+}
+
+/* Target specific dropdowns that are still light */
+.msp-plugin .msp-sequence-select > select,
+.msp-plugin .msp-sequence-select select,
+.msp-plugin select.msp-form-control,
+.msp-plugin .msp-form-control,
+.msp-plugin .msp-select select {
+  background-color: #1f2937 !important; /* gray-800 */
+  color: #ffffff !important;
+  border-color: #374151 !important; /* gray-700 */
+}
+
+.msp-plugin input:focus,
+.msp-plugin .msp-input:focus,
+.msp-plugin textarea:focus,
+.msp-plugin select:focus {
+  border-color: #3b82f6 !important; /* blue-500 */
+  outline-color: #3b82f6 !important;
+}
+
+/* Molstar dropdowns and menus */
+.msp-plugin .msp-menu,
+.msp-plugin .msp-dropdown,
+.msp-plugin .msp-select {
+  background-color: #1f2937 !important; /* gray-800 */
+  color: #ffffff !important;
+  border-color: #374151 !important; /* gray-700 */
+}
+
+/* Molstar tree view and lists */
+.msp-plugin .msp-tree-view,
+.msp-plugin .msp-list,
+.msp-plugin .msp-tree-view-item {
+  background-color: #1f2937 !important; /* gray-800 */
+  color: #ffffff !important;
+}
+
+/* Log entries - target the specific light background */
+.msp-plugin .msp-log-entry,
+.msp-plugin .msp-log,
+.msp-plugin [class*="log"] {
+  background-color: #1f2937 !important; /* gray-800 */
+  color: #e5e7eb !important; /* gray-200 */
+}
+
+/* Top bar and sequence display */
+.msp-plugin .msp-sequence,
+.msp-plugin .msp-sequence-view,
+.msp-plugin [class*="sequence"] {
+  background-color: #1f2937 !important; /* gray-800 */
+  color: #ffffff !important;
+}
+
+/* Top bar header area */
+.msp-plugin .msp-header,
+.msp-plugin [class*="header"],
+.msp-plugin .msp-layout-header {
+  background-color: #1f2937 !important; /* gray-800 */
+  color: #ffffff !important;
+}
+
+.msp-plugin .msp-tree-view-item:hover,
+.msp-plugin .msp-list-item:hover {
+  background-color: #374151 !important; /* gray-700 */
+}
+
+/* Molstar labels and text - ensure good visibility */
+.msp-plugin label,
+.msp-plugin .msp-label,
+.msp-plugin .msp-text,
+.msp-plugin span,
+.msp-plugin p,
+.msp-plugin div {
+  color: #e5e7eb !important; /* gray-200 */
+}
+
+/* Ensure text in buttons and controls is visible */
+.msp-plugin button,
+.msp-plugin .msp-button {
+  color: #ffffff !important;
+}
+
+/* Text in dropdowns and selects */
+.msp-plugin select,
+.msp-plugin option {
+  color: #ffffff !important;
+  background-color: #1f2937 !important;
+}
+
+/* Icons - make them more visible */
+.msp-plugin svg,
+.msp-plugin [class*="icon"],
+.msp-plugin .msp-icon {
+  fill: #e5e7eb !important; /* gray-200 for better visibility */
+  color: #e5e7eb !important;
+  stroke: #e5e7eb !important;
+}
+
+/* Icons in buttons should be white */
+.msp-plugin button svg,
+.msp-plugin .msp-button svg {
+  fill: #ffffff !important;
+  color: #ffffff !important;
+}
+
+/* Icons in dark backgrounds */
+.msp-plugin [class*="msp-btn"] svg,
+.msp-plugin [class*="button"] svg {
+  fill: #ffffff !important;
+  color: #ffffff !important;
+}
+
+/* Molstar scrollbars */
+.msp-plugin ::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+.msp-plugin ::-webkit-scrollbar-track {
+  background-color: #1f2937 !important; /* gray-800 */
+}
+
+.msp-plugin ::-webkit-scrollbar-thumb {
+  background-color: #374151 !important; /* gray-700 */
+  border-radius: 5px;
+}
+
+.msp-plugin ::-webkit-scrollbar-thumb:hover {
+  background-color: #4b5563 !important; /* gray-600 */
+}
+
+/* Molstar tooltips */
+.msp-plugin .msp-tooltip {
+  background-color: #1f2937 !important; /* gray-800 */
+  color: #ffffff !important;
+  border-color: #374151 !important; /* gray-700 */
+}
+
+/* Molstar tabs */
+.msp-plugin .msp-tab,
+.msp-plugin .msp-tab-button {
+  background-color: #1f2937 !important; /* gray-800 */
+  color: #9ca3af !important; /* gray-400 */
+  border-color: #374151 !important; /* gray-700 */
+}
+
+.msp-plugin .msp-tab.msp-active,
+.msp-plugin .msp-tab-button.msp-active {
+  background-color: #111827 !important; /* gray-900 */
+  color: #ffffff !important;
+  border-bottom-color: #3b82f6 !important; /* blue-500 */
+}
+
+/* Molstar checkboxes and radio buttons */
+.msp-plugin input[type="checkbox"],
+.msp-plugin input[type="radio"] {
+  accent-color: #3b82f6 !important; /* blue-500 */
+}
+
+/* Molstar sliders */
+.msp-plugin .msp-slider,
+.msp-plugin input[type="range"] {
+  background-color: #374151 !important; /* gray-700 */
+}
+
+.msp-plugin .msp-slider::-webkit-slider-thumb,
+.msp-plugin input[type="range"]::-webkit-slider-thumb {
+  background-color: #3b82f6 !important; /* blue-500 */
+}
+
+.msp-plugin .msp-slider::-moz-range-thumb,
+.msp-plugin input[type="range"]::-moz-range-thumb {
+  background-color: #3b82f6 !important; /* blue-500 */
+}
+
+/* Help buttons and panels - dark theme */
+.msp-plugin .msp-help,
+.msp-plugin [class*="help"],
+.msp-plugin .msp-btn-link,
+.msp-plugin [class*="btn-link"],
+.msp-plugin .msp-btn-icon,
+.msp-plugin [class*="btn-icon"],
+.msp-plugin .msp-control-group-expander,
+.msp-plugin [class*="control-group-expander"] {
+  background-color: #374151 !important; /* gray-700 */
+  color: #ffffff !important;
+  border-color: #4b5563 !important; /* gray-600 */
+}
+
+.msp-plugin .msp-help:hover,
+.msp-plugin .msp-btn-link:hover,
+.msp-plugin .msp-btn-icon:hover,
+.msp-plugin .msp-control-group-expander:hover {
+  background-color: #4b5563 !important; /* gray-600 */
+}
+
+/* Scrollable containers - dark theme */
+.msp-plugin .msp-scrollable-container,
+.msp-plugin [class*="scrollable"],
+.msp-plugin [class*="scrollable-container"] {
+  background-color: #1f2937 !important; /* gray-800 */
+  color: #e5e7eb !important;
+}
+
+/* State actions panels - dark theme */
+.msp-plugin .msp-state-actions,
+.msp-plugin [class*="state-actions"],
+.msp-plugin .msp-state-management,
+.msp-plugin [class*="state-management"] {
+  background-color: #1f2937 !important; /* gray-800 */
+  color: #ffffff !important;
+}
+
+.msp-plugin .msp-state-actions button,
+.msp-plugin .msp-state-actions .msp-btn,
+.msp-plugin [class*="state-actions"] button {
+  background-color: #374151 !important; /* gray-700 */
+  color: #ffffff !important;
+}
+
+.msp-plugin .msp-state-actions button:hover,
+.msp-plugin [class*="state-actions"] button:hover {
+  background-color: #4b5563 !important; /* gray-600 */
+}
+
+/* Strengthen text color rules - ensure all text is visible */
+.msp-plugin .msp-scrollable-container,
+.msp-plugin .msp-scrollable-container span,
+.msp-plugin .msp-scrollable-container p,
+.msp-plugin .msp-scrollable-container div,
+.msp-plugin .msp-scrollable-container label,
+.msp-plugin .msp-scrollable-container *:not(button):not(a) {
+  color: #e5e7eb !important; /* gray-200 */
+}
+
+.msp-plugin .msp-state-actions,
+.msp-plugin .msp-state-actions span,
+.msp-plugin .msp-state-actions p,
+.msp-plugin .msp-state-actions div,
+.msp-plugin .msp-state-actions label,
+.msp-plugin .msp-state-actions *:not(button):not(a) {
+  color: #ffffff !important;
+}
+
+.msp-plugin .msp-control-group,
+.msp-plugin .msp-control-group span,
+.msp-plugin .msp-control-group p,
+.msp-plugin .msp-control-group div,
+.msp-plugin .msp-control-group label,
+.msp-plugin .msp-control-group *:not(button):not(a) {
+  color: #e5e7eb !important; /* gray-200 */
+}
+
+.msp-plugin .msp-help,
+.msp-plugin .msp-help span,
+.msp-plugin .msp-help p,
+.msp-plugin .msp-help div,
+.msp-plugin .msp-help label,
+.msp-plugin .msp-help *:not(button):not(a) {
+  color: #ffffff !important;
+}
+
+/* Panel wrappers and headers - ensure dark backgrounds */
+.msp-plugin .msp-control-group-wrapper,
+.msp-plugin [class*="control-group-wrapper"],
+.msp-plugin .msp-panel-header,
+.msp-plugin [class*="panel-header"],
+.msp-plugin .msp-section-header,
+.msp-plugin [class*="section-header"] {
+  background-color: #1f2937 !important; /* gray-800 */
+  color: #ffffff !important;
+}
+
+/* Expandable/collapsible sections */
+.msp-plugin .msp-expandable,
+.msp-plugin [class*="expandable"],
+.msp-plugin .msp-collapsible,
+.msp-plugin [class*="collapsible"] {
+  background-color: #1f2937 !important; /* gray-800 */
+  color: #ffffff !important;
+}
+
+.msp-plugin .msp-expandable-header,
+.msp-plugin .msp-collapsible-header,
+.msp-plugin [class*="expandable-header"],
+.msp-plugin [class*="collapsible-header"] {
+  background-color: #374151 !important; /* gray-700 */
+  color: #ffffff !important;
+}
+
+.msp-plugin .msp-expandable-header:hover,
+.msp-plugin .msp-collapsible-header:hover {
+  background-color: #4b5563 !important; /* gray-600 */
+}
+
+/* Links and anchors within Molstar UI */
+.msp-plugin a,
+.msp-plugin .msp-link,
+.msp-plugin [class*="link"]:not([class*="btn-link"]) {
+  color: #60a5fa !important; /* blue-400 for links */
+  text-decoration: none;
+}
+
+.msp-plugin a:hover,
+.msp-plugin .msp-link:hover {
+  color: #93c5fd !important; /* blue-300 for hover */
+  text-decoration: underline;
+}
+
+/* Comprehensive catch-all for inline background-color styles */
+.msp-plugin *[style*="background-color: rgb(252, 251, 249)"],
+.msp-plugin *[style*="background-color: rgb(255, 255, 255)"],
+.msp-plugin *[style*="background-color: rgb(250, 250, 250)"],
+.msp-plugin *[style*="background-color: rgb(245, 245, 245)"],
+.msp-plugin *[style*="background-color: #FCFBF9"],
+.msp-plugin *[style*="background-color: #FFFFFF"],
+.msp-plugin *[style*="background-color: #FAFAFA"],
+.msp-plugin *[style*="background-color: #F5F5F5"] {
+  background-color: #1f2937 !important; /* gray-800 */
+  color: #e5e7eb !important;
+}
+
+.msp-plugin button[style*="background-color: rgb(252, 251, 249)"],
+.msp-plugin button[style*="background-color: rgb(255, 255, 255)"],
+.msp-plugin button[style*="background-color: #FCFBF9"],
+.msp-plugin button[style*="background-color: #FFFFFF"],
+.msp-plugin .msp-btn[style*="background-color: rgb(252, 251, 249)"],
+.msp-plugin .msp-btn[style*="background-color: rgb(255, 255, 255)"],
+.msp-plugin .msp-btn[style*="background-color: #FCFBF9"],
+.msp-plugin .msp-btn[style*="background-color: #FFFFFF"] {
+  background-color: #374151 !important; /* gray-700 */
+  color: #ffffff !important;
+}
+
+/* Ensure all text in divs and containers is visible */
+.msp-plugin div[class*="msp"]:not([class*="canvas"]):not([class*="viewport"]):not([class*="webgl"]) * {
+  color: inherit;
+}
+
+.msp-plugin .msp-control-group,
+.msp-plugin .msp-control-group-wrapper,
+.msp-plugin [class*="control-group"] {
+  background-color: #1f2937 !important; /* gray-800 */
+  color: #e5e7eb !important;
+}
+
+.msp-plugin .msp-control-group button,
+.msp-plugin .msp-control-group .msp-btn,
+.msp-plugin [class*="control-group"] button {
+  color: #ffffff !important;
+}
+
+/* Smooth main content area resize during sidebar changes */
+main {
+  transition: flex 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+/* Custom slider styling for batch visualization */
+input[type="range"].slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  height: 8px;
+  border-radius: 4px;
+  outline: none;
+}
+
+input[type="range"].slider-thumb::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: rgb(168 85 247);
+  cursor: pointer;
+  border: 2px solid rgb(147 51 234);
+  box-shadow: 0 0 8px rgba(168, 85, 247, 0.5);
+  transition: all 0.2s ease;
+}
+
+input[type="range"].slider-thumb::-webkit-slider-thumb:hover {
+  background: rgb(192 132 252);
+  box-shadow: 0 0 12px rgba(168, 85, 247, 0.8);
+  transform: scale(1.1);
+}
+
+input[type="range"].slider-thumb::-moz-range-thumb {
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: rgb(168 85 247);
+  cursor: pointer;
+  border: 2px solid rgb(147 51 234);
+  box-shadow: 0 0 8px rgba(168, 85, 247, 0.5);
+  transition: all 0.2s ease;
+}
+
+input[type="range"].slider-thumb::-moz-range-thumb:hover {
+  background: rgb(192 132 252);
+  box-shadow: 0 0 12px rgba(168, 85, 247, 0.8);
+  transform: scale(1.1);
+}
+
+/* Catch-all for any remaining light backgrounds in Molstar */
+.msp-plugin *:not(canvas):not([class*="canvas"]):not([class*="viewport"]):not([class*="webgl"])[style*="background-color: rgb(238, 236, 231)"],
+.msp-plugin *:not(canvas):not([class*="canvas"]):not([class*="viewport"]):not([class*="webgl"])[style*="background-color: rgb(235, 232, 227)"],
+.msp-plugin *:not(canvas):not([class*="canvas"]):not([class*="viewport"]):not([class*="webgl"])[style*="background-color: rgb(224, 221, 212)"],
+.msp-plugin *:not(canvas):not([class*="canvas"]):not([class*="viewport"]):not([class*="webgl"])[style*="background-color: rgb(240, 240, 240)"],
+.msp-plugin *:not(canvas):not([class*="canvas"]):not([class*="viewport"]):not([class*="webgl"])[style*="background-color: #EEECE7"],
+.msp-plugin *:not(canvas):not([class*="canvas"]):not([class*="viewport"]):not([class*="webgl"])[style*="background-color: #EBE8E3"],
+.msp-plugin *:not(canvas):not([class*="canvas"]):not([class*="viewport"]):not([class*="webgl"])[style*="background-color: #E0DDD4"],
+.msp-plugin *:not(canvas):not([class*="canvas"]):not([class*="viewport"]):not([class*="webgl"])[style*="background-color: #F0F0F0"] {
+  background-color: #1f2937 !important;
+  color: #e5e7eb !important;
+}
+
+/* Additional catch-all for buttons specifically */
+.msp-plugin button[style*="background-color: rgb(238, 236, 231)"],
+.msp-plugin button[style*="background-color: rgb(235, 232, 227)"],
+.msp-plugin button[style*="background-color: rgb(224, 221, 212)"],
+.msp-plugin button[style*="background-color: #EEECE7"],
+.msp-plugin button[style*="background-color: #EBE8E3"],
+.msp-plugin button[style*="background-color: #E0DDD4"],
+.msp-plugin .msp-btn[style*="background-color: rgb(238, 236, 231)"],
+.msp-plugin .msp-btn[style*="background-color: rgb(235, 232, 227)"],
+.msp-plugin .msp-btn[style*="background-color: rgb(224, 221, 212)"],
+.msp-plugin .msp-btn[style*="background-color: #EEECE7"],
+.msp-plugin .msp-btn[style*="background-color: #EBE8E3"],
+.msp-plugin .msp-btn[style*="background-color: #E0DDD4"] {
+  background-color: #374151 !important;
+  color: #ffffff !important;
+}

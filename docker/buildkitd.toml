@@ -1,0 +1,29 @@
+# BuildKit daemon configuration for Ligand-X
+# This limits the build cache to prevent disk space exhaustion
+#
+# To use with Docker:
+#   docker buildx create --use --config ./docker/buildkitd.toml --name ligandx-builder
+#
+# Or set in Docker daemon config (/etc/docker/daemon.json):
+#   { "features": { "buildkit": true } }
+
+[worker.oci]
+  # Garbage collection configuration
+  gc = true
+  
+  # Keep build cache under 50GB
+  gckeepstorage = 53687091200  # 50GB in bytes
+  
+  # GC policy - aggressive cleanup of old cache
+  [[worker.oci.gcpolicy]]
+    # Keep recent builds (last 24 hours)
+    keepDuration = 86400  # 24 hours in seconds
+    keepBytes = 21474836480  # 20GB reserved for recent cache
+    
+  [[worker.oci.gcpolicy]]
+    # Allow total cache up to 50GB
+    all = true
+    keepBytes = 53687091200  # 50GB max
+
+[registry."docker.io"]
+  mirrors = ["mirror.gcr.io"]

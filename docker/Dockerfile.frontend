@@ -1,0 +1,59 @@
+# use the official Bun image
+# see all versions at https://hub.docker.com/r/oven/bun/tags
+FROM oven/bun:1 AS base
+WORKDIR /usr/src/app
+
+# install dependencies into temp directory
+# this will cache them and speed up future builds
+FROM base AS install
+RUN mkdir -p /temp/dev
+COPY frontend/package.json frontend/bun.lock /temp/dev/
+COPY frontend/patches /temp/dev/patches
+RUN cd /temp/dev && bun install --frozen-lockfile
+
+# install with --production (exclude devDependencies)
+RUN mkdir -p /temp/prod
+COPY frontend/package.json frontend/bun.lock /temp/prod/
+COPY frontend/patches /temp/prod/patches
+RUN cd /temp/prod && bun install --frozen-lockfile --production
+
+# Create jsdom and canvas stubs for paper.js compatibility
+# Paper.js (used by ketcher-core) tries to require Node.js modules that don't exist in browser builds
+# Reference: https://github.com/paperjs/paper.js/issues/1928
+RUN mkdir -p /temp/dev/node_modules/jsdom/lib/jsdom/living/generated && \
+    echo 'module.exports = { implForWrapper: () => null, wrapperForImpl: () => null };' > /temp/dev/node_modules/jsdom/lib/jsdom/living/generated/utils.js && \
+    echo '{ "name": "jsdom", "main": "./lib/jsdom/living/generated/utils.js" }' > /temp/dev/node_modules/jsdom/package.json && \
+    mkdir -p /temp/dev/node_modules/canvas && \
+    echo 'module.exports = {};' > /temp/dev/node_modules/canvas/index.js && \
+    echo '{ "name": "canvas", "main": "index.js" }' > /temp/dev/node_modules/canvas/package.json
+
+# Also create in production node_modules (used in final image)
+RUN mkdir -p /temp/prod/node_modules/jsdom/lib/jsdom/living/generated && \
+    echo 'module.exports = { implForWrapper: () => null, wrapperForImpl: () => null };' > /temp/prod/node_modules/jsdom/lib/jsdom/living/generated/utils.js && \
+    echo '{ "name": "jsdom", "main": "./lib/jsdom/living/generated/utils.js" }' > /temp/prod/node_modules/jsdom/package.json && \
+    mkdir -p /temp/prod/node_modules/canvas && \
+    echo 'module.exports = {};' > /temp/prod/node_modules/canvas/index.js && \
+    echo '{ "name": "canvas", "main": "index.js" }' > /temp/prod/node_modules/canvas/package.json
+
+# copy node_modules from temp directory
+# then copy all (non-ignored) project files into the image
+FROM base AS prerelease
+COPY --from=install /temp/dev/node_modules node_modules
+COPY frontend/ .
+
+# [optional] tests & build
+ENV NODE_ENV=production
+# RUN bun test
+RUN bun run build
+
+# copy production dependencies and source code into final image
+FROM base AS release
+COPY --from=install /temp/prod/node_modules node_modules
+COPY --from=prerelease /usr/src/app/.next ./.next
+COPY --from=prerelease /usr/src/app/public ./public
+COPY --from=prerelease /usr/src/app/package.json .
+
+# run the app
+USER bun
+EXPOSE 3000/tcp
+CMD [ "bun", "run", "start" ]

@@ -1,0 +1,37 @@
+# ============================================================
+# Ligand-X Build Configuration
+# ============================================================
+# This file allows you to customize build behavior without
+# editing the build.sh script. Settings are loaded automatically.
+#
+# To override a setting, uncomment and modify the value.
+# Environment variables take precedence over this file.
+#
+# Examples:
+#   export MIN_DISK_SPACE_GB=30    # Require 30GB free
+#   export BUILD_CACHE_LIMIT_GB=100 # Allow 100GB cache
+#   export WARN_DISK_SPACE_GB=150   # Warn at 150GB
+
+# Minimum free disk space required before building (GB)
+# Default: 50
+# MIN_DISK_SPACE_GB=50
+
+# Maximum build cache size (GB)
+# Default: 50
+# BUILD_CACHE_LIMIT_GB=50
+
+# Disk space threshold for warnings (GB)
+# Default: 100
+# WARN_DISK_SPACE_GB=100
+
+# Enable verbose output (true/false)
+# Default: false
+# VERBOSE=false
+
+# Automatically cleanup if below minimum space (true/false)
+# Default: true
+# AUTO_CLEANUP=true
+
+# BuildKit cache keep duration in hours
+# Default: 24
+# CACHE_KEEP_DURATION=24

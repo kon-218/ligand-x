@@ -1,0 +1,35 @@
+FROM oven/bun:1
+
+WORKDIR /app
+
+# Install Node.js/npm for compatibility with some tools/scripts
+RUN apt-get update && apt-get install -y nodejs npm && rm -rf /var/lib/apt/lists/*
+
+# Copy package files and patches
+COPY frontend/package.json frontend/bun.lock ./
+COPY frontend/patches ./patches/
+
+# Install dependencies
+RUN bun install
+
+# Create jsdom utils stub for paper.js compatibility
+# paper.js tries to require 'jsdom/lib/jsdom/living/generated/utils' which doesn't exist in newer jsdom
+RUN mkdir -p node_modules/jsdom/lib/jsdom/living/generated && \
+    echo 'module.exports = { implForWrapper: () => null, wrapperForImpl: () => null };' > node_modules/jsdom/lib/jsdom/living/generated/utils.js && \
+    echo '{ "name": "jsdom", "main": "./lib/jsdom/living/generated/utils.js" }' > node_modules/jsdom/package.json && \
+    mkdir -p node_modules/canvas && \
+    echo 'module.exports = {};' > node_modules/canvas/index.js && \
+    echo '{ "name": "canvas", "main": "index.js" }' > node_modules/canvas/package.json
+
+# Expose port
+EXPOSE 3000
+
+# Set environment to development
+ENV NODE_ENV=development
+ENV WATCHPACK_POLLING=true
+
+# Start dev server with hot reloading
+# The volume mount overwrites /app, so we need to check and install node_modules
+# Use a shell script that checks for dependencies before starting
+CMD ["/bin/sh", "-c", "cd /app && if [ ! -d 'node_modules' ] || [ ! -f 'node_modules/.bin/next' ]; then echo '⚠️  Installing dependencies...' && bun install; fi && echo '✅ Starting dev server...' && bun run dev -- --hostname 0.0.0.0"]
+

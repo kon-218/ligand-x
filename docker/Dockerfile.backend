@@ -1,0 +1,226 @@
+# ============================================================
+# Ligand-X Multi-Stage Dockerfile
+# ============================================================
+# This Dockerfile uses multi-stage builds to create service-specific
+# images. Each service only includes its required conda environment,
+# reducing image size from ~10GB to ~1.5-6GB per service.
+#
+# Usage:
+#   docker build --target service-docking -t ligandx-docking .
+#   docker build --target service-md -t ligandx-md .
+#
+# In docker-compose.yml:
+#   services:
+#     docking:
+#       build:
+#         context: .
+#         dockerfile: Dockerfile.backend.staged
+#         target: service-docking
+# ============================================================
+
+# ============================================================
+# Stage 1: Base System Layer
+# ============================================================
+# Shared by all services - contains system dependencies only
+FROM condaforge/miniforge3 AS base
+
+WORKDIR /app
+
+# Install system dependencies
+# - build-essential: compilation tools
+# - libgl1: OpenGL for scientific visualization libraries
+# - curl: HTTP client
+# - openmpi: MPI for parallel computing (ORCA)
+RUN apt-get update && apt-get install -y \
+    build-essential \
+    libgl1 \
+    curl \
+    openmpi-bin \
+    libopenmpi-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+# Create non-root user
+RUN useradd -m -s /bin/bash appuser && \
+    mkdir -p /app/data/docking_outputs \
+             /app/data/md_outputs \
+             /app/data/abfe_outputs \
+             /app/data/rbfe_outputs \
+             /app/data/boltz_results_input/outputs \
+             /app/data/qc_jobs \
+             /app/data/qc_results_db \
+             /app/data/msa_cache && \
+    chown -R appuser:appuser /app
+
+# Ensure OpenMPI libraries are in the library path for ORCA
+ENV LD_LIBRARY_PATH=/usr/lib/openmpi/lib:${LD_LIBRARY_PATH:-}
+
+# Copy shared library code (used by all services)
+COPY --chown=appuser:appuser lib/ /app/lib/
+COPY --chown=appuser:appuser package.json /app/package.json
+
+# ============================================================
+# Stage 2: Environment Layers
+# ============================================================
+# Each environment is built in a separate stage for caching
+
+# --- Base Environment (lightweight services) ---
+FROM base AS env-base
+COPY environments/base.yml /app/environments/base.yml
+RUN mamba env create -f /app/environments/base.yml && mamba clean -afy
+
+# --- Docking Environment ---
+FROM base AS env-docking
+COPY environments/docking.yml /app/environments/docking.yml
+RUN mamba env create -f /app/environments/docking.yml && mamba clean -afy
+
+# --- MD Environment (also used by ABFE/RBFE) ---
+FROM base AS env-md
+COPY environments/md.yml /app/environments/md.yml
+RUN mamba env create -f /app/environments/md.yml && mamba clean -afy
+
+# --- ADMET Environment ---
+FROM base AS env-admet
+COPY environments/admet.yml /app/environments/admet.yml
+RUN mamba env create -f /app/environments/admet.yml && mamba clean -afy
+
+# --- Boltz2 Environment (GPU + PyTorch) ---
+FROM base AS env-boltz2
+COPY environments/boltz2.yml /app/environments/boltz2.yml
+RUN mamba env create -f /app/environments/boltz2.yml && mamba clean -afy
+
+# --- QC Environment (Celery + ORCA tools) ---
+FROM base AS env-qc
+COPY environments/qc.yml /app/environments/qc.yml
+RUN mamba env create -f /app/environments/qc.yml && mamba clean -afy
+
+# ============================================================
+# Stage 3: Service Images
+# ============================================================
+# Final images with service code baked in
+
+# --- Gateway Service ---
+FROM env-base AS service-gateway
+COPY gateway/ /app/gateway/
+COPY entrypoint.sh /app/entrypoint.sh
+RUN chmod +x /app/entrypoint.sh
+ENTRYPOINT ["/app/entrypoint.sh"]
+
+# --- Structure Service (lightweight) ---
+FROM env-base AS service-structure
+COPY services/structure/ /app/services/structure/
+COPY entrypoint.sh /app/entrypoint.sh
+RUN chmod +x /app/entrypoint.sh
+ENTRYPOINT ["/app/entrypoint.sh"]
+
+# --- Alignment Service (lightweight) ---
+FROM env-base AS service-alignment
+COPY services/alignment/ /app/services/alignment/
+COPY entrypoint.sh /app/entrypoint.sh
+RUN chmod +x /app/entrypoint.sh
+ENTRYPOINT ["/app/entrypoint.sh"]
+
+# --- Ketcher Service (lightweight) ---
+FROM env-base AS service-ketcher
+COPY services/ketcher/ /app/services/ketcher/
+COPY entrypoint.sh /app/entrypoint.sh
+RUN chmod +x /app/entrypoint.sh
+ENTRYPOINT ["/app/entrypoint.sh"]
+
+# --- MSA Service (lightweight) ---
+FROM env-base AS service-msa
+COPY services/msa/ /app/services/msa/
+COPY entrypoint.sh /app/entrypoint.sh
+RUN chmod +x /app/entrypoint.sh
+ENTRYPOINT ["/app/entrypoint.sh"]
+
+# --- Docking Service ---
+FROM env-docking AS service-docking
+COPY services/docking/ /app/services/docking/
+COPY entrypoint.sh /app/entrypoint.sh
+RUN chmod +x /app/entrypoint.sh
+ENTRYPOINT ["/app/entrypoint.sh"]
+
+# --- MD Service (GPU) ---
+FROM env-md AS service-md
+COPY services/md/ /app/services/md/
+COPY entrypoint.sh /app/entrypoint.sh
+RUN chmod +x /app/entrypoint.sh
+ENTRYPOINT ["/app/entrypoint.sh"]
+
+# --- ABFE Service (uses MD environment) ---
+FROM env-md AS service-abfe
+COPY services/abfe/ /app/services/abfe/
+COPY entrypoint.sh /app/entrypoint.sh
+RUN chmod +x /app/entrypoint.sh
+ENTRYPOINT ["/app/entrypoint.sh"]
+
+# --- RBFE Service (uses MD environment) ---
+FROM env-md AS service-rbfe
+COPY services/rbfe/ /app/services/rbfe/
+COPY entrypoint.sh /app/entrypoint.sh
+RUN chmod +x /app/entrypoint.sh
+ENTRYPOINT ["/app/entrypoint.sh"]
+
+# --- ADMET Service ---
+FROM env-admet AS service-admet
+COPY services/admet/ /app/services/admet/
+COPY entrypoint.sh /app/entrypoint.sh
+RUN chmod +x /app/entrypoint.sh
+ENTRYPOINT ["/app/entrypoint.sh"]
+
+# --- Boltz2 Service (GPU) ---
+FROM env-boltz2 AS service-boltz2
+COPY services/boltz2/ /app/services/boltz2/
+# Boltz2 has direct imports from alignment and msa services
+COPY services/alignment/ /app/services/alignment/
+COPY services/msa/ /app/services/msa/
+COPY entrypoint.sh /app/entrypoint.sh
+RUN chmod +x /app/entrypoint.sh
+ENTRYPOINT ["/app/entrypoint.sh"]
+
+# --- QC Service (API) ---
+FROM env-qc AS service-qc
+COPY --chown=appuser:appuser services/qc/ /app/services/qc/
+COPY --chown=appuser:appuser entrypoint.sh /app/entrypoint.sh
+RUN chmod +x /app/entrypoint.sh
+USER appuser
+ENTRYPOINT ["/app/entrypoint.sh"]
+
+# ============================================================
+# Stage 4: Worker Images
+# ============================================================
+# Celery workers for background job processing
+
+# --- QC Celery Worker ---
+FROM env-qc AS worker-qc
+COPY --chown=appuser:appuser lib/ /app/lib/
+COPY --chown=appuser:appuser services/qc/ /app/services/qc/
+COPY --chown=appuser:appuser gateway/ /app/gateway/
+COPY --chown=appuser:appuser entrypoint.sh /app/entrypoint.sh
+RUN chmod +x /app/entrypoint.sh
+USER appuser
+ENTRYPOINT ["/app/entrypoint.sh"]
+
+# --- GPU Worker (MD/ABFE/RBFE tasks) ---
+FROM env-md AS worker-gpu
+COPY --chown=appuser:appuser services/md/ /app/services/md/
+COPY --chown=appuser:appuser services/abfe/ /app/services/abfe/
+COPY --chown=appuser:appuser services/rbfe/ /app/services/rbfe/
+COPY --chown=appuser:appuser entrypoint.sh /app/entrypoint.sh
+RUN chmod +x /app/entrypoint.sh
+USER appuser
+ENTRYPOINT ["/app/entrypoint.sh"]
+
+# --- CPU Worker (Docking batch tasks) ---
+FROM env-docking AS worker-docking
+COPY --chown=appuser:appuser services/docking/ /app/services/docking/
+COPY --chown=appuser:appuser entrypoint.sh /app/entrypoint.sh
+RUN chmod +x /app/entrypoint.sh
+USER appuser
+ENTRYPOINT ["/app/entrypoint.sh"]
+
+# ============================================================
+# Default Target (for backwards compatibility)
+# ============================================================
+# If no target specified, build the gateway
+FROM service-gateway AS default

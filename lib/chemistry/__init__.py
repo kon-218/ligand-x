@@ -1,0 +1,40 @@
+"""
+Chemistry utilities package.
+
+This package provides molecular structure parsing, analysis, and preparation tools.
+
+Submodules:
+- parsers: PDB and mmCIF format parsing
+- analysis: Structure component identification and analysis
+- preparation: Protein and ligand preparation utilities
+- smiles_lookup: SMILES string utilities
+"""
+
+from lib.chemistry.parsers import PDBParserUtils, MMCIFParserUtils
+from lib.chemistry.parsers.pdb import get_pdb_parser, ResidueSelector
+from lib.chemistry.parsers.mmcif import get_mmcif_parser
+from lib.chemistry.analysis import ComponentAnalyzer, RESIDUE_CLASSIFICATIONS
+from lib.chemistry.analysis.components import get_component_analyzer, AMINO_ACID_MAP, ATOMIC_MASSES
+from lib.chemistry.preparation import ProteinPreparer, LigandPreparer
+from lib.chemistry.preparation.protein import get_protein_preparer
+from lib.chemistry.preparation.ligand import get_ligand_preparer
+
+__all__ = [
+    # Parsers
+    'PDBParserUtils',
+    'MMCIFParserUtils',
+    'get_pdb_parser',
+    'get_mmcif_parser',
+    'ResidueSelector',
+    # Analysis
+    'ComponentAnalyzer',
+    'get_component_analyzer',
+    'RESIDUE_CLASSIFICATIONS',
+    'AMINO_ACID_MAP',
+    'ATOMIC_MASSES',
+    # Preparation
+    'ProteinPreparer',
+    'LigandPreparer',
+    'get_protein_preparer',
+    'get_ligand_preparer',
+]

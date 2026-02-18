@@ -1,0 +1,10 @@
+# Benchmark script dependencies
+# Most dependencies are already in main project environments
+
+httpx>=0.24.0
+numpy>=1.24.0
+scipy>=1.10.0
+asyncpg>=0.28.0  # For direct database access (optional)
+
+# Optional for PDF generation
+# weasyprint>=59.0

@@ -1,0 +1,89 @@
+╔════════════════════════════════════════════════════════════════════════════╗
+║                  LIGAND-X BUILD SYSTEM QUICK REFERENCE                      ║
+╚════════════════════════════════════════════════════════════════════════════╝
+
+MOST COMMON COMMANDS
+────────────────────────────────────────────────────────────────────────────
+
+  make build              Build all services (auto-cleanup)
+  make rebuild            Full clean + rebuild
+  make up                 Start all services
+  make down               Stop all services
+  make status             Show disk usage
+  make clean              Safe cleanup
+
+BUILD OPTIONS
+────────────────────────────────────────────────────────────────────────────
+
+  make build-quick        Build only changed services
+  make build-nocache      Build without cache
+  make build-gateway      Build specific service
+  ./build.sh --help       Show all options
+
+CUSTOMIZE DEFAULTS
+────────────────────────────────────────────────────────────────────────────
+
+  Edit .buildrc:
+    MIN_DISK_SPACE_GB=30
+    BUILD_CACHE_LIMIT_GB=100
+
+  Or use environment variables:
+    MIN_DISK_SPACE_GB=30 make build
+    MIN_DISK_SPACE_GB=30 ./build.sh
+
+  Or use make target:
+    make build-custom MIN_DISK_SPACE_GB=30
+
+WHEN DISK IS FULL
+────────────────────────────────────────────────────────────────────────────
+
+  make emergency          Emergency cleanup
+  ./emergency-docker-cleanup.sh
+
+CONFIGURATION DEFAULTS
+────────────────────────────────────────────────────────────────────────────
+
+  MIN_DISK_SPACE_GB=50        Minimum free space required
+  BUILD_CACHE_LIMIT_GB=50     Max build cache size
+  WARN_DISK_SPACE_GB=100      Warn threshold
+  AUTO_CLEANUP=true           Auto-cleanup when low
+  VERBOSE=false               Verbose output
+
+HELP & DOCUMENTATION
+────────────────────────────────────────────────────────────────────────────
+
+  make help               Show all available commands
+  ./build.sh --help       Show build script options
+  BUILD.md                Comprehensive guide
+  BUILD_SYSTEM_FIXES.md   What was fixed
+
+PRIORITY ORDER (for configuration)
+────────────────────────────────────────────────────────────────────────────
+
+  1. Environment Variables (highest)
+  2. .buildrc file
+  3. Script defaults (lowest)
+
+EXAMPLES
+────────────────────────────────────────────────────────────────────────────
+
+  # Build with custom disk requirement
+  MIN_DISK_SPACE_GB=30 make build
+
+  # Build without cache
+  make build-nocache
+
+  # Full clean and rebuild
+  make rebuild
+
+  # Build specific service
+  make build-gateway
+
+  # Emergency cleanup
+  make emergency
+
+  # Check disk usage
+  make status
+
+  # View all commands
+  make help

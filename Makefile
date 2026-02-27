@@ -16,7 +16,7 @@
 #   make shell   - Access service shell
 # ============================================================
 
-.PHONY: help dev prod down build test clean logs shell shell-% logs-% status db db-backup purge-queues dev-core dev-docking dev-md dev-qc dev-free-energy dev-gpu
+.PHONY: help dev prod down build test clean logs shell shell-% logs-% restart restart-% status db db-backup purge-queues dev-core dev-docking dev-md dev-qc dev-free-energy dev-gpu
 
 # ============================================================
 # Configuration
@@ -47,6 +47,8 @@ help:
 	@echo "Utility Commands:"
 	@echo "  make logs             - View all service logs"
 	@echo "  make logs-<service>   - View specific service logs"
+	@echo "  make restart          - Restart all running services"
+	@echo "  make restart-<service>- Restart a specific service"
 	@echo "  make shell-<service>  - Open shell in service"
 	@echo "  make status           - Show system status"
 	@echo "  make clean            - Clean Docker resources"
@@ -204,6 +206,18 @@ logs-%:
 # Open shell in service (pattern target)
 shell-%:
 	@docker compose exec $* bash || docker compose exec $* sh
+
+# Restart all running services
+restart:
+	@echo "Restarting all services..."
+	@docker compose restart
+	@echo "All services restarted!"
+
+# Restart a specific service (pattern target)
+restart-%:
+	@echo "Restarting $*..."
+	@docker compose restart $*
+	@echo "$* restarted!"
 
 # Cleanup
 clean:

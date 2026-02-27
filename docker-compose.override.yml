@@ -214,7 +214,7 @@ services:
       - ./lib:/app/lib
       - ./data/qc_jobs:/app/data/qc_jobs
       - ./data/qc_results_db:/app/data/qc_results_db
-      - ${ORCA_HOST_PATH:-/home/konstantin-nomerotski/orca_6_1_0}:/opt/orca
+      - ${ORCA_HOST_PATH:-/opt/orca}:/opt/orca
     environment:
       - LOG_LEVEL=DEBUG
     deploy:
@@ -234,7 +234,7 @@ services:
       - ./lib:/app/lib
       - ./data/qc_jobs:/app/data/qc_jobs
       - ./data/qc_results_db:/app/data/qc_results_db
-      - ${ORCA_HOST_PATH:-/home/konstantin-nomerotski/orca_6_1_0}:/opt/orca
+      - ${ORCA_HOST_PATH:-/opt/orca}:/opt/orca
     deploy:
       resources:
         limits:

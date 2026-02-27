@@ -2,7 +2,7 @@
 Configuration for Quantum Chemistry Service
 
 This module contains all configuration settings for the ORCA quantum chemistry
-integration, including Flask, Celery, Redis, and ORCA-specific paths.
+integration, including Celery, Redis, and ORCA-specific paths.
 """
 
 import os
@@ -23,8 +23,9 @@ class QCConfig:
     
     # ORCA settings
     # This is the path to the ORCA executable on the worker machine
-    # Example: '/opt/orca_6_1_0/orca'    # ORCA executable path
-    ORCA_PATH = os.environ.get('ORCA_PATH', '/home/konstantin-nomerotski/orca_6_1_0/orca')
+    # Set the ORCA_PATH environment variable to your installation path.
+    # In Docker, the host path is mounted at /opt/orca via ORCA_HOST_PATH in .env
+    ORCA_PATH = os.environ.get('ORCA_PATH', '/opt/orca/orca')
     
     # Job storage settings
     # Directory where all QC job files will be stored (each job gets a subdirectory)

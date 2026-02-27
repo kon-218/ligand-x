@@ -10,7 +10,12 @@
 # Production Standards:
 # - Security: No hardcoded passwords, environment-based secrets
 # - Reliability: Health checks, restart policies, graceful shutdown
-# - Resource Management: CPU/memory limits for all services
+# - Resource Management: CPU/memory limits tunable via .env.production
+#
+# Resource Limits:
+# All CPU/memory limits and reservations are configured via environment
+# variables so you can tune them in .env.production without touching this file.
+# See .env.production.template for the full list with defaults and guidance.
 # ============================================================
 
 # ============================================================
@@ -53,6 +58,7 @@ services:
       - MSA_URL=http://msa:8009
       - ABFE_URL=http://abfe:8010
       - RBFE_URL=http://rbfe:8011
+      - CORS_ORIGINS=${CORS_ORIGINS:-http://localhost:3000,http://127.0.0.1:3000}
     depends_on:
       redis:
         condition: service_healthy
@@ -68,11 +74,11 @@ services:
     deploy:
       resources:
         limits:
-          cpus: '2'
-          memory: 2G
+          cpus: '${GATEWAY_CPU_LIMIT:-2}'
+          memory: ${GATEWAY_MEM_LIMIT:-2G}
         reservations:
-          cpus: '0.5'
-          memory: 512M
+          cpus: '${GATEWAY_CPU_RES:-0.5}'
+          memory: ${GATEWAY_MEM_RES:-512M}
     logging:
       driver: "json-file"
       options:
@@ -105,11 +111,11 @@ services:
     deploy:
       resources:
         limits:
-          cpus: '2'
-          memory: 4G
+          cpus: '${STRUCTURE_CPU_LIMIT:-2}'
+          memory: ${STRUCTURE_MEM_LIMIT:-4G}
         reservations:
-          cpus: '0.5'
-          memory: 1G
+          cpus: '${STRUCTURE_CPU_RES:-0.5}'
+          memory: ${STRUCTURE_MEM_RES:-1G}
     logging:
       driver: "json-file"
       options:
@@ -139,11 +145,11 @@ services:
     deploy:
       resources:
         limits:
-          cpus: '1'
-          memory: 2G
+          cpus: '${ALIGNMENT_CPU_LIMIT:-1}'
+          memory: ${ALIGNMENT_MEM_LIMIT:-2G}
         reservations:
-          cpus: '0.25'
-          memory: 512M
+          cpus: '${ALIGNMENT_CPU_RES:-0.25}'
+          memory: ${ALIGNMENT_MEM_RES:-512M}
     logging:
       driver: "json-file"
       options:
@@ -173,11 +179,11 @@ services:
     deploy:
       resources:
         limits:
-          cpus: '1'
-          memory: 2G
+          cpus: '${KETCHER_CPU_LIMIT:-1}'
+          memory: ${KETCHER_MEM_LIMIT:-2G}
         reservations:
-          cpus: '0.25'
-          memory: 512M
+          cpus: '${KETCHER_CPU_RES:-0.25}'
+          memory: ${KETCHER_MEM_RES:-512M}
     logging:
       driver: "json-file"
       options:
@@ -209,11 +215,11 @@ services:
     deploy:
       resources:
         limits:
-          cpus: '2'
-          memory: 4G
+          cpus: '${MSA_CPU_LIMIT:-2}'
+          memory: ${MSA_MEM_LIMIT:-4G}
         reservations:
-          cpus: '0.5'
-          memory: 1G
+          cpus: '${MSA_CPU_RES:-0.5}'
+          memory: ${MSA_MEM_RES:-1G}
     logging:
       driver: "json-file"
       options:
@@ -248,11 +254,11 @@ services:
     deploy:
       resources:
         limits:
-          cpus: '4'
-          memory: 8G
+          cpus: '${DOCKING_CPU_LIMIT:-4}'
+          memory: ${DOCKING_MEM_LIMIT:-8G}
         reservations:
-          cpus: '1'
-          memory: 2G
+          cpus: '${DOCKING_CPU_RES:-1}'
+          memory: ${DOCKING_MEM_RES:-2G}
     logging:
       driver: "json-file"
       options:
@@ -287,11 +293,11 @@ services:
     deploy:
       resources:
         limits:
-          cpus: '4'
-          memory: 16G
+          cpus: '${MD_CPU_LIMIT:-4}'
+          memory: ${MD_MEM_LIMIT:-16G}
         reservations:
-          cpus: '2'
-          memory: 4G
+          cpus: '${MD_CPU_RES:-2}'
+          memory: ${MD_MEM_RES:-4G}
           devices:
             - driver: nvidia
               count: all
@@ -327,11 +333,11 @@ services:
     deploy:
       resources:
         limits:
-          cpus: '4'
-          memory: 16G
+          cpus: '${ABFE_CPU_LIMIT:-4}'
+          memory: ${ABFE_MEM_LIMIT:-16G}
         reservations:
-          cpus: '2'
-          memory: 4G
+          cpus: '${ABFE_CPU_RES:-2}'
+          memory: ${ABFE_MEM_RES:-4G}
           devices:
             - driver: nvidia
               count: all
@@ -371,11 +377,11 @@ services:
     deploy:
       resources:
         limits:
-          cpus: '4'
-          memory: 16G
+          cpus: '${RBFE_CPU_LIMIT:-4}'
+          memory: ${RBFE_MEM_LIMIT:-16G}
         reservations:
-          cpus: '2'
-          memory: 4G
+          cpus: '${RBFE_CPU_RES:-2}'
+          memory: ${RBFE_MEM_RES:-4G}
           devices:
             - driver: nvidia
               count: all
@@ -412,11 +418,11 @@ services:
     deploy:
       resources:
         limits:
-          cpus: '2'
-          memory: 8G
+          cpus: '${ADMET_CPU_LIMIT:-2}'
+          memory: ${ADMET_MEM_LIMIT:-8G}
         reservations:
-          cpus: '0.5'
-          memory: 2G
+          cpus: '${ADMET_CPU_RES:-0.5}'
+          memory: ${ADMET_MEM_RES:-2G}
     logging:
       driver: "json-file"
       options:
@@ -456,11 +462,11 @@ services:
     deploy:
       resources:
         limits:
-          cpus: '4'
-          memory: 16G
+          cpus: '${BOLTZ2_CPU_LIMIT:-4}'
+          memory: ${BOLTZ2_MEM_LIMIT:-16G}
         reservations:
-          cpus: '2'
-          memory: 6G
+          cpus: '${BOLTZ2_CPU_RES:-2}'
+          memory: ${BOLTZ2_MEM_RES:-6G}
           devices:
             - driver: nvidia
               count: all
@@ -512,11 +518,11 @@ services:
     deploy:
       resources:
         limits:
-          cpus: '4'
-          memory: 8G
+          cpus: '${QC_CPU_LIMIT:-4}'
+          memory: ${QC_MEM_LIMIT:-8G}
         reservations:
-          cpus: '1'
-          memory: 2G
+          cpus: '${QC_CPU_RES:-1}'
+          memory: ${QC_MEM_RES:-2G}
     logging:
       driver: "json-file"
       options:
@@ -568,11 +574,11 @@ services:
     deploy:
       resources:
         limits:
-          cpus: '8'
-          memory: 16G
+          cpus: '${WORKER_QC_CPU_LIMIT:-8}'
+          memory: ${WORKER_QC_MEM_LIMIT:-16G}
         reservations:
-          cpus: '2'
-          memory: 4G
+          cpus: '${WORKER_QC_CPU_RES:-2}'
+          memory: ${WORKER_QC_MEM_RES:-4G}
     shm_size: '2gb'
     logging:
       driver: "json-file"
@@ -613,11 +619,11 @@ services:
     deploy:
       resources:
         limits:
-          cpus: '8'
-          memory: 32G
+          cpus: '${WORKER_GPU_SHORT_CPU_LIMIT:-8}'
+          memory: ${WORKER_GPU_SHORT_MEM_LIMIT:-32G}
         reservations:
-          cpus: '4'
-          memory: 8G
+          cpus: '${WORKER_GPU_SHORT_CPU_RES:-4}'
+          memory: ${WORKER_GPU_SHORT_MEM_RES:-8G}
           devices:
             - driver: nvidia
               count: all
@@ -664,11 +670,11 @@ services:
     deploy:
       resources:
         limits:
-          cpus: '12'
-          memory: 48G
+          cpus: '${WORKER_GPU_LONG_CPU_LIMIT:-12}'
+          memory: ${WORKER_GPU_LONG_MEM_LIMIT:-48G}
         reservations:
-          cpus: '4'
-          memory: 16G
+          cpus: '${WORKER_GPU_LONG_CPU_RES:-4}'
+          memory: ${WORKER_GPU_LONG_MEM_RES:-16G}
           devices:
             - driver: nvidia
               count: all
@@ -712,11 +718,11 @@ services:
     deploy:
       resources:
         limits:
-          cpus: '16'
-          memory: 32G
+          cpus: '${WORKER_CPU_CPU_LIMIT:-16}'
+          memory: ${WORKER_CPU_MEM_LIMIT:-32G}
         reservations:
-          cpus: '4'
-          memory: 8G
+          cpus: '${WORKER_CPU_CPU_RES:-4}'
+          memory: ${WORKER_CPU_MEM_RES:-8G}
     logging:
       driver: "json-file"
       options:
@@ -753,11 +759,11 @@ services:
     deploy:
       resources:
         limits:
-          cpus: '2'
-          memory: 4G
+          cpus: '${RABBITMQ_CPU_LIMIT:-2}'
+          memory: ${RABBITMQ_MEM_LIMIT:-4G}
         reservations:
-          cpus: '0.5'
-          memory: 1G
+          cpus: '${RABBITMQ_CPU_RES:-0.5}'
+          memory: ${RABBITMQ_MEM_RES:-1G}
     logging:
       driver: "json-file"
       options:
@@ -781,11 +787,11 @@ services:
     deploy:
       resources:
         limits:
-          cpus: '1'
-          memory: 2G
+          cpus: '${REDIS_CPU_LIMIT:-1}'
+          memory: ${REDIS_MEM_LIMIT:-2G}
         reservations:
-          cpus: '0.25'
-          memory: 512M
+          cpus: '${REDIS_CPU_RES:-0.25}'
+          memory: ${REDIS_MEM_RES:-512M}
     logging:
       driver: "json-file"
       options:
@@ -812,11 +818,11 @@ services:
     deploy:
       resources:
         limits:
-          cpus: '2'
-          memory: 4G
+          cpus: '${POSTGRES_CPU_LIMIT:-2}'
+          memory: ${POSTGRES_MEM_LIMIT:-4G}
         reservations:
-          cpus: '0.5'
-          memory: 1G
+          cpus: '${POSTGRES_CPU_RES:-0.5}'
+          memory: ${POSTGRES_MEM_RES:-1G}
     logging:
       driver: "json-file"
       options:
@@ -858,11 +864,11 @@ services:
     deploy:
       resources:
         limits:
-          cpus: '1'
-          memory: 1G
+          cpus: '${FLOWER_CPU_LIMIT:-1}'
+          memory: ${FLOWER_MEM_LIMIT:-1G}
         reservations:
-          cpus: '0.25'
-          memory: 256M
+          cpus: '${FLOWER_CPU_RES:-0.25}'
+          memory: ${FLOWER_MEM_RES:-256M}
     logging:
       driver: "json-file"
       options:
@@ -895,11 +901,11 @@ services:
     deploy:
       resources:
         limits:
-          cpus: '2'
-          memory: 4G
+          cpus: '${FRONTEND_CPU_LIMIT:-2}'
+          memory: ${FRONTEND_MEM_LIMIT:-4G}
         reservations:
-          cpus: '0.5'
-          memory: 1G
+          cpus: '${FRONTEND_CPU_RES:-0.5}'
+          memory: ${FRONTEND_MEM_RES:-1G}
     logging:
       driver: "json-file"
       options:

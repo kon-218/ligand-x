@@ -213,23 +213,6 @@ async def services_health():
     return {"services": dict(results)}
 
 
-@app.get("/test-routing/{path:path}")
-async def test_routing(path: str):
-    """Test endpoint to verify routing logic."""
-    from gateway.routers.proxy import _get_service_for_path
-    from gateway.config import SERVICE_URLS
-    
-    service, target_path = _get_service_for_path(path)
-    service_url = SERVICE_URLS.get(service) if service else None
-    
-    return {
-        "path": path,
-        "service": service,
-        "target_path": target_path,
-        "service_url": service_url,
-        "routing_works": service is not None
-    }
-
 # Include explicit service routers before the catch-all proxy
 # This ensures specific routes are matched before the generic proxy
 app.include_router(md.router)

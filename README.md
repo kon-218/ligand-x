@@ -126,7 +126,8 @@ ligand-x/
 - [Build Reference](docs-root/BUILD.md)
 - [Services Overview](docs-root/services/SERVICES_OVERVIEW.md)
 - [API Reference](docs/API.md)
-- [Architecture Notes](docs/ARCHITECTURE_IMPROVEMENTS.md)
+- [Contributing](docs-root/CONTRIBUTING.md)
+- [Changelog](CHANGELOG.md)
 
 ## Acknowledgements
 

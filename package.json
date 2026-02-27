@@ -1,7 +1,7 @@
 {
   "name": "ligand-x-backend",
-  "version": "2.0.0",
-  "description": "Ligand-X Flask API Backend",
+  "version": "0.1.0",
+  "description": "Ligand-X FastAPI Backend — microservices for molecular docking, MD simulations, quantum chemistry, and binding free energy calculations",
   "private": true,
   "scripts": {
     "test": "echo \"No tests specified for backend\""
@@ -9,10 +9,11 @@
   "keywords": [
     "bioinformatics",
     "molecular-docking",
-    "flask",
+    "fastapi",
+    "computational-chemistry",
     "api"
   ],
   "author": "",
-  "license": "ISC",
+  "license": "MIT",
   "note": "Frontend dependencies are in frontend/package.json"
 }

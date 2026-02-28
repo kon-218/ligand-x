@@ -496,7 +496,7 @@ services:
       - CELERY_RESULT_BACKEND=${CELERY_RESULT_BACKEND:-redis://redis:6379/0}
       - DATABASE_URL=${DATABASE_URL:-postgresql://ligandx:${POSTGRES_PASSWORD:-ligandx}@postgres:5432/ligandx}
       - ORCA_PATH=/opt/orca/orca
-      - SECRET_KEY=${QC_SECRET_KEY:-change_in_production}
+      - SECRET_KEY=${QC_SECRET_KEY:?Set QC_SECRET_KEY in .env or .env.production}
     depends_on:
       rabbitmq:
         condition: service_healthy
@@ -547,7 +547,7 @@ services:
       - CELERY_RESULT_BACKEND=${CELERY_RESULT_BACKEND:-redis://redis:6379/0}
       - DATABASE_URL=${DATABASE_URL:-postgresql://ligandx:${POSTGRES_PASSWORD:-ligandx}@postgres:5432/ligandx}
       - ORCA_PATH=/opt/orca/orca
-      - SECRET_KEY=${QC_SECRET_KEY:-change_in_production}
+      - SECRET_KEY=${QC_SECRET_KEY:?Set QC_SECRET_KEY in .env or .env.production}
       - OMPI_ALLOW_RUN_AS_ROOT=1
       - OMPI_ALLOW_RUN_AS_ROOT_CONFIRM=1
       - CELERY_CONCURRENCY=${QC_WORKER_CONCURRENCY:-2}
@@ -741,7 +741,7 @@ services:
     networks:
       - backend
     ports:
-      - "${RABBITMQ_MGMT_PORT:-15672}:15672"
+      - "127.0.0.1:${RABBITMQ_MGMT_PORT:-15672}:15672"
     environment:
       - RABBITMQ_DEFAULT_USER=${RABBITMQ_USER:-ligandx}
       - RABBITMQ_DEFAULT_PASS=${RABBITMQ_PASSWORD:-ligandx}
@@ -838,11 +838,11 @@ services:
       - backend
       - frontend
     ports:
-      - "${FLOWER_PORT:-5555}:5555"
+      - "127.0.0.1:${FLOWER_PORT:-5555}:5555"
     environment:
       - CELERY_BROKER_URL=amqp://ligandx:${RABBITMQ_PASSWORD:-ligandx}@rabbitmq:5672/
       - CELERY_RESULT_BACKEND=redis://redis:6379/0
-      - FLOWER_BASIC_AUTH=${FLOWER_USER:-admin}:${FLOWER_PASSWORD:-admin}
+      - FLOWER_BASIC_AUTH=${FLOWER_USER:-admin}:${FLOWER_PASSWORD:?Set FLOWER_PASSWORD in .env or .env.production}
       - FLOWER_PERSISTENT=true
       - FLOWER_MAX_TASKS=10000
       - FLOWER_SHOW_POOL=true

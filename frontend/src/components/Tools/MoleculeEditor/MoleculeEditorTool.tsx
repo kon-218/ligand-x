@@ -726,7 +726,7 @@ export function MoleculeEditorTool() {
         if (smiles) {
           try {
             console.log('Generating 3D structure from SMILES:', smiles)
-            const response3d = await apiClient.post('/smiles_to_3d', { smiles })
+            const response3d = await apiClient.post('/api/structure/smiles_to_3d',{ smiles })
 
             if (response3d.data && (response3d.data.pdb_data || response3d.data.sdf_data)) {
               const newStructure = {
@@ -894,7 +894,7 @@ export function MoleculeEditorTool() {
       let moleculeName = smiles.substring(0, 20) + (smiles.length > 20 ? '...' : '')
 
       // Call backend to generate 3D structure directly from SMILES
-      const response = await apiClient.post('/smiles_to_3d', {
+      const response = await apiClient.post('/api/structure/smiles_to_3d',{
         smiles
       })
 

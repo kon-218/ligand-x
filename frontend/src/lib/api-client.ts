@@ -66,21 +66,21 @@ apiClient.interceptors.response.use(
 export const api = {
   // Structure fetching and upload
   fetchPDB: async (pdbId: string): Promise<MolecularStructure> => {
-    const response = await apiClient.post('/fetch_pdb', { pdb_id: pdbId })
+    const response = await apiClient.post('/api/structure/fetch_pdb', { pdb_id: pdbId })
     return response.data
   },
 
   uploadStructure: async (file: File): Promise<MolecularStructure> => {
     const formData = new FormData()
     formData.append('file', file)
-    const response = await apiClient.post('/upload_structure', formData, {
+    const response = await apiClient.post('/api/structure/upload_structure', formData, {
       headers: { 'Content-Type': 'multipart/form-data' },
     })
     return response.data
   },
 
   uploadSmiles: async (smiles: string, moleculeName?: string): Promise<MolecularStructure> => {
-    const response = await apiClient.post('/upload_smiles', {
+    const response = await apiClient.post('/api/structure/upload_smiles', {
       smiles,
       name: moleculeName || 'molecule',
     })
@@ -88,14 +88,14 @@ export const api = {
   },
 
   fetchLigandByHETID: async (hetId: string): Promise<MolecularStructure> => {
-    const response = await apiClient.post('/fetch_hetid', {
+    const response = await apiClient.post('/api/structure/fetch_hetid', {
       het_id: hetId,
     })
     return response.data
   },
 
   extractLigandByHETID: async (pdbData: string, hetId: string, ligandName?: string): Promise<MolecularStructure> => {
-    const response = await apiClient.post('/extract_ligand_by_hetid', {
+    const response = await apiClient.post('/api/structure/extract_ligand_by_hetid', {
       pdb_data: pdbData,
       het_id: hetId,
       ligand_name: ligandName,
@@ -104,7 +104,7 @@ export const api = {
   },
 
   combineProteinLigand: async (proteinData: string, ligandData: string): Promise<MolecularStructure> => {
-    const response = await apiClient.post('/combine_protein_ligand', {
+    const response = await apiClient.post('/api/structure/combine_protein_ligand', {
       protein_data: proteinData,
       ligand_data: ligandData,
     })
@@ -126,7 +126,7 @@ export const api = {
       keep_ligands?: boolean
     }
   ): Promise<{ stages: Record<string, string>, stage_info: Record<string, any>, ligands?: Record<string, any> }> => {
-    const response = await apiClient.post('/clean_protein_staged', {
+    const response = await apiClient.post('/api/structure/clean_protein_staged', {
       pdb_data: pdbData,
       remove_heterogens: options.remove_heterogens,
       remove_water: options.remove_water,
@@ -920,7 +920,7 @@ export const api = {
 
   // ADMET Prediction
   predictADMET: async (request: ADMETRequest): Promise<ADMETResult | ADMETBatchResult> => {
-    const response = await apiClient.post('/predict_admet', request, {
+    const response = await apiClient.post('/api/admet/predict', request, {
       timeout: 300000, // 5 minutes for potential batch ADMET prediction
     })
     return response.data
@@ -947,7 +947,7 @@ export const api = {
 
   getSmilesImageUrl: (smiles: string) => {
     const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'
-    return `${API_BASE_URL}/render_smiles?smiles=${encodeURIComponent(smiles)}`
+    return `${API_BASE_URL}/api/structure/render_smiles?smiles=${encodeURIComponent(smiles)}`
   },
 
   // Molecule library

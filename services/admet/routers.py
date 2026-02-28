@@ -200,7 +200,7 @@ def format_admet_results(mol, preds, canonical_smiles, molecule_name, input_smil
     return final_response
 
 
-@router.post("/predict_admet")
+@router.post("/api/admet/predict")
 async def predict_admet(request: PredictADMETRequest):
     """Predict ADMET properties."""
     try:

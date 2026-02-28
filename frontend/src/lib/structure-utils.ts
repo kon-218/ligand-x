@@ -96,7 +96,7 @@ export async function saveLigandsToLibrary(structure: MolecularStructure): Promi
       } else if (ligand.smiles) {
         // Convert SMILES to molfile using the backend
         try {
-          const response = await apiClient.post('/smiles_to_mol', { smiles: ligand.smiles })
+          const response = await apiClient.post('/api/structure/smiles_to_mol', { smiles: ligand.smiles })
           molfile = response.data.molfile
         } catch (err) {
           console.warn(`Failed to convert SMILES to molfile for ${moleculeName}:`, err)

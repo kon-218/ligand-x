@@ -40,7 +40,7 @@ ALLOWED_EXTENSIONS = {'pdb', 'cif', 'mmcif', 'sdf'}
 MAX_CONTENT_LENGTH = 16 * 1024 * 1024  # 16 MB
 
 # CORS settings
-CORS_ORIGINS = os.getenv('CORS_ORIGINS', 'http://localhost:3000,http://127.0.0.1:3000,http://0.0.0.0:3000,http://127.0.0.1:36501').split(',')
+CORS_ORIGINS = os.getenv('CORS_ORIGINS', 'http://localhost:3000,http://127.0.0.1:3000').split(',')
 
 
 

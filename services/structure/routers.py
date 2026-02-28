@@ -36,6 +36,7 @@ from lib.structure.validator import validate_structure_for_service, detect_struc
 from pydantic import BaseModel
 
 router = APIRouter(prefix="", tags=["Structure"])
+structure_router = APIRouter(prefix="/api/structure", tags=["Structure"])
 
 # Initialize service
 structure_service = StructureService()
@@ -53,7 +54,7 @@ def _get_compatible_services(structure_type: str) -> list:
     return compatible
 
 
-@router.post("/smiles_to_3d", response_model=SMILES3DResponse)
+@structure_router.post("/smiles_to_3d", response_model=SMILES3DResponse)
 async def smiles_to_3d(request: SMILESRequest):
     """Convert SMILES to 3D structure."""
     try:
@@ -65,7 +66,7 @@ async def smiles_to_3d(request: SMILESRequest):
         raise HTTPException(status_code=500, detail=f"Internal error: {str(e)}")
 
 
-@router.post("/smiles_to_mol", response_model=SMILESMolResponse)
+@structure_router.post("/smiles_to_mol", response_model=SMILESMolResponse)
 async def smiles_to_mol(request: SMILESRequest):
     """Convert SMILES to Molfile."""
     try:
@@ -77,7 +78,7 @@ async def smiles_to_mol(request: SMILESRequest):
         raise HTTPException(status_code=500, detail=f"Internal error: {str(e)}")
 
 
-@router.post("/upload_smiles")
+@structure_router.post("/upload_smiles")
 async def upload_smiles(request: UploadSMILESRequest):
     """Upload and process SMILES string."""
     try:
@@ -94,7 +95,7 @@ async def upload_smiles(request: UploadSMILESRequest):
         raise HTTPException(status_code=500, detail=f"Internal error: {str(e)}")
 
 
-@router.post("/fetch_pdb")
+@structure_router.post("/fetch_pdb")
 async def fetch_pdb(request: FetchPDBRequest):
     """Fetch structure from PDB."""
     try:
@@ -107,7 +108,7 @@ async def fetch_pdb(request: FetchPDBRequest):
         raise HTTPException(status_code=500, detail=f"Internal error: {str(e)}")
 
 
-@router.post("/fetch_hetid")
+@structure_router.post("/fetch_hetid")
 async def fetch_hetid(request: FetchHETIDRequest):
     """Fetch structure from PDB database containing a specific HET ID."""
     try:
@@ -120,7 +121,7 @@ async def fetch_hetid(request: FetchHETIDRequest):
         raise HTTPException(status_code=500, detail=f"Internal error: {str(e)}")
 
 
-@router.post("/upload_structure")
+@structure_router.post("/upload_structure")
 async def upload_structure(
     file: UploadFile = File(...),
     format: Optional[str] = Form(None)
@@ -139,7 +140,7 @@ async def upload_structure(
         raise HTTPException(status_code=500, detail=f"Internal error: {str(e)}")
 
 
-@router.post("/process_pdb")
+@structure_router.post("/process_pdb")
 async def process_pdb(request: ProcessPDBRequest):
     """Process PDB structure with ligand extraction."""
     try:
@@ -157,7 +158,7 @@ async def process_pdb(request: ProcessPDBRequest):
         raise HTTPException(status_code=500, detail=f"Internal error: {str(e)}")
 
 
-@router.post("/download_sdf")
+@structure_router.post("/download_sdf")
 async def download_sdf(request: DownloadSDFRequest):
     """Convert PDB to SDF."""
     try:
@@ -173,7 +174,7 @@ async def download_sdf(request: DownloadSDFRequest):
         raise HTTPException(status_code=500, detail=f"Internal error: {str(e)}")
 
 
-@router.post("/combine_protein_ligand")
+@structure_router.post("/combine_protein_ligand")
 async def combine_protein_ligand(request: CombineProteinLigandRequest):
     """Combine protein and ligand into a single PDB."""
     try:
@@ -185,7 +186,7 @@ async def combine_protein_ligand(request: CombineProteinLigandRequest):
         raise HTTPException(status_code=500, detail=f"Internal error: {str(e)}")
 
 
-@router.post("/clean_protein_staged", response_model=CleanProteinStagedResponse)
+@structure_router.post("/clean_protein_staged", response_model=CleanProteinStagedResponse)
 async def clean_protein_staged(request: CleanProteinStagedRequest):
     """Clean protein with staged options."""
     try:
@@ -209,7 +210,7 @@ async def clean_protein_staged(request: CleanProteinStagedRequest):
         raise HTTPException(status_code=500, detail=f"Internal error: {str(e)}")
 
 
-@router.post("/extract_ligand_by_hetid")
+@structure_router.post("/extract_ligand_by_hetid")
 async def extract_ligand_by_hetid(request: ExtractLigandByHETIDRequest):
     """Extract a specific ligand by HET ID from protein structure."""
     try:
@@ -232,7 +233,7 @@ class ValidateStructureRequest(BaseModel):
     format: Optional[str] = None
 
 
-@router.post("/validate_structure")
+@structure_router.post("/validate_structure")
 async def validate_structure(request: ValidateStructureRequest):
     """Validate that a structure is compatible with a specific service."""
     try:
@@ -411,7 +412,7 @@ async def save_structure_to_library(request: SaveStructureRequest):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.post("/save_edited_molecule")
+@structure_router.post("/save_edited_molecule")
 async def save_edited_molecule(request: SaveEditedMoleculeRequest):
     """Save edited molecule and generate visualization."""
     try:
@@ -526,7 +527,7 @@ async def save_edited_molecule(request: SaveEditedMoleculeRequest):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.get("/get_ligands")
+@structure_router.get("/get_ligands")
 async def get_ligands():
     """Get all ligands."""
     try:
@@ -543,7 +544,7 @@ async def get_ligands():
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.get("/render_smiles")
+@structure_router.get("/render_smiles")
 async def render_smiles(smiles: str, width: int = 300, height: int = 300):
     """Render 2D image from SMILES."""
     try:

@@ -36,6 +36,7 @@ app.add_middleware(
 )
 
 # Include routers
+app.include_router(routers.structure_router)
 app.include_router(routers.router)
 
 

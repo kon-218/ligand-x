@@ -6,21 +6,6 @@ from gateway.config import SERVICE_URLS
 
 router = APIRouter(prefix="", tags=["Proxy"])
 
-# Service routing patterns - order matters (most specific first)
-# Root-level explicit routes (exact matches)
-ROOT_ROUTES = {
-    # Structure routes
-    "fetch_pdb": "structure",
-    "upload_structure": "structure",
-    "upload_smiles": "structure",
-    "smiles_to_3d": "structure",
-    "smiles_to_mol": "structure",
-    "combine_protein_ligand": "structure",
-    
-    # ADMET routes
-    "predict_admet": "admet",
-}
-
 # API prefix routes (routes starting with /api/{service})
 API_PREFIX_ROUTES = {
     "api/md": "md",
@@ -48,29 +33,14 @@ def _get_service_for_path(path: str):
     """
     # Remove leading slash for matching
     path = path.lstrip('/')
-    
-    # Check root-level explicit routes first (exact matches)
-    if path in ROOT_ROUTES:
-        service = ROOT_ROUTES[path]
-        return service, path
-    
+
     # Check API prefix routes
     for prefix, service in API_PREFIX_ROUTES.items():
         if path == prefix or path.startswith(prefix + '/'):
             # Preserve the full path for API routes
             return service, path
-    
-    # Check if path starts with any API prefix (for sub-routes)
-    for prefix, service in API_PREFIX_ROUTES.items():
-        if path.startswith(prefix):
-            return service, path
-    
-    # Default to structure service for unknown root-level routes
-    # This maintains backward compatibility
-    if not path.startswith('api/'):
-        return "structure", path
-    
-    # If it starts with /api/ but doesn't match any service, return None
+
+    # No matching service found
     return None, None
 
 

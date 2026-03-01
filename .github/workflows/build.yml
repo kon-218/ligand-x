@@ -15,6 +15,12 @@
 #   Environment stages (large conda envs) are cached to GHCR using
 #   mode=max so subsequent builds reuse them even across jobs.
 #   Cache keys: ghcr.io/<owner>/ligand-x/buildcache:env-<name>
+#
+# Authentication:
+#   Uses CR_PAT (classic PAT with write:packages scope) instead of
+#   GITHUB_TOKEN to avoid GHCR 403s when creating new packages.
+#   Create at: Settings → Developer settings → Personal access tokens
+#   Add as repo secret named CR_PAT with write:packages scope.
 # ============================================================
 
 name: Build and Push
@@ -53,13 +59,22 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Free disk space
-        if: matrix.env == 'boltz2' || matrix.env == 'md'
         run: |
           sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc \
                       /opt/hostedtoolcache/CodeQL /usr/local/share/boost \
                       "$AGENT_TOOLSDIRECTORY"
           docker system prune -af --volumes || true
           df -h
+
+      - name: Add swap space
+        if: matrix.env == 'boltz2' || matrix.env == 'md'
+        run: |
+          sudo swapoff /swapfile 2>/dev/null || true
+          sudo dd if=/dev/zero of=/swapfile bs=1M count=10240 status=none
+          sudo chmod 600 /swapfile
+          sudo mkswap /swapfile
+          sudo swapon /swapfile
+          free -h
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
@@ -69,8 +84,8 @@ jobs:
         uses: docker/login-action@v3
         with:
           registry: ${{ env.REGISTRY }}
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
+          username: ${{ github.repository_owner }}
+          password: ${{ secrets.CR_PAT }}
 
       - name: Build env-${{ matrix.env }} (warm cache)
         uses: docker/build-push-action@v6
@@ -144,8 +159,11 @@ jobs:
           - service: worker-qc
             target: worker-qc
             env: qc
-          - service: worker-gpu
-            target: worker-gpu
+          - service: worker-gpu-short
+            target: worker-gpu-short
+            env: md
+          - service: worker-gpu-long
+            target: worker-gpu-long
             env: md
           - service: worker-cpu
             target: worker-docking
@@ -163,8 +181,8 @@ jobs:
         uses: docker/login-action@v3
         with:
           registry: ${{ env.REGISTRY }}
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
+          username: ${{ github.repository_owner }}
+          password: ${{ secrets.CR_PAT }}
 
       - name: Compute image tags
         id: meta
@@ -214,8 +232,8 @@ jobs:
         uses: docker/login-action@v3
         with:
           registry: ${{ env.REGISTRY }}
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
+          username: ${{ github.repository_owner }}
+          password: ${{ secrets.CR_PAT }}
 
       - name: Compute frontend image tags
         id: meta

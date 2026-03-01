@@ -238,6 +238,12 @@ RUN chmod +x /app/entrypoint.sh
 USER appuser
 ENTRYPOINT ["/app/entrypoint.sh"]
 
+# Short GPU tasks (MD minimisation, Boltz2) — same image, separate tag
+FROM worker-gpu AS worker-gpu-short
+
+# Long GPU tasks (ABFE/RBFE free energy) — same image, separate tag
+FROM worker-gpu AS worker-gpu-long
+
 # --- CPU Worker (Docking batch tasks) ---
 FROM env-docking AS worker-docking
 ENV PATH="/opt/conda/envs/biochem-docking/bin:${PATH}"

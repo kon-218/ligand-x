@@ -16,7 +16,7 @@
 #   make shell   - Access service shell
 # ============================================================
 
-.PHONY: help dev prod down build test clean logs shell shell-% logs-% restart restart-% status db db-backup purge-queues dev-core dev-docking dev-md dev-qc dev-free-energy dev-gpu
+.PHONY: help dev prod down build push pull test clean logs shell shell-% logs-% restart restart-% status db db-backup purge-queues dev-core dev-docking dev-md dev-qc dev-free-energy dev-gpu
 
 # ============================================================
 # Configuration
@@ -29,6 +29,18 @@ IMAGE_TAG ?= $(VERSION)
 # Build configuration
 COMPOSE_PROJECT_NAME ?= ligandx
 DOCKER_REPO ?= ligandx
+
+# Registry configuration
+# Set REGISTRY to push to a remote registry, e.g.:
+#   REGISTRY=ghcr.io REGISTRY_OWNER=your-org make build push=true
+REGISTRY ?= ghcr.io
+REGISTRY_OWNER ?= $(shell git remote get-url origin 2>/dev/null | sed 's|.*github\.com[:/]\([^/]*\)/.*|\1|' || echo "")
+# Full image prefix: ghcr.io/owner/ligand-x  (or just ligandx for local)
+ifdef REGISTRY_OWNER
+IMAGE_PREFIX ?= $(REGISTRY)/$(REGISTRY_OWNER)/ligand-x
+else
+IMAGE_PREFIX ?= $(DOCKER_REPO)
+endif
 
 # ============================================================
 # Help
@@ -65,6 +77,12 @@ help:
 	@echo "  make dev-qc           - Core + editor + quantum chemistry"
 	@echo "  make dev-free-energy  - Core + docking + MD + ABFE + RBFE"
 	@echo "  make dev-gpu          - All GPU services (full stack minus QC)"
+	@echo ""
+	@echo "Registry:"
+	@echo "  make pull                      - Pull pre-built images from GHCR"
+	@echo "  VERSION=sha-abc1234 make pull  - Pull a specific version"
+	@echo "  make push                      - Push images to GHCR (auto-detects owner from git remote)"
+	@echo "  REGISTRY_OWNER=org make push   - Push to ghcr.io/org/ligand-x/<service>"
 	@echo ""
 	@echo "Configuration:"
 	@echo "  VERSION=v1.0 make build    - Build with custom version tag"
@@ -149,15 +167,32 @@ down:
 # Build: Create production-ready images
 build:
 	@echo "Building production images..."
-	@echo "Version: $(VERSION)"
-	@echo "Tag: $(IMAGE_TAG)"
+	@echo "Version:      $(VERSION)"
+	@echo "Tag:          $(IMAGE_TAG)"
+	@echo "Image prefix: $(IMAGE_PREFIX)"
 	@echo ""
-	@./scripts/build-production.sh $(IMAGE_TAG)
+	@IMAGE_PREFIX="$(IMAGE_PREFIX)" ./scripts/build-production.sh $(IMAGE_TAG)
 ifdef push
 	@echo ""
-	@echo "Pushing images to registry..."
-	@./scripts/push-images.sh $(IMAGE_TAG)
+	@echo "Pushing images to $(IMAGE_PREFIX)/..."
+	@IMAGE_PREFIX="$(IMAGE_PREFIX)" ./scripts/push-images.sh $(IMAGE_TAG)
 endif
+
+# Pull: Fetch pre-built images from GHCR (for production servers)
+pull:
+	@echo "Pulling images from GHCR..."
+	@echo "Version: $${VERSION:-latest}"
+	@echo ""
+	@VERSION=$${VERSION:-latest} docker compose -f docker-compose.yml pull
+	@echo ""
+	@echo "All images pulled. Start with: make prod"
+
+# Push: Push previously built images to GHCR
+push:
+	@echo "Pushing images to $(IMAGE_PREFIX)/..."
+	@echo "Tag: $(IMAGE_TAG)"
+	@echo ""
+	@IMAGE_PREFIX="$(IMAGE_PREFIX)" ./scripts/push-images.sh $(IMAGE_TAG)
 
 # Test: Run test suite against built images
 test:

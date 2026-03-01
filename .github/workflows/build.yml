@@ -1,0 +1,231 @@
+# ============================================================
+# Ligand-X CI/CD — Build and Push to GHCR
+# ============================================================
+# Triggers:
+#   - push to main → builds all images, pushes with sha + latest tags
+#   - push of v* tag → same, plus a semver tag
+#   - pull_request → builds only (no push), validates Dockerfiles
+#
+# Images are published to:
+#   ghcr.io/<owner>/ligand-x/<service>:<sha>
+#   ghcr.io/<owner>/ligand-x/<service>:latest
+#   ghcr.io/<owner>/ligand-x/<service>:<semver>  (on tag push)
+#
+# Layer caching strategy:
+#   Environment stages (large conda envs) are cached to GHCR using
+#   mode=max so subsequent builds reuse them even across jobs.
+#   Cache keys: ghcr.io/<owner>/ligand-x/buildcache:env-<name>
+# ============================================================
+
+name: Build and Push
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+    branches: [main]
+
+env:
+  REGISTRY: ghcr.io
+
+jobs:
+  # ============================================================
+  # Job 1: Build and cache conda environment stages
+  # These are the slow/heavy layers shared by multiple services.
+  # Running them in parallel, cached in GHCR, means service
+  # builds in Job 2 get fast cache hits.
+  # ============================================================
+  build-envs:
+    name: Cache env-${{ matrix.env }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+
+    strategy:
+      fail-fast: false
+      matrix:
+        env: [base, docking, md, admet, boltz2, qc]
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        if: github.event_name != 'pull_request'
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build env-${{ matrix.env }} (warm cache)
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: docker/Dockerfile.backend
+          target: env-${{ matrix.env }}
+          # Don't push the env stage itself — only cache it
+          push: false
+          cache-from: type=registry,ref=${{ env.REGISTRY }}/${{ github.repository_owner }}/ligand-x/buildcache:env-${{ matrix.env }}
+          cache-to: ${{ github.event_name != 'pull_request' && format('type=registry,ref={0}/{1}/ligand-x/buildcache:env-{2},mode=max', env.REGISTRY, github.repository_owner, matrix.env) || '' }}
+
+  # ============================================================
+  # Job 2: Build and push service images
+  # Each service is built as a matrix job, pulling layer cache
+  # from the env stages cached in Job 1.
+  # ============================================================
+  build-services:
+    name: Build ${{ matrix.service }}
+    runs-on: ubuntu-latest
+    needs: build-envs
+    permissions:
+      contents: read
+      packages: write
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # --- Lightweight (base env) ---
+          - service: gateway
+            target: service-gateway
+            env: base
+          - service: structure
+            target: service-structure
+            env: base
+          - service: alignment
+            target: service-alignment
+            env: base
+          - service: ketcher
+            target: service-ketcher
+            env: base
+          - service: msa
+            target: service-msa
+            env: base
+
+          # --- Scientific services ---
+          - service: docking
+            target: service-docking
+            env: docking
+          - service: md
+            target: service-md
+            env: md
+          - service: abfe
+            target: service-abfe
+            env: md
+          - service: rbfe
+            target: service-rbfe
+            env: md
+          - service: admet
+            target: service-admet
+            env: admet
+          - service: boltz2
+            target: service-boltz2
+            env: boltz2
+          - service: qc
+            target: service-qc
+            env: qc
+
+          # --- Celery workers ---
+          - service: worker-qc
+            target: worker-qc
+            env: qc
+          - service: worker-gpu
+            target: worker-gpu
+            env: md
+          - service: worker-cpu
+            target: worker-docking
+            env: docking
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        if: github.event_name != 'pull_request'
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Compute image tags
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ github.repository_owner }}/ligand-x/${{ matrix.service }}
+          tags: |
+            # git SHA (always)
+            type=sha,format=short
+            # latest on pushes to main
+            type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' }}
+            # semver on v* tags (e.g. v1.2.3 → 1.2.3, 1.2, 1)
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+
+      - name: Build and push ${{ matrix.service }}
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: docker/Dockerfile.backend
+          target: ${{ matrix.target }}
+          push: ${{ github.event_name != 'pull_request' }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=registry,ref=${{ env.REGISTRY }}/${{ github.repository_owner }}/ligand-x/buildcache:env-${{ matrix.env }}
+          cache-to: ${{ github.event_name != 'pull_request' && format('type=registry,ref={0}/{1}/ligand-x/buildcache:{2},mode=max', env.REGISTRY, github.repository_owner, matrix.service) || '' }}
+
+  # ============================================================
+  # Job 3: Build and push frontend
+  # ============================================================
+  build-frontend:
+    name: Build frontend
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        if: github.event_name != 'pull_request'
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Compute frontend image tags
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ github.repository_owner }}/ligand-x/frontend
+          tags: |
+            type=sha,format=short
+            type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' }}
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+
+      - name: Build and push frontend
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: docker/Dockerfile.frontend
+          push: ${{ github.event_name != 'pull_request' }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=registry,ref=${{ env.REGISTRY }}/${{ github.repository_owner }}/ligand-x/buildcache:frontend
+          cache-to: ${{ github.event_name != 'pull_request' && format('type=registry,ref={0}/{1}/ligand-x/buildcache:frontend,mode=max', env.REGISTRY, github.repository_owner) || '' }}

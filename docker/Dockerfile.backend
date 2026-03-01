@@ -96,90 +96,115 @@ RUN mamba env create -f /app/environments/qc.yml && mamba clean -afy
 # ============================================================
 # Stage 3: Service Images
 # ============================================================
-# Final images with service code baked in
+# Final images with service code baked in.
+# ENV PATH activates the correct conda env so uvicorn/celery
+# are PID 1 (no `conda run` wrapper needed).
 
 # --- Gateway Service ---
 FROM env-base AS service-gateway
-COPY gateway/ /app/gateway/
-COPY entrypoint.sh /app/entrypoint.sh
+ENV PATH="/opt/conda/envs/biochem-base/bin:${PATH}"
+COPY --chown=appuser:appuser gateway/ /app/gateway/
+COPY --chown=appuser:appuser entrypoint.sh /app/entrypoint.sh
 RUN chmod +x /app/entrypoint.sh
+USER appuser
 ENTRYPOINT ["/app/entrypoint.sh"]
 
 # --- Structure Service (lightweight) ---
 FROM env-base AS service-structure
-COPY services/structure/ /app/services/structure/
-COPY entrypoint.sh /app/entrypoint.sh
+ENV PATH="/opt/conda/envs/biochem-base/bin:${PATH}"
+COPY --chown=appuser:appuser services/structure/ /app/services/structure/
+COPY --chown=appuser:appuser entrypoint.sh /app/entrypoint.sh
 RUN chmod +x /app/entrypoint.sh
+USER appuser
 ENTRYPOINT ["/app/entrypoint.sh"]
 
 # --- Alignment Service (lightweight) ---
 FROM env-base AS service-alignment
-COPY services/alignment/ /app/services/alignment/
-COPY entrypoint.sh /app/entrypoint.sh
+ENV PATH="/opt/conda/envs/biochem-base/bin:${PATH}"
+COPY --chown=appuser:appuser services/alignment/ /app/services/alignment/
+COPY --chown=appuser:appuser entrypoint.sh /app/entrypoint.sh
 RUN chmod +x /app/entrypoint.sh
+USER appuser
 ENTRYPOINT ["/app/entrypoint.sh"]
 
 # --- Ketcher Service (lightweight) ---
 FROM env-base AS service-ketcher
-COPY services/ketcher/ /app/services/ketcher/
-COPY entrypoint.sh /app/entrypoint.sh
+ENV PATH="/opt/conda/envs/biochem-base/bin:${PATH}"
+COPY --chown=appuser:appuser services/ketcher/ /app/services/ketcher/
+COPY --chown=appuser:appuser entrypoint.sh /app/entrypoint.sh
 RUN chmod +x /app/entrypoint.sh
+USER appuser
 ENTRYPOINT ["/app/entrypoint.sh"]
 
 # --- MSA Service (lightweight) ---
 FROM env-base AS service-msa
-COPY services/msa/ /app/services/msa/
-COPY entrypoint.sh /app/entrypoint.sh
+ENV PATH="/opt/conda/envs/biochem-base/bin:${PATH}"
+COPY --chown=appuser:appuser services/msa/ /app/services/msa/
+COPY --chown=appuser:appuser entrypoint.sh /app/entrypoint.sh
 RUN chmod +x /app/entrypoint.sh
+USER appuser
 ENTRYPOINT ["/app/entrypoint.sh"]
 
 # --- Docking Service ---
 FROM env-docking AS service-docking
-COPY services/docking/ /app/services/docking/
-COPY entrypoint.sh /app/entrypoint.sh
+ENV PATH="/opt/conda/envs/biochem-docking/bin:${PATH}"
+COPY --chown=appuser:appuser services/docking/ /app/services/docking/
+COPY --chown=appuser:appuser entrypoint.sh /app/entrypoint.sh
 RUN chmod +x /app/entrypoint.sh
+USER appuser
 ENTRYPOINT ["/app/entrypoint.sh"]
 
 # --- MD Service (GPU) ---
 FROM env-md AS service-md
-COPY services/md/ /app/services/md/
-COPY entrypoint.sh /app/entrypoint.sh
+ENV PATH="/opt/conda/envs/biochem-md/bin:${PATH}"
+COPY --chown=appuser:appuser services/md/ /app/services/md/
+COPY --chown=appuser:appuser entrypoint.sh /app/entrypoint.sh
 RUN chmod +x /app/entrypoint.sh
+USER appuser
 ENTRYPOINT ["/app/entrypoint.sh"]
 
 # --- ABFE Service (uses MD environment) ---
 FROM env-md AS service-abfe
-COPY services/abfe/ /app/services/abfe/
-COPY entrypoint.sh /app/entrypoint.sh
+ENV PATH="/opt/conda/envs/biochem-md/bin:${PATH}"
+COPY --chown=appuser:appuser services/abfe/ /app/services/abfe/
+COPY --chown=appuser:appuser entrypoint.sh /app/entrypoint.sh
 RUN chmod +x /app/entrypoint.sh
+USER appuser
 ENTRYPOINT ["/app/entrypoint.sh"]
 
 # --- RBFE Service (uses MD environment) ---
 FROM env-md AS service-rbfe
-COPY services/rbfe/ /app/services/rbfe/
-COPY entrypoint.sh /app/entrypoint.sh
+ENV PATH="/opt/conda/envs/biochem-md/bin:${PATH}"
+COPY --chown=appuser:appuser services/rbfe/ /app/services/rbfe/
+COPY --chown=appuser:appuser entrypoint.sh /app/entrypoint.sh
 RUN chmod +x /app/entrypoint.sh
+USER appuser
 ENTRYPOINT ["/app/entrypoint.sh"]
 
 # --- ADMET Service ---
 FROM env-admet AS service-admet
-COPY services/admet/ /app/services/admet/
-COPY entrypoint.sh /app/entrypoint.sh
+ENV PATH="/opt/conda/envs/biochem-admet/bin:${PATH}"
+COPY --chown=appuser:appuser services/admet/ /app/services/admet/
+COPY --chown=appuser:appuser entrypoint.sh /app/entrypoint.sh
 RUN chmod +x /app/entrypoint.sh
+USER appuser
 ENTRYPOINT ["/app/entrypoint.sh"]
 
 # --- Boltz2 Service (GPU) ---
 FROM env-boltz2 AS service-boltz2
-COPY services/boltz2/ /app/services/boltz2/
+ENV PATH="/opt/conda/envs/biochem-boltz2/bin:${PATH}"
+COPY --chown=appuser:appuser services/boltz2/ /app/services/boltz2/
 # Boltz2 has direct imports from alignment and msa services
-COPY services/alignment/ /app/services/alignment/
-COPY services/msa/ /app/services/msa/
-COPY entrypoint.sh /app/entrypoint.sh
+COPY --chown=appuser:appuser services/alignment/ /app/services/alignment/
+COPY --chown=appuser:appuser services/msa/ /app/services/msa/
+COPY --chown=appuser:appuser entrypoint.sh /app/entrypoint.sh
 RUN chmod +x /app/entrypoint.sh
+USER appuser
 ENTRYPOINT ["/app/entrypoint.sh"]
 
 # --- QC Service (API) ---
 FROM env-qc AS service-qc
+ENV PATH="/opt/conda/envs/biochem-qc/bin:${PATH}"
 COPY --chown=appuser:appuser services/qc/ /app/services/qc/
 COPY --chown=appuser:appuser entrypoint.sh /app/entrypoint.sh
 RUN chmod +x /app/entrypoint.sh
@@ -193,6 +218,7 @@ ENTRYPOINT ["/app/entrypoint.sh"]
 
 # --- QC Celery Worker ---
 FROM env-qc AS worker-qc
+ENV PATH="/opt/conda/envs/biochem-qc/bin:${PATH}"
 COPY --chown=appuser:appuser lib/ /app/lib/
 COPY --chown=appuser:appuser services/qc/ /app/services/qc/
 COPY --chown=appuser:appuser gateway/ /app/gateway/
@@ -203,6 +229,7 @@ ENTRYPOINT ["/app/entrypoint.sh"]
 
 # --- GPU Worker (MD/ABFE/RBFE tasks) ---
 FROM env-md AS worker-gpu
+ENV PATH="/opt/conda/envs/biochem-md/bin:${PATH}"
 COPY --chown=appuser:appuser services/md/ /app/services/md/
 COPY --chown=appuser:appuser services/abfe/ /app/services/abfe/
 COPY --chown=appuser:appuser services/rbfe/ /app/services/rbfe/
@@ -213,6 +240,7 @@ ENTRYPOINT ["/app/entrypoint.sh"]
 
 # --- CPU Worker (Docking batch tasks) ---
 FROM env-docking AS worker-docking
+ENV PATH="/opt/conda/envs/biochem-docking/bin:${PATH}"
 COPY --chown=appuser:appuser services/docking/ /app/services/docking/
 COPY --chown=appuser:appuser entrypoint.sh /app/entrypoint.sh
 RUN chmod +x /app/entrypoint.sh

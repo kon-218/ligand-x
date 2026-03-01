@@ -34,6 +34,7 @@ services:
   # Gateway Service
   # ============================================================
   gateway:
+    image: ghcr.io/kon-218/ligand-x/gateway:${VERSION:-latest}
     build:
       context: .
       dockerfile: docker/Dockerfile.backend
@@ -89,6 +90,7 @@ services:
   # Lightweight Microservices (base environment ~1.5GB)
   # ============================================================
   structure:
+    image: ghcr.io/kon-218/ligand-x/structure:${VERSION:-latest}
     build:
       context: .
       dockerfile: docker/Dockerfile.backend
@@ -123,6 +125,7 @@ services:
         max-file: "3"
 
   alignment:
+    image: ghcr.io/kon-218/ligand-x/alignment:${VERSION:-latest}
     build:
       context: .
       dockerfile: docker/Dockerfile.backend
@@ -157,6 +160,7 @@ services:
         max-file: "3"
 
   ketcher:
+    image: ghcr.io/kon-218/ligand-x/ketcher:${VERSION:-latest}
     build:
       context: .
       dockerfile: docker/Dockerfile.backend
@@ -191,6 +195,7 @@ services:
         max-file: "3"
 
   msa:
+    image: ghcr.io/kon-218/ligand-x/msa:${VERSION:-latest}
     build:
       context: .
       dockerfile: docker/Dockerfile.backend
@@ -230,6 +235,7 @@ services:
   # Docking Service (~2.5GB)
   # ============================================================
   docking:
+    image: ghcr.io/kon-218/ligand-x/docking:${VERSION:-latest}
     build:
       context: .
       dockerfile: docker/Dockerfile.backend
@@ -269,6 +275,7 @@ services:
   # GPU Services (MD environment ~4GB)
   # ============================================================
   md:
+    image: ghcr.io/kon-218/ligand-x/md:${VERSION:-latest}
     build:
       context: .
       dockerfile: docker/Dockerfile.backend
@@ -309,6 +316,7 @@ services:
         max-file: "3"
 
   abfe:
+    image: ghcr.io/kon-218/ligand-x/abfe:${VERSION:-latest}
     build:
       context: .
       dockerfile: docker/Dockerfile.backend
@@ -349,6 +357,7 @@ services:
         max-file: "3"
 
   rbfe:
+    image: ghcr.io/kon-218/ligand-x/rbfe:${VERSION:-latest}
     build:
       context: .
       dockerfile: docker/Dockerfile.backend
@@ -396,6 +405,7 @@ services:
   # ADMET Service (~3GB with PyTorch)
   # ============================================================
   admet:
+    image: ghcr.io/kon-218/ligand-x/admet:${VERSION:-latest}
     build:
       context: .
       dockerfile: docker/Dockerfile.backend
@@ -433,6 +443,7 @@ services:
   # Boltz2 Service (~6GB with PyTorch + CUDA)
   # ============================================================
   boltz2:
+    image: ghcr.io/kon-218/ligand-x/boltz2:${VERSION:-latest}
     build:
       context: .
       dockerfile: docker/Dockerfile.backend
@@ -482,6 +493,7 @@ services:
   # QC Service (~2.5GB)
   # ============================================================
   qc:
+    image: ghcr.io/kon-218/ligand-x/qc:${VERSION:-latest}
     build:
       context: .
       dockerfile: docker/Dockerfile.backend
@@ -535,6 +547,7 @@ services:
 
   # QC Worker for quantum chemistry calculations
   worker-qc:
+    image: ghcr.io/kon-218/ligand-x/worker-qc:${VERSION:-latest}
     build:
       context: .
       dockerfile: docker/Dockerfile.backend
@@ -588,6 +601,7 @@ services:
 
   # GPU Worker for short/fast tasks (MD, Boltz2, ADMET)
   worker-gpu-short:
+    image: ghcr.io/kon-218/ligand-x/worker-gpu-short:${VERSION:-latest}
     build:
       context: .
       dockerfile: docker/Dockerfile.backend
@@ -636,6 +650,7 @@ services:
 
   # GPU Worker for long-running tasks (ABFE, RBFE)
   worker-gpu-long:
+    image: ghcr.io/kon-218/ligand-x/worker-gpu-long:${VERSION:-latest}
     build:
       context: .
       dockerfile: docker/Dockerfile.backend
@@ -687,6 +702,7 @@ services:
 
   # CPU Worker for batch docking
   worker-cpu:
+    image: ghcr.io/kon-218/ligand-x/worker-cpu:${VERSION:-latest}
     build:
       context: .
       dockerfile: docker/Dockerfile.backend
@@ -879,6 +895,7 @@ services:
   # Frontend
   # ============================================================
   frontend:
+    image: ghcr.io/kon-218/ligand-x/frontend:${VERSION:-latest}
     build:
       context: .
       dockerfile: docker/Dockerfile.frontend

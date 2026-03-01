@@ -97,6 +97,25 @@ make dev-free-energy  # Core + docking + MD + ABFE + RBFE
 make dev-gpu          # All GPU services
 ```
 
+### Windows (PowerShell)
+
+`make` is not available on Windows. Use `start.ps1` instead — it covers every
+command above:
+
+```powershell
+.\start.ps1 pull
+.\start.ps1 prod
+.\start.ps1 dev
+.\start.ps1 logs gateway      # service name as second argument
+.\start.ps1 shell gateway
+.\start.ps1 dev-core
+# ...same pattern for all other targets
+```
+
+If execution is blocked: `Set-ExecutionPolicy -Scope CurrentUser RemoteSigned`
+
+See [docs/INSTALL.md](docs/INSTALL.md) for Windows-specific prerequisites and GPU passthrough notes.
+
 ## Configuration
 
 | File                        | Purpose                                                    |

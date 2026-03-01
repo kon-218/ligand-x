@@ -36,6 +36,24 @@ make dev-md         # Core + editor + MD
 make dev-qc         # Core + editor + quantum chemistry
 ```
 
+### On Windows
+
+Replace all `make <target>` commands with `.\start.ps1 <target>`. Examples:
+
+```powershell
+make dev            ->  .\start.ps1 dev
+make dev-core       ->  .\start.ps1 dev-core
+make dev-docking    ->  .\start.ps1 dev-docking
+make dev-md         ->  .\start.ps1 dev-md
+make dev-qc         ->  .\start.ps1 dev-qc
+make logs-gateway   ->  .\start.ps1 logs gateway
+make shell-gateway  ->  .\start.ps1 shell gateway
+make test           ->  .\start.ps1 test
+make down           ->  .\start.ps1 down
+```
+
+If execution is blocked run once: `Set-ExecutionPolicy -Scope CurrentUser RemoteSigned`
+
 ### Run the Test Suite
 
 ```bash

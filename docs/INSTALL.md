@@ -15,6 +15,23 @@ libraries, and the Next.js frontend) are managed inside containers.
 
 ---
 
+## Windows
+
+**Prerequisites:** Docker Desktop 4.x+ (includes Compose v2), PowerShell 5+
+
+All `make` commands have PowerShell equivalents via `start.ps1`. On Windows, replace
+every `make <target>` in this guide with `.\start.ps1 <target>`.
+
+**Execution policy** — if PowerShell blocks the script, run once:
+```powershell
+Set-ExecutionPolicy -Scope CurrentUser RemoteSigned
+```
+
+**GPU passthrough** — NVIDIA GPU acceleration requires the WSL2 backend in Docker
+Desktop plus the [NVIDIA Container Toolkit for WSL2](https://docs.nvidia.com/cuda/wsl-user-guide/).
+
+---
+
 ## Option A - Production (pre-built GHCR images)
 
 Pull and run pre-built images directly from GitHub Container Registry. No build
@@ -58,13 +75,23 @@ will refuse to start if either is missing or blank.
 make pull
 ```
 
-The Makefile passes `--env-file .env.production` automatically when that file
+**Windows (PowerShell):**
+```powershell
+.\start.ps1 pull
+```
+
+The script passes `--env-file .env.production` automatically when that file
 exists, so no extra flags are needed.
 
 ### 4. Start
 
 ```bash
 make prod
+```
+
+**Windows (PowerShell):**
+```powershell
+.\start.ps1 prod
 ```
 
 ### 5. Verify
@@ -97,6 +124,11 @@ cd ligand-x
 make dev
 ```
 
+**Windows (PowerShell):**
+```powershell
+.\start.ps1 dev
+```
+
 This auto-generates a `.env` file with your user ID, volume-mounts the source
 code into each container, and starts the full stack with hot reload.
 
@@ -121,6 +153,16 @@ make dev-free-energy  # Core + docking + MD + ABFE + RBFE
 make dev-gpu          # All GPU services (full stack minus QC)
 ```
 
+**Windows (PowerShell):**
+```powershell
+.\start.ps1 dev-core
+.\start.ps1 dev-docking
+.\start.ps1 dev-md
+.\start.ps1 dev-qc
+.\start.ps1 dev-free-energy
+.\start.ps1 dev-gpu
+```
+
 ---
 
 ## Option C - Build from source
@@ -132,6 +174,12 @@ git clone https://github.com/kon-218/ligand-x.git
 cd ligand-x
 make build       # tags images with the current git SHA; first build takes 15-30 min
 make prod        # configure .env.production first
+```
+
+**Windows (PowerShell):**
+```powershell
+.\start.ps1 build   # requires WSL2 for full script; falls back to docker compose build
+.\start.ps1 prod
 ```
 
 ---
@@ -183,7 +231,16 @@ NEXT_PUBLIC_API_URL=http://localhost:8000
 CORS_ORIGINS=http://localhost:3000,http://127.0.0.1:3000
 ```
 
-Then restart: `make down && make prod`.
+Then restart:
+
+```bash
+make down && make prod
+```
+
+**Windows (PowerShell):**
+```powershell
+.\start.ps1 down; .\start.ps1 prod
+```
 
 ### Services won't start
 
@@ -191,6 +248,13 @@ Then restart: `make down && make prod`.
 make logs-<service>                            # e.g. make logs-gateway
 docker compose ps                              # check health status
 netstat -tuln | grep -E '3000|8000|6379'       # check for port conflicts
+```
+
+**Windows (PowerShell):**
+```powershell
+.\start.ps1 logs gateway
+docker compose ps
+netstat -an | findstr "3000 8000 6379"
 ```
 
 ### Permission issues on output files
@@ -203,7 +267,8 @@ UID=1000
 GID=1000
 ```
 
-The dev environment sets these automatically from your current user.
+The dev environment sets these automatically from your current user (Linux/macOS)
+or uses `1000` on Windows (matches the container's `appuser`).
 
 ### GPU services not working
 
@@ -212,3 +277,5 @@ docker run --rm --gpus all nvidia/cuda:12.0-base nvidia-smi
 ```
 
 If this fails, install `nvidia-container-toolkit` and configure the Docker runtime.
+On Windows, ensure you are using the WSL2 backend in Docker Desktop and have
+installed the NVIDIA Container Toolkit for WSL2.

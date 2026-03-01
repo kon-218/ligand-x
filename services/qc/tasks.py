@@ -13,7 +13,6 @@ Key features:
 
 import os
 import json
-import shutil
 import subprocess
 from pathlib import Path
 from typing import Dict, Any, Optional
@@ -661,48 +660,6 @@ def load_results_from_db(job_id: str) -> Optional[Dict[str, Any]]:
         return json.load(f)
 
 
-@celery_app.task(bind=True, base=QCTask, name='qc_tasks.cleanup_old_jobs')
-def cleanup_old_jobs(self, days_old: int = 30) -> Dict[str, Any]:
-    """
-    Clean up old job files to save disk space.
-    
-    Args:
-        days_old: Delete jobs older than this many days
-        
-    Returns:
-        Dictionary with cleanup statistics
-    """
-    from datetime import timedelta
-    
-    cutoff_date = datetime.now() - timedelta(days=days_old)
-    deleted_count = 0
-    freed_bytes = 0
-    
-    job_storage = Path(QCConfig.JOB_STORAGE_PATH)
-    
-    for job_dir in job_storage.iterdir():
-        if not job_dir.is_dir():
-            continue
-        
-        # Check modification time
-        mtime = datetime.fromtimestamp(job_dir.stat().st_mtime)
-        
-        if mtime < cutoff_date:
-            # Calculate size before deletion
-            size = sum(f.stat().st_size for f in job_dir.rglob('*') if f.is_file())
-            
-            # Delete directory
-            shutil.rmtree(job_dir)
-            deleted_count += 1
-            freed_bytes += size
-            
-            logger.info(f"Deleted old job: {job_dir.name}")
-    
-    return {
-        "deleted_jobs": deleted_count,
-        "freed_mb": freed_bytes / (1024 * 1024),
-        "cutoff_days": days_old
-    }
 
 def parse_mulliken_charges_from_output(output_file: Path) -> list:
     """

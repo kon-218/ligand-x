@@ -7,7 +7,6 @@ Submodules:
 - parsers: PDB and mmCIF format parsing
 - analysis: Structure component identification and analysis
 - preparation: Protein and ligand preparation utilities
-- smiles_lookup: SMILES string utilities
 """
 
 from lib.chemistry.parsers import PDBParserUtils, MMCIFParserUtils

@@ -11,50 +11,6 @@ from pathlib import Path
 from typing import Optional, Dict, Any, List
 from lib.chemistry import get_pdb_parser, get_component_analyzer
 
-# Valid element symbols for PDB files
-VALID_ELEMENTS = {
-    'H', 'HE', 'LI', 'BE', 'B', 'C', 'N', 'O', 'F', 'NE',
-    'NA', 'MG', 'AL', 'SI', 'P', 'S', 'CL', 'AR',
-    'K', 'CA', 'SC', 'TI', 'V', 'CR', 'MN', 'FE', 'CO', 'NI', 'CU', 'ZN',
-    'GA', 'GE', 'AS', 'SE', 'BR', 'KR',
-    'RB', 'SR', 'Y', 'ZR', 'NB', 'MO', 'RU', 'RH', 'PD', 'AG', 'CD',
-    'IN', 'SN', 'SB', 'TE', 'I', 'XE',
-    'CS', 'BA', 'LA', 'PT', 'AU', 'HG', 'TL', 'PB', 'BI'
-}
-
-# Two-letter elements that are commonly confused with single-letter ones
-TWO_LETTER_PRIORITY = {'BR', 'CL', 'FE', 'ZN', 'MG', 'CA', 'NA', 'MN', 'CO', 'CU', 'NI', 'SE', 'SI'}
-
-
-def infer_element_from_atom_name(atom_name: str) -> str:
-    """
-    Infer element symbol from PDB atom name with priority for two-letter elements.
-    
-    Args:
-        atom_name: Atom name from PDB (columns 13-16)
-        
-    Returns:
-        Properly formatted element symbol (right-justified in 2 chars)
-    """
-    name = (atom_name or '').strip()
-    name_alpha = ''.join(ch for ch in name if ch.isalpha()).upper()
-    
-    if not name_alpha:
-        return '  '
-    
-    # Check for two-letter elements first (e.g., BR, CL, FE)
-    if len(name_alpha) >= 2:
-        two_char = name_alpha[:2]
-        if two_char in TWO_LETTER_PRIORITY or two_char in VALID_ELEMENTS:
-            return two_char[0] + two_char[1].lower()  # e.g., 'Br', 'Cl'
-    
-    # Single-letter element - return right-justified
-    first_char = name_alpha[0]
-    if first_char in VALID_ELEMENTS:
-        return ' ' + first_char  # Right-justified, e.g., ' N', ' C'
-    
-    return ' ' + first_char
-
 
 def sanitize_pdb_element_columns(pdb_data: str) -> str:
     """

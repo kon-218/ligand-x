@@ -83,107 +83,6 @@ def _get_cuda_home_for_env(env_name: str) -> Optional[str]:
     return None
 
 
-def run_in_env(
-    env_name: str,
-    script_path: str,
-    args: Optional[List[str]] = None,
-    cwd: Optional[str] = None,
-    env: Optional[Dict[str, str]] = None,
-    capture_output: bool = True,
-    check: bool = False,
-    timeout: Optional[int] = None,
-    **kwargs: Any
-) -> subprocess.CompletedProcess:
-    """
-    Run a Python script in a specific conda environment using 'conda run'.
-    
-    This is the recommended way to execute code in conda environments as it
-    properly activates the environment and handles all environment variables.
-    
-    Args:
-        env_name: Name of the conda environment
-        script_path: Path to Python script to run
-        args: Additional arguments to pass to the script
-        cwd: Working directory
-        env: Additional environment variables
-        capture_output: Whether to capture stdout/stderr
-        check: Whether to raise on non-zero exit
-        timeout: Timeout in seconds (None for no timeout)
-        **kwargs: Additional subprocess.run arguments
-    
-    Returns:
-        subprocess.CompletedProcess result
-    """
-    # Use 'conda run' which properly activates the environment
-    cmd = ['conda', 'run', '-n', env_name, '--no-capture-output', 'python', script_path]
-    
-    if args:
-        cmd.extend(args)
-    
-    # Prepare environment variables
-    process_env = os.environ.copy()
-    if env:
-        process_env.update(env)
-    
-    # Auto-detect and set CUDA_HOME for environments that need it (e.g., boltz2)
-    # Only override if CUDA_HOME is not already set or is incorrect
-    if env_name in ['biochem-boltz2']:
-        cuda_home = _get_cuda_home_for_env(env_name)
-        if cuda_home and (not process_env.get('CUDA_HOME') or process_env.get('CUDA_HOME') == '/usr/bin/cuda'):
-            process_env['CUDA_HOME'] = cuda_home
-            # Also set PATH to include CUDA bin if it exists
-            cuda_bin = Path(cuda_home) / 'bin'
-            if not cuda_bin.exists():
-                # Try environment bin
-                conda_base = get_conda_base()
-                env_path = Path(conda_base) / 'envs' / env_name
-                cuda_bin = env_path / 'bin'
-            if cuda_bin.exists() and str(cuda_bin) not in process_env.get('PATH', ''):
-                process_env['PATH'] = f"{cuda_bin}:{process_env.get('PATH', '')}"
-        
-        # Fix cuequivariance_ops CUDA library compatibility
-        # Prioritize pip-installed nvidia CUDA libraries over conda versions
-        # These libraries have the required symbols (e.g., cublasGemmGroupedBatchedEx)
-        conda_base = get_conda_base()
-        env_path = Path(conda_base) / 'envs' / env_name
-        nvidia_cublas_lib = env_path / 'lib' / 'python3.10' / 'site-packages' / 'nvidia' / 'cublas' / 'lib'
-        nvidia_nvrtc_lib = env_path / 'lib' / 'python3.10' / 'site-packages' / 'nvidia' / 'cuda_nvrtc' / 'lib'
-        env_lib = env_path / 'lib'
-        
-        lib_paths = []
-        if nvidia_cublas_lib.exists():
-            lib_paths.append(str(nvidia_cublas_lib))
-        if nvidia_nvrtc_lib.exists():
-            lib_paths.append(str(nvidia_nvrtc_lib))
-        if env_lib.exists():
-            lib_paths.append(str(env_lib))
-        
-        if lib_paths:
-            current_ld_path = process_env.get('LD_LIBRARY_PATH', '')
-            new_paths = ':'.join([p for p in lib_paths if p not in current_ld_path])
-            if new_paths:
-                process_env['LD_LIBRARY_PATH'] = f"{new_paths}:{current_ld_path}" if current_ld_path else new_paths
-    
-    # Set working directory to project root if not specified
-    if cwd is None:
-        # Get project root (go up 3 levels from lib/services/runner.py)
-        project_root = Path(__file__).parent.parent.parent
-        cwd = str(project_root)
-        print(project_root)
-    
-    return subprocess.run(
-        cmd,
-        cwd=cwd,
-        env=process_env,
-        capture_output=capture_output,
-        check=check,
-        timeout=timeout,
-        text=True,
-        encoding='utf-8',
-        errors='replace',
-        **kwargs
-    )
-
 
 def run_service_script(
     service: str,
@@ -448,13 +347,6 @@ def check_env_exists(env_name: str) -> bool:
     except (subprocess.CalledProcessError, FileNotFoundError):
         return False
 
-
-def list_available_services() -> Dict[str, bool]:
-    """List all services and whether their environments are installed."""
-    return {
-        service: check_env_exists(env_name)
-        for service, env_name in SERVICE_ENVIRONMENTS.items()
-    }
 
 
 def call_service(

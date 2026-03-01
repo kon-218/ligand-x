@@ -103,14 +103,6 @@ export const api = {
     return response.data
   },
 
-  combineProteinLigand: async (proteinData: string, ligandData: string): Promise<MolecularStructure> => {
-    const response = await apiClient.post('/api/structure/combine_protein_ligand', {
-      protein_data: proteinData,
-      ligand_data: ligandData,
-    })
-    return response.data
-  },
-
   cleanProteinStaged: async (
     pdbData: string,
     options: {
@@ -242,11 +234,6 @@ export const api = {
 
   listDockingJobs: async () => {
     const response = await apiClient.get('/api/docking/jobs')
-    return response.data
-  },
-
-  listQCJobs: async () => {
-    const response = await apiClient.get('/api/qc/jobs')
     return response.data
   },
 
@@ -599,26 +586,6 @@ export const api = {
     })
   },
 
-  // Get available structures for MD
-  getMDStructures: async (): Promise<{ proteins: StructureOption[]; ligands: StructureOption[] }> => {
-    try {
-      const response = await apiClient.get('/api/md/structures')
-      return response.data
-    } catch (error) {
-      // Fallback: fetch from regular endpoints
-      return {
-        proteins: [],
-        ligands: [],
-      }
-    }
-  },
-
-  // Validate SMILES string
-  validateSMILES: async (smiles: string): Promise<{ valid: boolean; message?: string; formula?: string }> => {
-    const response = await apiClient.post('/api/md/validate_smiles', { smiles })
-    return response.data
-  },
-
   // Get trajectory frames as multi-model PDB
   getTrajectoryFrames: async (trajectoryPath: string, frameIndices?: number[]): Promise<{ pdb_data: string; num_frames: number }> => {
     const response = await apiClient.post('/api/md/trajectory/frames', {
@@ -630,33 +597,10 @@ export const api = {
     return response.data
   },
 
-  // Get trajectory info
-  getTrajectoryInfo: async (trajectoryPath: string): Promise<TrajectoryInfo> => {
-    const response = await apiClient.get('/api/md/trajectory/info', {
-      params: { trajectory_path: trajectoryPath },
-    })
-    return response.data
-  },
-
   // Get trajectory as PDB file URL
   getTrajectoryPdbUrl: (trajectoryPath: string, maxFrames: number = 100): string => {
     const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'
     return `${API_BASE_URL}/api/md/trajectory/pdb?trajectory_path=${encodeURIComponent(trajectoryPath)}&max_frames=${maxFrames}`
-  },
-
-  // Analyze trajectory
-  analyzeTrajectory: async (trajectoryPath: string, topologyPath: string): Promise<any> => {
-    const response = await apiClient.post('/api/md/analyze_trajectory', {
-      trajectory_path: trajectoryPath,
-      topology_path: topologyPath,
-    })
-    return response.data
-  },
-
-  // Check MD environment status
-  getMDEnvironmentStatus: async (): Promise<{ openff_available: boolean; openmm_available: boolean }> => {
-    const response = await apiClient.get('/api/md/environment_status')
-    return response.data
   },
 
   // Resume MD job from preview checkpoint
@@ -814,108 +758,10 @@ export const api = {
     }
   },
 
-  getBoltz2BatchStatus: async (batchId: string): Promise<{
-    batch_id: string
-    total: number
-    completed: number
-    failed: number
-    running: number
-    pending: number
-    progress: number
-    jobs: Array<{
-      job_id: string
-      batch_id: string
-      batch_index: number
-      batch_total: number
-      status: string
-      ligand_id: string
-      ligand_name: string
-      created_at: string
-      updated_at?: string
-      results?: any
-      error?: string
-    }>
-  }> => {
-    const response = await apiClient.get(`/api/boltz2/batch/${batchId}`)
-    return response.data
-  },
-
-  // MSA (Multiple Sequence Alignment) API
-  getMSAStatus: async (): Promise<{
-    service: string
-    available: boolean
-    available_methods: string[]
-    cached_msa_count: number
-  }> => {
-    const response = await apiClient.get('/api/msa/status')
-    return response.data
-  },
-
-  getMSAMethods: async (): Promise<{
-    default_method: string
-    available_methods: string[]
-    all_methods: Array<{ method: string; name: string; available: boolean }>
-  }> => {
-    const response = await apiClient.get('/api/msa/methods')
-    return response.data
-  },
-
-  checkMSACache: async (sequence: string, method?: string): Promise<{
-    cached: boolean
-    sequence_hash: string
-    method: string | null
-    msa_path: string | null
-    metadata: any | null
-  }> => {
-    const response = await apiClient.post('/api/msa/check', { sequence, method })
-    return response.data
-  },
-
-  generateMSA: async (
-    sequence: string,
-    sequenceId: string = 'query',
-    method?: string,
-    forceRegenerate: boolean = false
-  ): Promise<{
-    success: boolean
-    sequence_hash: string
-    method: string
-    msa_path: string | null
-    cached: boolean
-    metadata: any | null
-    error?: string
-  }> => {
-    const response = await apiClient.post('/api/msa/generate', {
-      sequence,
-      sequence_id: sequenceId,
-      method,
-      force_regenerate: forceRegenerate,
-    }, {
-      timeout: 660000, // 11 minutes for MSA generation
-    })
-    return response.data
-  },
-
   getMSADownloadUrl: (sequenceHash: string, method?: string): string => {
     const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'
     const params = method ? `?method=${encodeURIComponent(method)}` : ''
     return `${API_BASE_URL}/api/msa/download/${sequenceHash}${params}`
-  },
-
-  getMSAMetadata: async (sequenceHash: string, method?: string): Promise<{
-    sequence_id: string
-    sequence_length: number
-    num_sequences: number
-    method: string
-    generated_at: string
-  } | null> => {
-    try {
-      const params = method ? `?method=${encodeURIComponent(method)}` : ''
-      const response = await apiClient.get(`/api/msa/metadata/${sequenceHash}${params}`)
-      return response.data
-    } catch {
-      return null
-    }
   },
 
   // ADMET Prediction
@@ -1016,11 +862,6 @@ export const api = {
   getABFEStatus: async (jobId: string) => {
     // Use unified PostgreSQL endpoint instead of service-specific endpoint
     return await api.getJobDetails(jobId)
-  },
-
-  getABFEResults: async (jobId: string) => {
-    const response = await apiClient.get(`/api/abfe/results/${jobId}`)
-    return response.data
   },
 
   listABFEJobs: async () => {
@@ -1136,52 +977,9 @@ export const api = {
     return response.data
   },
 
-  listABFEFiles: async (jobId: string): Promise<{
-    job_id: string
-    files: Array<{
-      name: string
-      size: number
-      size_formatted: string
-      type: string
-      modified: number
-    }>
-  }> => {
-    const response = await apiClient.get(`/api/abfe/files/${jobId}`)
-    return response.data
-  },
-
   getABFEFileUrl: (jobId: string, filename: string): string => {
     const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'
     return `${API_BASE_URL}/api/abfe/files/${jobId}/${encodeURIComponent(filename)}`
-  },
-
-  getABFEFileContent: async (jobId: string, filename: string): Promise<string> => {
-    // Use axios with responseType 'text' to properly handle large text files
-    const response = await apiClient.get(
-      `/api/abfe/files/${jobId}/${encodeURIComponent(filename)}`,
-      {
-        responseType: 'text',
-        timeout: 120000, // 2 minutes for large files
-        transformResponse: [(data) => data], // Prevent axios from parsing JSON
-      }
-    )
-    return response.data
-  },
-
-  getABFELogs: async (jobId: string): Promise<{
-    job_id: string
-    logs: Record<string, string>
-  }> => {
-    const response = await apiClient.get(`/api/abfe/logs/${jobId}`)
-    return response.data
-  },
-
-  getABFEConsoleLog: async (jobId: string): Promise<{
-    job_id: string
-    console_log: string
-  }> => {
-    const response = await apiClient.get(`/api/abfe/console-log/${jobId}`)
-    return response.data
   },
 
   getABFEDetails: async (jobId: string): Promise<{
@@ -1241,67 +1039,6 @@ export const api = {
     return response.data
   },
 
-  // ==========================================================================
-  // Molecular Similarity Service
-  // Based on TeachOpenCADD T004: Ligand-based screening - compound similarity
-  // ==========================================================================
-
-  // Get similarity service status
-  getSimilarityStatus: async (): Promise<{
-    available: boolean
-    service: string
-    status: string
-    fingerprint_types: Record<string, string>
-    similarity_metrics: Record<string, string>
-  }> => {
-    try {
-      const response = await apiClient.get('/api/similarity/status')
-      return response.data
-    } catch (error) {
-      return {
-        available: false,
-        service: 'Molecular Similarity Service',
-        status: 'error',
-        fingerprint_types: {},
-        similarity_metrics: {},
-      }
-    }
-  },
-
-  // Get available fingerprint types
-  getFingerprintTypes: async (): Promise<{ fingerprint_types: Record<string, string> }> => {
-    const response = await apiClient.get('/api/similarity/fingerprint_types')
-    return response.data
-  },
-
-  // Get available similarity metrics
-  getSimilarityMetrics: async (): Promise<{ similarity_metrics: Record<string, string> }> => {
-    const response = await apiClient.get('/api/similarity/similarity_metrics')
-    return response.data
-  },
-
-  // Calculate fingerprint for a molecule
-  calculateFingerprint: async (
-    smiles: string,
-    fingerprintType: string = 'morgan'
-  ): Promise<{
-    success: boolean
-    smiles: string
-    canonical_smiles: string
-    fingerprint_type: string
-    n_bits: number
-    num_on_bits: number
-    bit_density: number
-    on_bits: number[]
-    bit_string_preview: string
-  }> => {
-    const response = await apiClient.post('/api/similarity/fingerprint', {
-      smiles,
-      fingerprint_type: fingerprintType,
-    })
-    return response.data
-  },
-
   // Calculate pairwise similarity between two molecules
   calculateSimilarity: async (
     smiles1: string,
@@ -1324,224 +1061,6 @@ export const api = {
       smiles2,
       fingerprint_type: fingerprintType,
       metric,
-    })
-    return response.data
-  },
-
-  // Calculate bulk similarity against a library
-  bulkSimilarity: async (
-    querySmiles: string,
-    librarySmiles: string[],
-    fingerprintType: string = 'morgan',
-    metric: string = 'tanimoto'
-  ): Promise<{
-    success: boolean
-    query_smiles: string
-    query_canonical: string
-    fingerprint_type: string
-    metric: string
-    num_library: number
-    num_valid: number
-    num_invalid: number
-    results: Array<{ index: number; smiles: string; similarity: number }>
-  }> => {
-    const response = await apiClient.post('/api/similarity/bulk', {
-      query_smiles: querySmiles,
-      library_smiles: librarySmiles,
-      fingerprint_type: fingerprintType,
-      metric,
-    }, {
-      timeout: 120000, // 2 minutes for large libraries
-    })
-    return response.data
-  },
-
-  // Similarity search with threshold
-  similaritySearch: async (
-    querySmiles: string,
-    librarySmiles: string[],
-    fingerprintType: string = 'morgan',
-    metric: string = 'tanimoto',
-    threshold: number = 0.7,
-    topK?: number
-  ): Promise<{
-    success: boolean
-    query_smiles: string
-    query_canonical: string
-    fingerprint_type: string
-    metric: string
-    threshold: number
-    top_k: number | null
-    num_library: number
-    num_valid: number
-    num_hits: number
-    hit_rate: number
-    hits: Array<{ index: number; smiles: string; similarity: number }>
-  }> => {
-    const response = await apiClient.post('/api/similarity/search', {
-      query_smiles: querySmiles,
-      library_smiles: librarySmiles,
-      fingerprint_type: fingerprintType,
-      metric,
-      threshold,
-      top_k: topK,
-    }, {
-      timeout: 120000,
-    })
-    return response.data
-  },
-
-  // Substructure search
-  substructureSearch: async (
-    pattern: string,
-    librarySmiles: string[],
-    isSmarts: boolean = true
-  ): Promise<{
-    success: boolean
-    pattern: string
-    is_smarts: boolean
-    num_library: number
-    num_valid: number
-    num_hits: number
-    hit_rate: number
-    hits: Array<{
-      index: number
-      smiles: string
-      canonical_smiles: string
-      match_atoms: number[]
-      num_matches: number
-    }>
-  }> => {
-    const response = await apiClient.post('/api/similarity/substructure', {
-      pattern,
-      library_smiles: librarySmiles,
-      is_smarts: isSmarts,
-    }, {
-      timeout: 120000,
-    })
-    return response.data
-  },
-
-  // Extract Murcko scaffold
-  getScaffold: async (
-    smiles: string,
-    generic: boolean = false
-  ): Promise<{
-    success: boolean
-    input_smiles: string
-    canonical_smiles: string
-    scaffold_smiles: string | null
-    generic: boolean
-    scaffold_num_atoms: number
-    scaffold_num_rings: number
-    scaffold_mw: number
-    input_num_atoms: number
-    scaffold_fraction: number
-    error?: string
-  }> => {
-    const response = await apiClient.post('/api/similarity/scaffold', {
-      smiles,
-      generic,
-    })
-    return response.data
-  },
-
-  // Cluster molecules using Butina clustering
-  clusterMolecules: async (
-    smilesList: string[],
-    fingerprintType: string = 'morgan',
-    threshold: number = 0.7
-  ): Promise<{
-    success: boolean
-    num_molecules: number
-    num_valid: number
-    num_invalid: number
-    num_clusters: number
-    fingerprint_type: string
-    similarity_threshold: number
-    cluster_stats: {
-      min_size: number
-      max_size: number
-      mean_size: number
-      median_size: number
-      singletons: number
-    }
-    clusters: Array<{
-      cluster_id: number
-      size: number
-      centroid_smiles: string
-      centroid_index: number
-      members: Array<{
-        original_index: number
-        smiles: string
-        is_centroid: boolean
-      }>
-    }>
-  }> => {
-    const response = await apiClient.post('/api/similarity/cluster', {
-      smiles_list: smilesList,
-      fingerprint_type: fingerprintType,
-      threshold,
-    }, {
-      timeout: 300000, // 5 minutes for large clustering jobs
-    })
-    return response.data
-  },
-
-  // Calculate enrichment factors for virtual screening validation
-  calculateEnrichment: async (
-    rankedSmiles: string[],
-    activeSmiles: string[],
-    percentages?: number[]
-  ): Promise<{
-    success: boolean
-    n_total_molecules: number
-    n_total_actives: number
-    ratio_actives: number
-    enrichment_factors: Record<string, {
-      enrichment_factor: number
-      actives_found: number
-      molecules_screened: number
-      pct_actives_found: number
-    }>
-    enrichment_curve: Array<{ pct_ranked: number; pct_actives_found: number }>
-    auc_roc: number
-  }> => {
-    const response = await apiClient.post('/api/similarity/enrichment', {
-      ranked_smiles: rankedSmiles,
-      active_smiles: activeSmiles,
-      percentages,
-    }, {
-      timeout: 120000,
-    })
-    return response.data
-  },
-
-  // Compare different fingerprint types
-  compareFingerprints: async (
-    querySmiles: string,
-    librarySmiles: string[],
-    fingerprintTypes?: string[],
-    metric: string = 'tanimoto'
-  ): Promise<{
-    success: boolean
-    query_smiles: string
-    fingerprint_types: string[]
-    metric: string
-    num_molecules: number
-    comparison: Array<{
-      index: number
-      smiles: string
-      [key: string]: number | string | null // Dynamic keys for each fingerprint type
-    }>
-  }> => {
-    const response = await apiClient.post('/api/similarity/compare_fingerprints', {
-      query_smiles: querySmiles,
-      library_smiles: librarySmiles,
-      fingerprint_types: fingerprintTypes,
-      metric,
-    }, {
-      timeout: 180000, // 3 minutes for comparing multiple fingerprints
     })
     return response.data
   },
@@ -1590,39 +1109,9 @@ export const api = {
     return await api.getJobDetails(jobId)
   },
 
-  getRBFEResults: async (jobId: string) => {
-    const response = await apiClient.get(`/api/rbfe/results/${jobId}`)
-    return response.data
-  },
-
-  getRBFENetwork: async (jobId: string) => {
-    const response = await apiClient.get(`/api/rbfe/network/${jobId}`)
-    return response.data
-  },
-
-  listRBFEJobs: async () => {
-    const response = await apiClient.get('/api/rbfe/jobs')
-    return response.data
-  },
-
-  listRBFEFiles: async (jobId: string) => {
-    const response = await apiClient.get(`/api/rbfe/files/${jobId}`)
-    return response.data
-  },
-
   getRBFEFileUrl: (jobId: string, filename: string): string => {
     const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'
     return `${API_BASE_URL}/api/rbfe/files/${jobId}/${encodeURIComponent(filename)}`
-  },
-
-  getRBFELogs: async (jobId: string) => {
-    const response = await apiClient.get(`/api/rbfe/logs/${jobId}`)
-    return response.data
-  },
-
-  resumeRBFECalculation: async (jobId: string) => {
-    const response = await apiClient.post(`/api/rbfe/resume/${jobId}`)
-    return response.data
   },
 
   // Continue RBFE calculation after docking validation
@@ -1630,48 +1119,6 @@ export const api = {
   continueRBFEAfterDocking: async (jobId: string) => {
     console.log(`[RBFE] Resuming job ${jobId} via /api/jobs/resume/rbfe/${jobId}`)
     const response = await apiClient.post(`/api/jobs/resume/rbfe/${jobId}`)
-    return response.data
-  },
-
-  previewRBFENetwork: async (config: {
-    ligand_names: string[]
-    topology: 'mst' | 'radial' | 'maximal'
-    central_ligand?: string
-  }) => {
-    const response = await apiClient.post('/api/rbfe/preview-network', config)
-    return response.data
-  },
-
-  // ==========================================================================
-  // Batch Docking (for RBFE pose preparation)
-  // ==========================================================================
-
-  submitBatchDocking: async (config: {
-    protein_pdb: string
-    ligands: Array<{
-      id: string
-      data: string
-      format: 'sdf' | 'smiles'
-    }>
-    grid_box?: {
-      center_x: number
-      center_y: number
-      center_z: number
-      size_x: number
-      size_y: number
-      size_z: number
-    }
-    exhaustiveness?: number
-    num_poses?: number
-  }) => {
-    const response = await apiClient.post('/api/docking/batch', config, {
-      timeout: 1800000, // 30 minutes for batch docking
-    })
-    return response.data
-  },
-
-  getBatchDockingStatus: async (jobId: string) => {
-    const response = await apiClient.get(`/api/docking/batch/status/${jobId}`)
     return response.data
   },
 
@@ -1724,23 +1171,6 @@ export const api = {
     message: string
   }> => {
     const response = await apiClient.post(`/api/jobs/submit/${jobType}`, params)
-    return response.data
-  },
-
-  /**
-   * Get job status from Celery/PostgreSQL
-   * @param jobId - Job identifier
-   */
-  getJobStatus: async (jobId: string): Promise<{
-    job_id: string
-    status: string
-    progress: number
-    stage?: string
-    message?: string
-    result?: any
-    error?: string
-  }> => {
-    const response = await apiClient.get(`/api/jobs/status/${jobId}`)
     return response.data
   },
 
@@ -1867,10 +1297,6 @@ export const api = {
     return eventSource
   },
 
-  /**
-   * Submit job and stream progress (convenience method)
-   * Combines submitJob + streamJobProgress
-   */
   getServicesHealth: async (): Promise<Record<string, boolean> | null> => {
     try {
       const response = await apiClient.get('/api/services/health')
@@ -1878,26 +1304,5 @@ export const api = {
     } catch {
       return null  // null signals a failed check (transient error), not "all services down"
     }
-  },
-
-  submitAndStreamJob: async (
-    jobType: string,
-    params: Record<string, any>,
-    onProgress: (data: { status: string; progress: number; stage?: string; message?: string }) => void,
-    onComplete: (result: any) => void,
-    onError: (error: string) => void
-  ): Promise<{ jobId: string; eventSource: EventSource }> => {
-    // Submit the job
-    const submission = await api.submitJob(jobType, params)
-
-    // Start streaming progress
-    const eventSource = api.streamJobProgress(
-      submission.job_id,
-      onProgress,
-      onComplete,
-      onError
-    )
-
-    return { jobId: submission.job_id, eventSource }
   },
 }

@@ -16,7 +16,7 @@
 #   make shell   - Access service shell
 # ============================================================
 
-.PHONY: help dev prod down build push pull test clean logs shell shell-% logs-% restart restart-% status db db-backup purge-queues dev-core dev-docking dev-md dev-qc dev-free-energy dev-gpu
+.PHONY: help dev prod down build push pull test clean logs shell shell-% logs-% restart restart-% status db db-backup db-purge-jobs purge-queues dev-core dev-docking dev-md dev-qc dev-free-energy dev-gpu
 
 # ============================================================
 # Configuration
@@ -29,6 +29,9 @@ IMAGE_TAG ?= $(VERSION)
 # Build configuration
 COMPOSE_PROJECT_NAME ?= ligandx
 DOCKER_REPO ?= ligandx
+
+# Env file: use .env.production if it exists, otherwise fall back to .env
+ENV_FILE := $(shell test -f .env.production && echo "--env-file .env.production" || echo "")
 
 # Registry configuration
 # Set REGISTRY to push to a remote registry, e.g.:
@@ -143,7 +146,7 @@ prod: ensure-data-dirs
 	@echo ""
 	@echo "NOTE: This uses production config without docker-compose.override.yml"
 	@echo ""
-	@docker compose -f docker-compose.yml up -d
+	@docker compose $(ENV_FILE) -f docker-compose.yml up -d
 	@echo ""
 	@echo "Services started in PRODUCTION mode!"
 	@echo "  Frontend:  http://localhost:3000"
@@ -161,7 +164,7 @@ prod: ensure-data-dirs
 # Shutdown: Stop containers and remove networks
 down:
 	@echo "Shutting down containers..."
-	@docker compose down
+	@docker compose $(ENV_FILE) down
 	@echo "Containers stopped and cleaned up!"
 
 # Build: Create production-ready images
@@ -183,7 +186,7 @@ pull:
 	@echo "Pulling images from GHCR..."
 	@echo "Version: $${VERSION:-latest}"
 	@echo ""
-	@VERSION=$${VERSION:-latest} docker compose -f docker-compose.yml pull
+	@VERSION=$${VERSION:-latest} docker compose $(ENV_FILE) -f docker-compose.yml pull
 	@echo ""
 	@echo "All images pulled. Start with: make prod"
 
@@ -215,6 +218,8 @@ ensure-data-dirs:
 		(grep -v '^UID=' .env 2>/dev/null | grep -v '^GID=' | grep -v '^# Docker user') > .env.tmp 2>/dev/null || touch .env.tmp; \
 		mv .env.tmp .env; \
 	fi
+	@grep -q '^QC_SECRET_KEY=' .env 2>/dev/null || echo "QC_SECRET_KEY=dev-secret-key-change-in-production" >> .env
+	@grep -q '^FLOWER_PASSWORD=' .env 2>/dev/null || echo "FLOWER_PASSWORD=admin" >> .env
 	@echo "# Docker user (set by make)" >> .env
 	@echo "UID=$$(id -u)" >> .env
 	@echo "GID=$$(id -g)" >> .env
@@ -284,6 +289,11 @@ db-backup:
 	@mkdir -p ./backups
 	@docker compose exec -T postgres pg_dump -U ligandx ligandx > ./backups/ligandx_$$(date +%Y%m%d_%H%M%S).sql
 	@echo "Database backed up to ./backups/"
+
+purge-jobs:
+	@echo "Deleting all jobs from the database..."
+	@docker compose exec postgres psql -U ligandx -d ligandx -c "DELETE FROM jobs;"
+	@echo "Done."
 
 # ============================================================
 # Development Task Queue Management

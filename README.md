@@ -1,31 +1,40 @@
 # Ligand-X
 
-A comprehensive web-based platform for molecular structure analysis, visualization,
-and computational chemistry. Supports molecular docking, MD simulations, quantum
-chemistry, absolute and relative binding free energy calculations, ADMET predictions,
-and interactive 3D visualization.
+A web platform for computational chemistry: molecular docking, MD simulations,
+quantum chemistry, absolute and relative binding free energy calculations, ADMET
+predictions, and interactive 3D visualization.
 
 ## Quick Start
 
-```bash
-# Development (hot reload)
-make dev
+### Production (pre-built images from GHCR)
 
-# Production
-make build
-docker-compose -f docker-compose.yml --env-file .env.production up -d
+```bash
+git clone https://github.com/kon-218/ligand-x.git
+cd ligand-x
+cp .env.production.template .env.production
+# Edit .env.production - see Configuration section below
+make pull
+make prod
 ```
 
-First build takes 15–30 minutes (per-service Conda environments).
+First pull downloads ~20 GB of images.
+
+### Development (hot reload)
+
+```bash
+git clone https://github.com/kon-218/ligand-x.git
+cd ligand-x
+make dev
+```
 
 ## Services
 
-Eleven FastAPI microservices + four Celery workers coordinated by an API gateway:
+Eleven FastAPI microservices and four Celery workers coordinated by an API gateway:
 
 | Service   | Port | Description                                        |
 |-----------|------|----------------------------------------------------|
 | gateway   | 8000 | Routing, CORS, WebSocket job updates               |
-| structure | 8001 | PDB/CIF parsing, SMILES→3D, molecule library       |
+| structure | 8001 | PDB/CIF parsing, SMILES to 3D, molecule library    |
 | docking   | 8002 | AutoDock Vina molecular docking                    |
 | md        | 8003 | OpenMM/OpenFF molecular dynamics                   |
 | admet     | 8004 | ADMET property prediction (PyTorch)                |
@@ -41,44 +50,76 @@ Eleven FastAPI microservices + four Celery workers coordinated by an API gateway
 
 ## Features
 
-- **Molecular Docking** — AutoDock Vina with grid box setup, batch mode, results visualization
-- **MD Simulations** — OpenMM/OpenFF with heating/NVT/NPT, preview checkpoint, trajectory analysis
-- **Free Energy** — ABFE and RBFE via OpenFE; Kartograf and LOMAP atom mappers
-- **Quantum Chemistry** — ORCA: geometry optimization, frequency analysis, NBO charges, Fukui indices
-- **ADMET Prediction** — Drug-likeness, ADMET properties, batch SMILES screening
-- **3D Visualization** — Mol* viewer with custom color themes, orbital visualization
-- **Structure Editing** — Ketcher editor with SMILES import/export
-- **Sequence Analysis** — Pairwise alignment and MSA with results caching
-- **Real-time Updates** — WebSocket job tracking with SSE progress streaming
+- **Molecular Docking** - AutoDock Vina with grid box setup, batch mode, results visualization
+- **MD Simulations** - OpenMM/OpenFF with heating/NVT/NPT, preview checkpoint, trajectory analysis
+- **Free Energy** - ABFE and RBFE via OpenFE; Kartograf and LOMAP atom mappers
+- **Quantum Chemistry** - ORCA: geometry optimization, frequency analysis, NBO charges, Fukui indices
+- **ADMET Prediction** - Drug-likeness, ADMET properties, batch SMILES screening
+- **3D Visualization** - Mol* viewer with custom color themes, orbital visualization
+- **Structure Editing** - Ketcher editor with SMILES import/export
+- **Sequence Analysis** - Pairwise alignment and MSA with results caching
+- **Real-time Updates** - WebSocket job tracking with SSE progress streaming
 
 ## Prerequisites
 
 - Docker 20.10+ and Docker Compose 2.0+
-- 20 GB+ free disk space for service images
-- NVIDIA GPU recommended (required for Boltz-2, ABFE/RBFE GPU acceleration)
+- 20 GB+ free disk space for pulled images (50 GB+ for local builds)
+- NVIDIA GPU recommended (required for Boltz-2, ABFE/RBFE)
 
 ## Commands
 
 ```bash
+make pull             # Pull pre-built images from GHCR
+make prod             # Start production stack (reads .env.production)
 make dev              # Start dev environment with hot reload
-make build            # Build production images (tagged with git SHA)
+make down             # Stop and remove containers
+make build            # Build images locally (tagged with git SHA)
+make push             # Push locally built images to GHCR
 make test             # Run pytest suite
-make clean            # Remove dangling images/containers
+make clean            # Remove dangling images; cap build cache at 50 GB
+make status           # Show disk usage and container status
 make logs             # Tail all service logs
+make logs-<service>   # Tail a specific service (e.g. make logs-gateway)
 make shell-<service>  # Shell into a service (e.g. make shell-gateway)
+make restart          # Restart all running containers
 make db               # Connect to PostgreSQL
-make status           # Show disk and container status
+make db-backup        # Dump database to ./backups/
+```
+
+Partial dev startup:
+
+```bash
+make dev-core         # Infrastructure + structure + frontend only
+make dev-docking      # Core + docking
+make dev-md           # Core + MD
+make dev-qc           # Core + quantum chemistry
+make dev-free-energy  # Core + docking + MD + ABFE + RBFE
+make dev-gpu          # All GPU services
 ```
 
 ## Configuration
 
-| File                       | Purpose                                            |
-|----------------------------|----------------------------------------------------|
-| `.env`                     | Dev environment (auto-generated by `make dev`)     |
-| `.env.production`          | Production secrets (copy from `.env.production.template`) |
+| File                        | Purpose                                                    |
+|-----------------------------|------------------------------------------------------------|
+| `.env`                      | Dev environment (auto-generated by `make dev`)             |
+| `.env.production`           | Production secrets (copy from `.env.production.template`)  |
+| `.env.production.template`  | Template with all available variables and defaults         |
 
-Set `ORCA_HOST_PATH` to your ORCA binary directory for quantum chemistry.
-GPU services require NVIDIA runtime configured in `docker-compose.yml`.
+The Makefile passes `--env-file .env.production` to all docker compose commands
+automatically when that file exists.
+
+### Required variables in `.env.production`
+
+| Variable              | How to set                                                        |
+|-----------------------|-------------------------------------------------------------------|
+| `QC_SECRET_KEY`       | `python -c "import secrets; print(secrets.token_urlsafe(32))"`   |
+| `FLOWER_PASSWORD`     | Any strong password                                               |
+| `NEXT_PUBLIC_API_URL` | `http://localhost:8000` for local, `https://your-domain.com` for remote |
+| `CORS_ORIGINS`        | `http://localhost:3000` for local, `https://your-domain.com` for remote |
+| `ORCA_HOST_PATH`      | Absolute path to ORCA binary (for quantum chemistry)             |
+
+Use `http://` for localhost. `https://localhost` has no TLS certificate and will
+cause CORS errors.
 
 ## Project Structure
 
@@ -86,17 +127,17 @@ GPU services require NVIDIA runtime configured in `docker-compose.yml`.
 ligand-x/
 ├── gateway/              # API gateway (routing, WebSocket, CORS)
 ├── services/             # FastAPI microservices
-│   ├── structure/        #   PDB processing
-│   ├── docking/          #   AutoDock Vina
-│   ├── md/               #   OpenMM simulations
-│   ├── admet/            #   ADMET prediction
-│   ├── boltz2/           #   Boltz-2
-│   ├── qc/               #   ORCA quantum chemistry
-│   ├── alignment/        #   Sequence alignment
-│   ├── msa/              #   Multiple sequence alignment
-│   ├── ketcher/          #   Structure editor
-│   ├── abfe/             #   Absolute free energy
-│   └── rbfe/             #   Relative free energy
+│   ├── structure/
+│   ├── docking/
+│   ├── md/
+│   ├── admet/
+│   ├── boltz2/
+│   ├── qc/
+│   ├── alignment/
+│   ├── msa/
+│   ├── ketcher/
+│   ├── abfe/
+│   └── rbfe/
 ├── lib/                  # Shared libraries
 │   ├── chemistry/        #   Parsers, preparation
 │   ├── common/           #   Config, utils, models, Redis
@@ -106,27 +147,27 @@ ligand-x/
 ├── environments/         # Per-service Conda environments
 ├── docker/               # Dockerfiles
 ├── migrations/           # PostgreSQL schema
-├── scripts/              # Build and utility scripts
+├── scripts/              # Utility scripts
 ├── tests/                # pytest test suite
-├── docs/                 # Developer documentation
-└── docs-root/            # User guides
+└── docs/                 # Developer documentation
 ```
 
 ## Architecture
 
-- **Gateway**: Intelligent proxy routing + Redis WebSocket pub/sub for real-time job updates
+- **Gateway**: Proxy routing and Redis WebSocket pub/sub for real-time job updates
 - **Async Tasks**: Celery with four specialized queues (qc, gpu-short, gpu-long, cpu)
 - **Database**: PostgreSQL for job persistence; Redis for Celery broker and WebSocket
 - **Frontend**: Next.js App Router, Zustand state management, React Query for server state
 - **Visualization**: Mol* for 3D structures, Plotly for analysis charts, Ketcher for editing
+- **Images**: Published to GHCR (`ghcr.io/kon-218/ligand-x/<service>`) on every push to `main`
 
 ## Documentation
 
-- [Installation Guide](docs-root/INSTALL.md)
-- [Build Reference](docs-root/BUILD.md)
-- [Services Overview](docs-root/services/SERVICES_OVERVIEW.md)
+- [Installation Guide](docs/INSTALL.md)
+- [Build Reference](docs/BUILD.md)
+- [Services Overview](docs/services/SERVICES_OVERVIEW.md)
 - [API Reference](docs/API.md)
-- [Contributing](docs-root/CONTRIBUTING.md)
+- [Contributing](docs/CONTRIBUTING.md)
 - [Changelog](CHANGELOG.md)
 
 ## Acknowledgements

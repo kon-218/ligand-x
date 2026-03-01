@@ -1,265 +1,164 @@
-# Ligand-X Build System Guide
+# Ligand-X Build Guide
 
-## Quick Start
+## How images are built
 
-```bash
-# Build all services (automatic disk cleanup)
-make build
+Ligand-X uses a multi-stage Dockerfile (`docker/Dockerfile.backend`) built around
+shared Conda environment layers:
 
-# Or using the script directly
-./build.sh
-
-# View all available commands
-make help
+```
+env-base    -> service-gateway, service-structure, service-alignment, ...
+env-docking -> service-docking, worker-docking
+env-md      -> service-md, service-abfe, service-rbfe, worker-gpu
+env-admet   -> service-admet
+env-boltz2  -> service-boltz2
+env-qc      -> service-qc, worker-qc
 ```
 
-## Features
+The frontend uses a separate `docker/Dockerfile.frontend` with a standard
+Node.js multi-stage build.
 
-✅ **Automatic Disk Management** - Prevents "no space left on device" errors  
-✅ **Configurable** - Customize defaults without editing scripts  
-✅ **Smart Cleanup** - Incremental cleanup only when needed  
-✅ **CI/CD Friendly** - Environment variable support  
-✅ **Easy to Use** - Simple commands with clear output  
+---
 
-## Configuration
+## Building locally
 
-### Method 1: Edit `.buildrc` (Persistent)
-
-Edit `.buildrc` to customize defaults:
+### Build all images
 
 ```bash
-# Require only 30GB free space
-MIN_DISK_SPACE_GB=30
-
-# Allow 100GB build cache
-BUILD_CACHE_LIMIT_GB=100
-
-# Warn at 150GB threshold
-WARN_DISK_SPACE_GB=150
-
-# Disable auto-cleanup
-AUTO_CLEANUP=false
-```
-
-### Method 2: Environment Variables (One-time)
-
-Override defaults for a single build:
-
-```bash
-# Require 30GB free space
-MIN_DISK_SPACE_GB=30 ./build.sh
-
-# Via Makefile
-MIN_DISK_SPACE_GB=30 make build
-
-# Or with make build-custom
-make build-custom MIN_DISK_SPACE_GB=30
-```
-
-### Method 3: Command-line Options
-
-```bash
-./build.sh --help                    # Show help
-./build.sh --clean                   # Clean before build
-./build.sh --no-cache                # Build without cache
-./build.sh --force                   # Force build even if low on space
-./build.sh gateway                   # Build specific service
-./build.sh --clean --no-cache gateway # Combine options
-```
-
-## Common Tasks
-
-### Build All Services
-```bash
-make build              # With auto-cleanup
-make rebuild            # Full clean + rebuild
-make build-nocache      # Without cache
-```
-
-### Build Specific Services
-```bash
-make build-gateway      # Gateway only
-make build-frontend     # Frontend only
-make build-services     # All backend services
-make build-workers      # All Celery workers
-./build.sh gateway      # Direct script usage
-```
-
-### Manage Disk Space
-```bash
-make status             # Show disk and Docker usage
-make clean              # Safe cleanup (recommended weekly)
-make prune              # Aggressive cleanup (use when low on space)
-make emergency          # Emergency cleanup (use when disk full)
-```
-
-### Manage Services
-```bash
-make up                 # Start all services
-make down               # Stop all services
-make restart            # Restart all services
-make logs               # Follow all logs
-make logs-gateway       # Follow specific service logs
-```
-
-### Development
-```bash
-make shell-gateway      # Open shell in gateway
-make shell-worker       # Open shell in worker
-make db                 # Connect to PostgreSQL
-make db-backup          # Backup database
-```
-
-## Configuration Defaults
-
-| Setting | Default | Purpose |
-|---------|---------|---------|
-| `MIN_DISK_SPACE_GB` | 50 | Minimum free space required |
-| `BUILD_CACHE_LIMIT_GB` | 50 | Max build cache size |
-| `WARN_DISK_SPACE_GB` | 100 | Warn threshold |
-| `AUTO_CLEANUP` | true | Auto-cleanup when low |
-| `VERBOSE` | false | Verbose output |
-
-## How It Works
-
-### Build Process
-
-1. **Check disk space** - Verify minimum free space available
-2. **Auto-cleanup** (if needed) - Incrementally clean Docker resources
-3. **Limit cache** - Keep build cache under limit
-4. **Build** - Run docker compose build
-5. **Post-cleanup** - Remove dangling images
-
-### Cleanup Strategy
-
-Incremental cleanup runs in this order:
-
-1. Remove stopped containers
-2. Remove dangling images
-3. Remove build cache older than 24h
-4. Remove unused images older than 7 days
-5. Remove unused volumes
-6. Aggressive cache cleanup (if still low)
-
-## Troubleshooting
-
-### "No space left on device" during build
-
-```bash
-# Run emergency cleanup
-make emergency
-
-# Or manually
-./emergency-docker-cleanup.sh
-
-# Then rebuild
-make rebuild
-```
-
-### Build is slow
-
-```bash
-# Check disk usage
-make status
-
-# Clean up old cache
-make clean
-
-# Rebuild
 make build
 ```
 
-### Want to use more cache
+Images are tagged with the short git SHA of HEAD (e.g. `sha-1e38ff3`).
+The first build takes 15-30 minutes because each Conda environment is downloaded
+and installed from scratch. Subsequent builds are fast due to Docker layer caching.
 
-Edit `.buildrc`:
-```bash
-BUILD_CACHE_LIMIT_GB=100
-```
+### Start the stack after building
 
-### Want stricter disk requirements
-
-Edit `.buildrc`:
-```bash
-MIN_DISK_SPACE_GB=100
-```
-
-## For CI/CD
-
-Use environment variables in your CI pipeline:
+Configure `.env.production` first (see [INSTALL.md](INSTALL.md)), then:
 
 ```bash
-# GitHub Actions
-env:
-  MIN_DISK_SPACE_GB: 30
-  BUILD_CACHE_LIMIT_GB: 100
-
-# GitLab CI
-variables:
-  MIN_DISK_SPACE_GB: "30"
-  BUILD_CACHE_LIMIT_GB: "100"
-
-# Jenkins
-withEnv(['MIN_DISK_SPACE_GB=30', 'BUILD_CACHE_LIMIT_GB=100']) {
-  sh './build.sh'
-}
+make prod
 ```
 
-## Advanced Usage
-
-### Customize via environment
+### Rebuild a single service
 
 ```bash
-# Build with custom settings
-MIN_DISK_SPACE_GB=20 \
-BUILD_CACHE_LIMIT_GB=80 \
-AUTO_CLEANUP=true \
-./build.sh --clean gateway
+docker compose build <service>
+docker compose up -d <service>
 ```
 
-### Monitor build progress
+Example:
 
 ```bash
-# Verbose output
-VERBOSE=true make build
-
-# Watch Docker resources during build
-watch docker system df
+docker compose build gateway
+docker compose up -d gateway
 ```
 
-### Rebuild without cache (nuclear option)
+---
+
+## CI/CD - GitHub Actions
+
+Pushes to `main` (and `v*` tags) trigger `.github/workflows/build.yml`, which
+builds and pushes all images to GHCR.
+
+### Job 1 - Cache conda environment stages (`build-envs`)
+
+Builds each heavy environment stage (`env-base`, `env-docking`, `env-md`,
+`env-admet`, `env-boltz2`, `env-qc`) and stores their Docker layer cache in
+GHCR under:
+
+```
+ghcr.io/<owner>/ligand-x/buildcache:env-<name>
+```
+
+These are not runnable images. They are layer cache blobs that let subsequent
+builds skip re-installing Conda environments. The `boltz2` and `md` jobs clear
+~10 GB of runner disk space first because their CUDA environments would otherwise
+exceed the GitHub-hosted runner limit.
+
+### Job 2 - Build and push service images (`build-services`)
+
+Builds each service image in parallel, pulling cache from the env stages in
+Job 1. Images are pushed with these tags:
+
+| Event             | Tags applied                                        |
+|-------------------|-----------------------------------------------------|
+| Push to main      | `latest`, `sha-<short-sha>`                         |
+| Push of `v*` tag  | `<semver>`, `<major>.<minor>`, `sha-<short-sha>`    |
+
+### Job 3 - Build and push frontend (`build-frontend`)
+
+Same process for the Next.js frontend image.
+
+---
+
+## GHCR setup (first push)
+
+On the first push, each package is created in GHCR automatically but may be
+private and without Actions write access. If you see a `403 Forbidden` error
+during the push step:
+
+1. Go to `github.com/<you>` -> **Packages**
+2. Click the failing package (e.g. `ligand-x/frontend`)
+3. **Package settings** -> **Manage Actions access**
+4. Add your repository, set role to **Write**
+5. Repeat for any other packages that fail
+
+You can also make the packages public from the same settings panel.
+
+---
+
+## Pulling pre-built images
 
 ```bash
-# Full clean + rebuild without cache
-make rebuild
-
-# Or
-./build.sh --clean --no-cache
+make pull    # pulls all images tagged :latest from GHCR
 ```
 
-## Files
-
-- `build.sh` - Main build script with auto-cleanup
-- `.buildrc` - Configuration file (edit this)
-- `Makefile` - Convenient commands
-- `docker/buildkitd.toml` - BuildKit cache limits
-- `docker-cleanup.sh` - Safe cleanup script
-- `emergency-docker-cleanup.sh` - Emergency cleanup
-
-## Tips
-
-1. **Run `make clean` weekly** to prevent disk issues
-2. **Edit `.buildrc`** to match your system's disk capacity
-3. **Use `make build-custom`** for one-time overrides
-4. **Check `make status`** before long builds
-5. **Keep 50GB+ free** for comfortable building
-
-## Questions?
+To pin to a specific build:
 
 ```bash
-# Show help
-./build.sh --help
-make help
-
-# Check current config
-grep -v '^#' .buildrc | grep '='
+VERSION=sha-1e38ff3 make pull
 ```
+
+---
+
+## Disk space
+
+| Environment | Approximate size |
+|-------------|-----------------|
+| base        | ~1.5 GB         |
+| docking     | ~2.5 GB         |
+| md          | ~4 GB           |
+| admet       | ~3 GB           |
+| boltz2      | ~6 GB           |
+| qc          | ~2.5 GB         |
+| frontend    | ~0.5 GB         |
+
+A full local build needs ~50 GB of free space for intermediate layers and
+final images.
+
+```bash
+make clean    # remove dangling images, cap build cache at 50 GB
+```
+
+---
+
+## Makefile reference
+
+| Command                   | Description                                         |
+|---------------------------|-----------------------------------------------------|
+| `make build`              | Build all images (tagged with git SHA)              |
+| `make pull`               | Pull `:latest` images from GHCR                     |
+| `make prod`               | Start production stack (requires `.env.production`) |
+| `make dev`                | Start dev stack with hot reload                     |
+| `make down`               | Stop and remove containers                          |
+| `make clean`              | Remove dangling images; cap build cache at 50 GB    |
+| `make logs`               | Tail all container logs                             |
+| `make logs-<service>`     | Tail a specific service's logs                      |
+| `make shell-<service>`    | Open a shell inside a container                     |
+| `make restart`            | Restart all running containers                      |
+| `make restart-<service>`  | Restart a specific container                        |
+| `make status`             | Show disk usage and container status                |
+| `make db`                 | Connect to PostgreSQL                               |
+| `make db-backup`          | Dump the database to `./backups/`                   |
+| `make test`               | Run the pytest suite                                |
+| `make push`               | Push locally built images to GHCR                   |

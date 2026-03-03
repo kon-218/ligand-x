@@ -142,7 +142,7 @@ jobs:
   # macOS Intel Build - Creates DMG
   # ============================================================
   build-macos-intel:
-    runs-on: macos-13
+    runs-on: macos-latest
     steps:
       - name: Checkout
         uses: actions/checkout@v4

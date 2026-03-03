@@ -1,0 +1,286 @@
+// ============================================================
+// Ligand-X Launcher - Frontend Application
+// ============================================================
+
+let statusInterval = null;
+const MAX_LOGS = 500;
+let logs = [];
+
+// Initialize on load
+document.addEventListener('DOMContentLoaded', init);
+
+async function init() {
+    // Check Docker status
+    await checkDocker();
+    
+    // Get initial status
+    await updateStatus();
+    
+    // Get project path
+    await updateProjectPath();
+    
+    // Start polling for status updates
+    statusInterval = setInterval(updateStatus, 5000);
+    
+    // Subscribe to log events
+    window.runtime.EventsOn('log', handleLogEvent);
+}
+
+// ============================================================
+// Docker & Status
+// ============================================================
+
+async function checkDocker() {
+    try {
+        const [ok, message] = await window.go.main.App.CheckDocker();
+        updateDockerStatus(ok, message);
+        return ok;
+    } catch (err) {
+        updateDockerStatus(false, err.message);
+        return false;
+    }
+}
+
+function updateDockerStatus(running, message) {
+    const indicator = document.getElementById('dockerStatus');
+    const dot = indicator.querySelector('.status-dot');
+    const text = indicator.querySelector('.status-text');
+    
+    dot.classList.remove('running', 'stopped');
+    dot.classList.add(running ? 'running' : 'stopped');
+    text.textContent = running ? 'Docker Running' : 'Docker Not Running';
+    
+    // Enable/disable controls based on Docker status
+    const buttons = ['startBtn', 'stopBtn', 'restartBtn'];
+    buttons.forEach(id => {
+        document.getElementById(id).disabled = !running;
+    });
+}
+
+async function updateStatus() {
+    try {
+        const status = await window.go.main.App.GetSystemStatus();
+        
+        // Update docker status
+        updateDockerStatus(status.dockerRunning, '');
+        
+        // Update counts
+        document.getElementById('runningCount').textContent = status.totalRunning;
+        document.getElementById('totalCount').textContent = status.totalServices;
+        
+        // Update services grid
+        const grid = document.getElementById('servicesGrid');
+        if (status.services && status.services.length > 0) {
+            grid.innerHTML = status.services.map(svc => `
+                <div class="service-badge ${svc.running ? 'running' : 'stopped'}">
+                    <span class="dot"></span>
+                    <span>${svc.name}</span>
+                </div>
+            `).join('');
+        } else {
+            grid.innerHTML = '<span style="color: var(--text-muted); font-size: 12px;">No services running</span>';
+        }
+        
+    } catch (err) {
+        console.error('Failed to update status:', err);
+    }
+}
+
+async function updateProjectPath() {
+    try {
+        const path = await window.go.main.App.GetProjectPath();
+        document.getElementById('projectPath').textContent = path || 'Not set';
+    } catch (err) {
+        document.getElementById('projectPath').textContent = 'Error';
+    }
+}
+
+// ============================================================
+// Service Controls
+// ============================================================
+
+async function startServices() {
+    const mode = document.getElementById('startMode').value;
+    showLoading(`Starting ${mode} services...`);
+    
+    try {
+        await window.go.main.App.StartServices(mode);
+        await updateStatus();
+        addLog('launcher', `Services started in ${mode} mode`);
+    } catch (err) {
+        addLog('launcher', `Error: ${err.message}`, 'error');
+    } finally {
+        hideLoading();
+    }
+}
+
+async function stopServices() {
+    showLoading('Stopping services...');
+    
+    try {
+        await window.go.main.App.StopServices();
+        await updateStatus();
+        addLog('launcher', 'Services stopped');
+    } catch (err) {
+        addLog('launcher', `Error: ${err.message}`, 'error');
+    } finally {
+        hideLoading();
+    }
+}
+
+async function restartServices() {
+    showLoading('Restarting services...');
+    
+    try {
+        await window.go.main.App.RestartServices();
+        await updateStatus();
+        addLog('launcher', 'Services restarted');
+    } catch (err) {
+        addLog('launcher', `Error: ${err.message}`, 'error');
+    } finally {
+        hideLoading();
+    }
+}
+
+async function pullImages() {
+    showLoading('Pulling latest images...');
+    
+    try {
+        await window.go.main.App.PullImages();
+        addLog('launcher', 'Images updated');
+    } catch (err) {
+        addLog('launcher', `Error: ${err.message}`, 'error');
+    } finally {
+        hideLoading();
+    }
+}
+
+// ============================================================
+// Quick Links
+// ============================================================
+
+async function openFrontend() {
+    await window.go.main.App.OpenFrontend();
+}
+
+async function openAPI() {
+    await window.go.main.App.OpenAPI();
+}
+
+async function openFlower() {
+    await window.go.main.App.OpenFlower();
+}
+
+// ============================================================
+// Project & Maintenance
+// ============================================================
+
+async function selectProjectFolder() {
+    try {
+        const path = await window.go.main.App.SelectProjectFolder();
+        if (path) {
+            document.getElementById('projectPath').textContent = path;
+            addLog('launcher', `Project path set to: ${path}`);
+        }
+    } catch (err) {
+        addLog('launcher', `Error: ${err.message}`, 'error');
+    }
+}
+
+async function cleanDocker() {
+    showLoading('Cleaning Docker resources...');
+    
+    try {
+        await window.go.main.App.CleanDocker();
+        addLog('launcher', 'Docker cleanup completed');
+    } catch (err) {
+        addLog('launcher', `Error: ${err.message}`, 'error');
+    } finally {
+        hideLoading();
+    }
+}
+
+// ============================================================
+// Logs
+// ============================================================
+
+function handleLogEvent(entry) {
+    addLog(entry.service, entry.message);
+}
+
+function addLog(service, message, type = 'info') {
+    const container = document.getElementById('logsContainer');
+    const placeholder = container.querySelector('.log-placeholder');
+    if (placeholder) {
+        placeholder.remove();
+    }
+    
+    const timestamp = new Date().toLocaleTimeString('en-US', { hour12: false });
+    
+    logs.push({ timestamp, service, message, type });
+    
+    // Trim logs if too many
+    if (logs.length > MAX_LOGS) {
+        logs = logs.slice(-MAX_LOGS);
+    }
+    
+    const entry = document.createElement('div');
+    entry.className = `log-entry ${type} fade-in`;
+    entry.innerHTML = `
+        <span class="log-time">${timestamp}</span>
+        <span class="log-service">[${service}]</span>
+        <span class="log-message">${escapeHtml(message)}</span>
+    `;
+    
+    container.appendChild(entry);
+    
+    // Auto-scroll to bottom
+    container.scrollTop = container.scrollHeight;
+    
+    // Remove old entries from DOM if too many
+    while (container.children.length > MAX_LOGS) {
+        container.removeChild(container.firstChild);
+    }
+}
+
+function clearLogs() {
+    logs = [];
+    const container = document.getElementById('logsContainer');
+    container.innerHTML = '<div class="log-placeholder">Logs will appear here...</div>';
+}
+
+async function changeLogService() {
+    const service = document.getElementById('logService').value;
+    try {
+        await window.go.main.App.ViewLogs(service);
+        addLog('launcher', `Now viewing logs for: ${service}`);
+    } catch (err) {
+        addLog('launcher', `Error: ${err.message}`, 'error');
+    }
+}
+
+// ============================================================
+// Utilities
+// ============================================================
+
+function showLoading(text = 'Loading...') {
+    document.getElementById('loadingText').textContent = text;
+    document.getElementById('loadingOverlay').classList.add('visible');
+}
+
+function hideLoading() {
+    document.getElementById('loadingOverlay').classList.remove('visible');
+}
+
+function escapeHtml(text) {
+    const div = document.createElement('div');
+    div.textContent = text;
+    return div.innerHTML;
+}
+
+// Cleanup on unload
+window.addEventListener('beforeunload', () => {
+    if (statusInterval) {
+        clearInterval(statusInterval);
+    }
+});

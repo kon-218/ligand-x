@@ -41,7 +41,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.1-dev pkg-config \       
-            libfuse2 file
+            libfuse2t64 file
 
       - name: Build Linux binary
         working-directory: launcher

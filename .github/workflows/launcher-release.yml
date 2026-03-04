@@ -139,9 +139,9 @@ jobs:
           retention-days: 5
 
   # ============================================================
-  # macOS Intel Build - Creates DMG
+  # macOS Universal Build - Creates DMG (Intel + Apple Silicon)
   # ============================================================
-  build-macos-intel:
+  build-macos-universal:
     runs-on: macos-latest
     steps:
       - name: Checkout
@@ -159,11 +159,11 @@ jobs:
       - name: Install create-dmg
         run: brew install create-dmg
 
-      - name: Build macOS app
+      - name: Build macOS universal app
         working-directory: launcher
         run: |
           WAILS_BIN="$(go env GOPATH)/bin/wails"
-          "$WAILS_BIN" build -platform darwin/amd64
+          "$WAILS_BIN" build -platform darwin/universal
 
       - name: Create DMG
         working-directory: launcher
@@ -173,16 +173,15 @@ jobs:
           if [ ! -d "$APP_PATH" ]; then
             APP_PATH=$(find build/bin -name "*.app" -type d | head -1)
           fi
-          
+
           if [ -z "$APP_PATH" ] || [ ! -d "$APP_PATH" ]; then
             echo "Error: .app bundle not found"
             ls -la build/bin/
             exit 1
           fi
-          
+
           echo "Found app at: $APP_PATH"
-          
-          # Create DMG
+
           create-dmg \
             --volname "Ligand-X Launcher" \
             --volicon "build/darwin/appicon.png" \
@@ -193,11 +192,9 @@ jobs:
             --icon "$(basename "$APP_PATH")" 200 190 \
             --hide-extension "$(basename "$APP_PATH")" \
             --no-internet-enable \
-            "ligandx-launcher-darwin-amd64.dmg" \
+            "ligandx-launcher-darwin-universal.dmg" \
             "$APP_PATH" || {
-              # create-dmg returns non-zero even on success sometimes
-              # Check if DMG was created
-              if [ -f "ligandx-launcher-darwin-amd64.dmg" ]; then
+              if [ -f "ligandx-launcher-darwin-universal.dmg" ]; then
                 echo "DMG created successfully"
               else
                 echo "DMG creation failed"
@@ -208,90 +205,18 @@ jobs:
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: ligandx-launcher-darwin-amd64.dmg
-          path: launcher/ligandx-launcher-darwin-amd64.dmg
-          retention-days: 5
-
-  # ============================================================
-  # macOS ARM Build - Creates DMG (Apple Silicon)
-  # ============================================================
-  build-macos-arm:
-    runs-on: macos-latest
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Setup Go
-        uses: actions/setup-go@v5
-        with:
-          go-version: ${{ env.GO_VERSION }}
-          cache-dependency-path: launcher/go.sum
-
-      - name: Install Wails CLI
-        run: go install github.com/wailsapp/wails/v2/cmd/wails@${{ env.WAILS_VERSION }}
-
-      - name: Install create-dmg
-        run: brew install create-dmg
-
-      - name: Build macOS app
-        working-directory: launcher
-        run: |
-          WAILS_BIN="$(go env GOPATH)/bin/wails"
-          "$WAILS_BIN" build -platform darwin/arm64
-
-      - name: Create DMG
-        working-directory: launcher
-        run: |
-          # Find the .app bundle
-          APP_PATH="build/bin/ligandx-launcher.app"
-          if [ ! -d "$APP_PATH" ]; then
-            APP_PATH=$(find build/bin -name "*.app" -type d | head -1)
-          fi
-          
-          if [ -z "$APP_PATH" ] || [ ! -d "$APP_PATH" ]; then
-            echo "Error: .app bundle not found"
-            ls -la build/bin/
-            exit 1
-          fi
-          
-          echo "Found app at: $APP_PATH"
-          
-          # Create DMG
-          create-dmg \
-            --volname "Ligand-X Launcher" \
-            --volicon "build/darwin/appicon.png" \
-            --window-pos 200 120 \
-            --window-size 600 400 \
-            --icon-size 100 \
-            --app-drop-link 400 190 \
-            --icon "$(basename "$APP_PATH")" 200 190 \
-            --hide-extension "$(basename "$APP_PATH")" \
-            --no-internet-enable \
-            "ligandx-launcher-darwin-arm64.dmg" \
-            "$APP_PATH" || {
-              if [ -f "ligandx-launcher-darwin-arm64.dmg" ]; then
-                echo "DMG created successfully"
-              else
-                echo "DMG creation failed"
-                exit 1
-              fi
-            }
-
-      - name: Upload artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: ligandx-launcher-darwin-arm64.dmg
-          path: launcher/ligandx-launcher-darwin-arm64.dmg
+          name: ligandx-launcher-darwin-universal.dmg
+          path: launcher/ligandx-launcher-darwin-universal.dmg
           retention-days: 5
 
   # ============================================================
   # Create GitHub Release
   # ============================================================
   release:
-    needs: [build-linux, build-windows, build-macos-intel, build-macos-arm]
+    needs: [build-linux, build-windows, build-macos-universal]
     runs-on: ubuntu-latest
     if: startsWith(github.ref, 'refs/tags/')
-    
+
     steps:
       - name: Download all artifacts
         uses: actions/download-artifact@v4
@@ -310,20 +235,18 @@ jobs:
           files: |
             artifacts/ligandx-launcher-linux-amd64.AppImage/ligandx-launcher-linux-amd64.AppImage
             artifacts/ligandx-launcher-windows-amd64-installer.exe/ligandx-launcher-windows-amd64-installer.exe
-            artifacts/ligandx-launcher-darwin-amd64.dmg/ligandx-launcher-darwin-amd64.dmg
-            artifacts/ligandx-launcher-darwin-arm64.dmg/ligandx-launcher-darwin-arm64.dmg
+            artifacts/ligandx-launcher-darwin-universal.dmg/ligandx-launcher-darwin-universal.dmg
           body: |
             ## Ligand-X Launcher ${{ github.ref_name }}
-            
+
             Cross-platform GUI launcher for the Ligand-X molecular analysis platform.
-            
+
             ### Downloads
-            
+
             | Platform | File | Installation |
             |----------|------|--------------|
             | **Windows** (64-bit) | `ligandx-launcher-windows-amd64-installer.exe` | Run installer, follow prompts |
-            | **macOS** Intel | `ligandx-launcher-darwin-amd64.dmg` | Open DMG, drag to Applications |
-            | **macOS** Apple Silicon | `ligandx-launcher-darwin-arm64.dmg` | Open DMG, drag to Applications |
+            | **macOS** (Intel + Apple Silicon) | `ligandx-launcher-darwin-universal.dmg` | Open DMG, drag to Applications |
             | **Linux** (64-bit) | `ligandx-launcher-linux-amd64.AppImage` | `chmod +x`, double-click to run |
             
             ### Requirements

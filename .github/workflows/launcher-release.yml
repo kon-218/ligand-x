@@ -46,7 +46,7 @@ jobs:
         working-directory: launcher
         run: |
           WAILS_BIN="$(go env GOPATH)/bin/wails"
-          "$WAILS_BIN" build -platform linux/amd64 -o ligandx-launcher
+          "$WAILS_BIN" build -platform linux/amd64 -tags webkit2_41 -o ligandx-launcher 
 
       - name: Download linuxdeploy
         run: |

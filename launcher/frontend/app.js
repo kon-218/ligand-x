@@ -64,9 +64,8 @@ async function updateStatus() {
         // Update docker status
         updateDockerStatus(status.dockerRunning, '');
         
-        // Update counts
+        // Update count
         document.getElementById('runningCount').textContent = status.totalRunning;
-        document.getElementById('totalCount').textContent = status.totalServices;
         
         // Update services grid
         const grid = document.getElementById('servicesGrid');

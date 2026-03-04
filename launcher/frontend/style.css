@@ -251,6 +251,8 @@ body {
     gap: 4px;
     max-height: 80px;
     overflow-y: auto;
+    padding-right: 4px;
+    scrollbar-gutter: stable;
 }
 
 .service-badge {
@@ -732,16 +734,6 @@ body {
     to { opacity: 1; }
 }
 
-/* ============================================================
-   Empty State
-   ============================================================ */
-.services-grid:empty::after,
-.services-grid:not(:has(.service-badge))::after {
-    content: 'No services running';
-    color: var(--text-dim);
-    font-size: 11px;
-    padding: 8px 0;
-}
 
 /* ============================================================
    Focus States (Accessibility)

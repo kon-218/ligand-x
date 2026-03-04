@@ -168,32 +168,42 @@ func (a *App) GetSystemStatus() SystemStatus {
 	}
 
 	for _, c := range containers {
-		for _, name := range c.Names {
-			cleanName := strings.TrimPrefix(name, "/")
-			parts := strings.Split(cleanName, "-")
-			if len(parts) >= 2 {
-				serviceName := strings.Join(parts[1:], "-")
-				if strings.HasPrefix(cleanName, "ligandx-") || strings.HasPrefix(cleanName, "ligand-x-") {
-					if ligandxServices[serviceName] {
-						svc := ServiceStatus{
-							Name:    serviceName,
-							Status:  c.State,
-							Running: c.State == "running",
-						}
+		serviceName := c.Labels["com.docker.compose.service"]
+		projectName := c.Labels["com.docker.compose.project"]
 
-						if c.State == "running" {
-							status.TotalRunning++
-							if health, ok := c.Labels["com.docker.compose.service"]; ok {
-								svc.Health = health
-							}
-						}
-
-						status.Services = append(status.Services, svc)
-						status.TotalServices++
-					}
-				}
-			}
+		// Filter: must be a docker compose container for a known ligand-x service.
+		// We match on service name (not project name) since the project name varies
+		// by directory name (ligand-x, ligandx, etc.).
+		// Extra guard: project name must contain "ligand" to avoid false positives.
+		if serviceName == "" || !ligandxServices[serviceName] {
+			continue
 		}
+		if !strings.Contains(projectName, "ligand") && projectName != "ligandx" {
+			continue
+		}
+
+		health := ""
+		if strings.Contains(c.Status, "(healthy)") {
+			health = "healthy"
+		} else if strings.Contains(c.Status, "(unhealthy)") {
+			health = "unhealthy"
+		} else if strings.Contains(c.Status, "(starting)") {
+			health = "starting"
+		}
+
+		svc := ServiceStatus{
+			Name:    serviceName,
+			Status:  c.State,
+			Health:  health,
+			Running: c.State == "running",
+		}
+
+		if c.State == "running" {
+			status.TotalRunning++
+		}
+
+		status.Services = append(status.Services, svc)
+		status.TotalServices++
 	}
 
 	return status
@@ -268,9 +278,17 @@ func (a *App) runDockerCompose(args []string, message string) error {
 	cmd := exec.Command("docker", args...)
 	cmd.Dir = a.projectPath
 
+	uid := os.Getuid()
+	gid := os.Getgid()
+	if uid < 0 { // os.Getuid() returns -1 on Windows
+		uid = 0
+	}
+	if gid < 0 {
+		gid = 0
+	}
 	cmd.Env = append(os.Environ(),
-		fmt.Sprintf("UID=%d", os.Getuid()),
-		fmt.Sprintf("GID=%d", os.Getgid()),
+		fmt.Sprintf("UID=%d", uid),
+		fmt.Sprintf("GID=%d", gid),
 	)
 
 	stdout, _ := cmd.StdoutPipe()

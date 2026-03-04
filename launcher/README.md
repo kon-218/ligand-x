@@ -13,8 +13,9 @@ A cross-platform GUI launcher for the Ligand-X molecular analysis platform. Buil
 
 ## Prerequisites
 
-1. **Docker** - Must be installed and running
-2. **Docker Compose** - v2.0+ (comes with Docker Desktop)
+1. **Docker** - [Docker Desktop](https://www.docker.com/products/docker-desktop/) (Windows/macOS) or [Docker Engine](https://docs.docker.com/engine/install/) (Linux); must be running
+2. **Docker Compose** - v2.0+ (bundled with Docker Desktop)
+3. **NVIDIA GPU** *(optional)* - Required for Boltz-2, ABFE/RBFE. Install [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/install-guide.html) on Linux, or enable GPU in Docker Desktop settings on Windows/macOS
 
 ## Download & Install
 

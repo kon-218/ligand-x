@@ -3,7 +3,61 @@
 Ligand-X runs entirely in Docker. All dependencies (Conda environments, scientific
 libraries, and the Next.js frontend) are managed inside containers.
 
-## Prerequisites
+---
+
+## Option A — Launcher (Recommended)
+
+The simplest way to run Ligand-X on any desktop platform. No terminal required.
+
+### Prerequisites
+
+| Requirement       | Notes                                                                                  |
+|-------------------|----------------------------------------------------------------------------------------|
+| Docker            | [Docker Desktop](https://www.docker.com/products/docker-desktop/) on Windows/macOS; [Docker Engine](https://docs.docker.com/engine/install/) on Linux |
+| Free disk space   | 20 GB+ (per-service images are 1.5–6 GB each)                                         |
+| RAM               | 16 GB+; 32 GB+ for GPU services (MD, ABFE/RBFE)                                       |
+| NVIDIA GPU        | Recommended; required for Boltz-2, ABFE/RBFE GPU acceleration                         |
+
+**GPU setup:**
+- **Linux**: Install the [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/install-guide.html)
+- **Windows/macOS**: Enable GPU passthrough in Docker Desktop settings (requires WSL2 backend on Windows + [NVIDIA Container Toolkit for WSL2](https://docs.nvidia.com/cuda/wsl-user-guide/))
+
+### Steps
+
+1. Clone the repository:
+   ```bash
+   git clone https://github.com/kon-218/ligand-x.git
+   ```
+
+2. Download the launcher for your platform from the [Releases page](https://github.com/kon-218/ligand-x/releases):
+
+   | Platform | File |
+   |----------|------|
+   | Windows | `ligandx-launcher-windows-amd64-installer.exe` |
+   | macOS (Apple Silicon) | `ligandx-launcher-darwin-arm64.dmg` |
+   | macOS (Intel) | `ligandx-launcher-darwin-amd64.dmg` |
+   | Linux | `ligandx-launcher-linux-amd64.AppImage` |
+
+3. Install and launch:
+   - **Windows**: Run the installer, then launch from the Start Menu
+   - **macOS**: Open the DMG, drag to Applications, launch from there
+   - **Linux**: `chmod +x ligandx-launcher-linux-amd64.AppImage` then run it
+
+4. Point the launcher at the cloned folder if it is not auto-detected (click the folder path in the footer)
+
+5. Select a start mode and click **Start**
+
+6. Click **Open App** or navigate to http://localhost:3000
+
+See [launcher/README.md](../launcher/README.md) for full launcher documentation and troubleshooting.
+
+---
+
+## Option B — Production / Headless (CLI)
+
+For server deployments or environments without a desktop. Requires git and a terminal.
+
+### Prerequisites
 
 | Requirement        | Minimum     | Notes                                               |
 |--------------------|-------------|-----------------------------------------------------|
@@ -13,29 +67,7 @@ libraries, and the Next.js frontend) are managed inside containers.
 | RAM                | 16 GB+      | 32 GB+ recommended for GPU services (MD, ABFE, RBFE)|
 | NVIDIA GPU         | Recommended | Required for Boltz-2, ABFE/RBFE GPU acceleration   |
 
----
-
-## Windows
-
-**Prerequisites:** Docker Desktop 4.x+ (includes Compose v2), PowerShell 5+
-
-All `make` commands have PowerShell equivalents via `start.ps1`. On Windows, replace
-every `make <target>` in this guide with `.\start.ps1 <target>`.
-
-**Execution policy** — if PowerShell blocks the script, run once:
-```powershell
-Set-ExecutionPolicy -Scope CurrentUser RemoteSigned
-```
-
-**GPU passthrough** — NVIDIA GPU acceleration requires the WSL2 backend in Docker
-Desktop plus the [NVIDIA Container Toolkit for WSL2](https://docs.nvidia.com/cuda/wsl-user-guide/).
-
----
-
-## Option A - Production (pre-built GHCR images)
-
-Pull and run pre-built images directly from GitHub Container Registry. No build
-step required.
+**Windows developers** — `make` requires WSL2. Without WSL2, use `.\start.ps1 <target>` as a drop-in replacement for every `make <target>` in this guide. See the [Windows note](#windows-developer-cli) below.
 
 ### 1. Clone the repository
 
@@ -75,11 +107,6 @@ will refuse to start if either is missing or blank.
 make pull
 ```
 
-**Windows (PowerShell):**
-```powershell
-.\start.ps1 pull
-```
-
 The script passes `--env-file .env.production` automatically when that file
 exists, so no extra flags are needed.
 
@@ -87,11 +114,6 @@ exists, so no extra flags are needed.
 
 ```bash
 make prod
-```
-
-**Windows (PowerShell):**
-```powershell
-.\start.ps1 prod
 ```
 
 ### 5. Verify
@@ -107,7 +129,7 @@ API: http://localhost:8000
 
 ---
 
-## Option B - Development (hot reload)
+## Option C — Development (hot reload)
 
 For contributors or anyone modifying the source code.
 
@@ -122,11 +144,6 @@ cd ligand-x
 
 ```bash
 make dev
-```
-
-**Windows (PowerShell):**
-```powershell
-.\start.ps1 dev
 ```
 
 This auto-generates a `.env` file with your user ID, volume-mounts the source
@@ -153,19 +170,9 @@ make dev-free-energy  # Core + docking + MD + ABFE + RBFE
 make dev-gpu          # All GPU services (full stack minus QC)
 ```
 
-**Windows (PowerShell):**
-```powershell
-.\start.ps1 dev-core
-.\start.ps1 dev-docking
-.\start.ps1 dev-md
-.\start.ps1 dev-qc
-.\start.ps1 dev-free-energy
-.\start.ps1 dev-gpu
-```
-
 ---
 
-## Option C - Build from source
+## Option D — Build from source
 
 For building custom images after local code changes.
 
@@ -174,12 +181,6 @@ git clone https://github.com/kon-218/ligand-x.git
 cd ligand-x
 make build       # tags images with the current git SHA; first build takes 15-30 min
 make prod        # configure .env.production first
-```
-
-**Windows (PowerShell):**
-```powershell
-.\start.ps1 build   # requires WSL2 for full script; falls back to docker compose build
-.\start.ps1 prod
 ```
 
 ---
@@ -196,6 +197,39 @@ Example:
 docker compose build structure
 docker compose up -d structure
 ```
+
+---
+
+## Windows developer CLI
+
+If you are developing on Windows without WSL2, replace all `make <target>` commands
+with `.\start.ps1 <target>`:
+
+```powershell
+.\start.ps1 pull
+.\start.ps1 prod
+.\start.ps1 dev
+.\start.ps1 dev-core
+.\start.ps1 dev-docking
+.\start.ps1 dev-md
+.\start.ps1 dev-qc
+.\start.ps1 dev-free-energy
+.\start.ps1 dev-gpu
+.\start.ps1 logs gateway      # service name as second argument
+.\start.ps1 shell gateway
+.\start.ps1 test
+.\start.ps1 down
+```
+
+If execution is blocked, run once:
+```powershell
+Set-ExecutionPolicy -Scope CurrentUser RemoteSigned
+```
+
+**GPU passthrough** — NVIDIA GPU acceleration requires the WSL2 backend in Docker
+Desktop plus the [NVIDIA Container Toolkit for WSL2](https://docs.nvidia.com/cuda/wsl-user-guide/).
+
+> **Just want to run Ligand-X on Windows?** Use [Option A (Launcher)](#option-a--launcher-recommended) — no terminal or PowerShell needed.
 
 ---
 
@@ -237,24 +271,12 @@ Then restart:
 make down && make prod
 ```
 
-**Windows (PowerShell):**
-```powershell
-.\start.ps1 down; .\start.ps1 prod
-```
-
 ### Services won't start
 
 ```bash
 make logs-<service>                            # e.g. make logs-gateway
 docker compose ps                              # check health status
 netstat -tuln | grep -E '3000|8000|6379'       # check for port conflicts
-```
-
-**Windows (PowerShell):**
-```powershell
-.\start.ps1 logs gateway
-docker compose ps
-netstat -an | findstr "3000 8000 6379"
 ```
 
 ### Permission issues on output files

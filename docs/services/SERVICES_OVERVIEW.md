@@ -1,152 +1,149 @@
-# Ligand-X Services Overview
+# Services Overview
 
-Comprehensive documentation of the computational chemistry services: ABFE, RBFE, Docking, and MD Optimization.
+Ligand-X is a collection of specialized FastAPI microservices coordinated by a central
+gateway. Each service owns a distinct scientific domain; all share the same job submission,
+progress streaming, and database infrastructure.
+
+---
+
+## Services at a Glance
+
+| Service | Port | Domain | Worker queue |
+|---------|------|--------|--------------|
+| **gateway** | 8000 | Routing, CORS, WebSocket pub/sub | — |
+| **structure** | 8001 | PDB/CIF parsing, SMILES → 3D, molecule library | — |
+| **docking** | 8002 | AutoDock Vina molecular docking | `cpu` |
+| **md** | 8003 | Molecular dynamics (OpenMM/OpenFF) | `gpu-short` |
+| **admet** | 8004 | ADMET property prediction (PyTorch) | `gpu-short` |
+| **boltz2** | 8005 | Boltz-2 structure/affinity prediction | `gpu-short` |
+| **qc** | 8006 | Quantum chemistry (ORCA) | `qc` |
+| **alignment** | 8007 | Pairwise protein sequence alignment | — |
+| **ketcher** | 8008 | Structure editor backend | — |
+| **msa** | 8009 | Multiple sequence alignment | — |
+| **abfe** | 8010 | Absolute binding free energy (OpenFE) | `gpu-long` |
+| **rbfe** | 8011 | Relative binding free energy (OpenFE/Kartograf) | `gpu-long` |
+
+---
+
+## Celery Workers
+
+Long-running calculations are dispatched to specialized Celery workers to prevent GPU
+contention and ensure fair resource allocation.
+
+| Worker | Queue | Concurrency | Conda env | Handles |
+|--------|-------|-------------|-----------|---------|
+| `worker-gpu-long` | `gpu-long` | 1 | `biochem-md` | ABFE, RBFE (multi-hour runs) |
+| `worker-gpu-short` | `gpu-short` | 2 | `biochem-md` | MD, Boltz-2, ADMET |
+| `worker-cpu` | `cpu` | 4 | `biochem-docking` | Docking (single & batch) |
+| `worker-qc` | `qc` | 2 | `biochem-qc` | Quantum chemistry (ORCA) |
+
+`gpu-long` runs with concurrency=1 so long ABFE/RBFE jobs do not compete for the GPU.
+`gpu-short` allows two concurrent tasks for faster throughput on shorter jobs.
+
+---
 
 ## Architecture
 
-All services follow a unified execution pattern:
+Jobs flow through a consistent pipeline regardless of service type:
 
 ```
-┌──────────┐    ┌─────────┐    ┌────────────┐    ┌────────────────┐    ┌──────────────┐
-│ Frontend │───▶│ Gateway │───▶│   Celery   │───▶│ Service Runner │───▶│   Service    │
-│ (React)  │    │(FastAPI)│    │   Worker   │    │  (conda run)   │    │  (Python)    │
-└──────────┘    └─────────┘    └────────────┘    └────────────────┘    └──────────────┘
-     │               │               │                   │                    │
-     │  POST /api/   │   Submit to   │   Execute in      │   JSON stdin/     │
-     │  jobs/submit  │   queue       │   conda env       │   stdout          │
-     │               │               │                   │                    │
-     ▼               ▼               ▼                   ▼                    ▼
-  Job ID +      PostgreSQL      Task State         Progress to           Result
-  Stream URL    + Celery        Updates            stderr                 JSON
+Frontend  →  Gateway  →  Queue  →  Celery Worker  →  Service Python script
+(React)      (FastAPI)   (RabbitMQ)                   (conda env)
 ```
 
-## Key Components
+1. **Submit** — frontend POSTs to `/api/jobs/submit/{job_type}`; gateway writes a job
+   record to PostgreSQL and enqueues a Celery task
+2. **Execute** — worker picks up the task and runs the service script inside the
+   appropriate conda environment; progress is emitted to stderr
+3. **Stream** — frontend connects to `/api/jobs/stream/{job_id}` (SSE); gateway polls
+   Celery every 2 s and forwards progress events
+4. **Complete** — result is stored in PostgreSQL; frontend receives a `complete` event
 
-| Component | Location | Purpose |
-|-----------|----------|---------|
-| **Gateway** | `gateway/routers/jobs.py` | Unified job submission, SSE streaming, PostgreSQL storage |
-| **GPU Tasks** | `lib/tasks/gpu_tasks.py` | Celery tasks for MD, ABFE, RBFE, Boltz2 |
-| **CPU Tasks** | `lib/tasks/cpu_tasks.py` | Celery tasks for Docking |
-| **Service Runner** | `lib/services/runner.py` | Executes services in conda environments |
-| **Chemistry Utils** | `lib/chemistry/` | Shared PDB parsing, structure preparation |
+---
 
-## Queue Architecture
+## Key Source Files
 
-| Queue | Worker | Concurrency | Conda Env | Services |
-|-------|--------|-------------|-----------|----------|
-| `gpu-long` | worker-gpu-long | 1 | biochem-md | ABFE, RBFE |
-| `gpu-short` | worker-gpu-short | 2 | biochem-md | MD, Boltz2, ADMET |
-| `cpu` | worker-cpu | 4 | biochem-docking | Docking (single/batch) |
-| `qc` | worker-qc | 2 | biochem-qc | Quantum Chemistry |
+| File | Role |
+|------|------|
+| `gateway/routers/jobs.py` | Job submission, SSE streaming, PostgreSQL writes |
+| `gateway/routers/jobs_websocket.py` | WebSocket alternative to SSE |
+| `lib/tasks/gpu_tasks.py` | Celery task definitions for GPU queues |
+| `lib/tasks/cpu_tasks.py` | Celery task definitions for CPU queue |
+| `lib/services/runner.py` | Runs service scripts in conda envs, parses progress |
+| `lib/db/job_repository.py` | Async PostgreSQL CRUD for job records |
+| `lib/chemistry/` | Shared parsers, structure preparation utilities |
 
-## Services Summary
+---
 
-| Service | Scientific Purpose | Key Output |
-|---------|-------------------|------------|
-| **ABFE** | Absolute Binding Free Energy | ΔG (kcal/mol) for single ligand |
-| **RBFE** | Relative Binding Free Energy | ΔΔG network for ligand series |
-| **Docking** | Molecular Docking | Binding poses with affinity scores |
-| **MD** | MD Optimization | Equilibrated complex structures |
+## Service Script Pattern
 
-## Data Flow
-
-### 1. Job Submission
-```
-Frontend POST /api/jobs/submit/{job_type}
-    ↓
-Gateway creates job in PostgreSQL (status: 'submitted')
-    ↓
-Gateway submits Celery task to appropriate queue
-    ↓
-Gateway returns { job_id, stream_url } to frontend
-```
-
-### 2. Task Execution
-```
-Celery worker picks up task from queue
-    ↓
-Task calls call_service_with_progress(service_name, job_data)
-    ↓
-Runner executes: conda run -n {env} python services/{service}/run_{service}_job.py
-    ↓
-Service reads JSON from stdin, processes, writes JSON to stdout
-    ↓
-Progress updates written to stderr (parsed by runner)
-    ↓
-Result returned through Celery, stored in PostgreSQL
-```
-
-### 3. Progress Streaming (SSE)
-```
-Frontend connects to GET /api/jobs/stream/{job_id}
-    ↓
-Gateway polls Celery task state every 2 seconds
-    ↓
-Progress updates sent as Server-Sent Events
-    ↓
-On completion, result stored in PostgreSQL
-    ↓
-Frontend receives 'complete' event with result
-```
-
-## Shared Chemistry Utilities
-
-Located in `lib/chemistry/`:
-
-| Module | Purpose |
-|--------|---------|
-| `PDBParserUtils` | Parse PDB format, extract atoms/residues |
-| `MMCIFParserUtils` | Parse mmCIF format |
-| `ComponentAnalyzer` | Identify ligands, waters, ions, metals in structures |
-| `ProteinPreparer` | Clean protein (remove heteroatoms, add hydrogens) |
-| `LigandPreparer` | Prepare ligand (add hydrogens, generate 3D, optimize) |
-| `smiles_lookup` | SMILES validation and lookup |
-
-## Service Files Structure
-
-Each service follows a consistent structure:
+Every computational service exposes a `run_{service}_job.py` entrypoint:
 
 ```
 services/{service}/
-├── __init__.py          # Package initialization
-├── main.py              # FastAPI application entry point
-├── routers.py           # API endpoints
-├── service.py           # Core service logic
-├── run_{service}_job.py # Celery task entrypoint (JSON stdin/stdout)
-└── [additional modules] # Service-specific modules
+├── main.py              # FastAPI app — health endpoint, internal API
+├── routers.py           # Route definitions
+├── service.py           # Core scientific logic
+└── run_{service}_job.py # Called by Celery worker; reads JSON from stdin, writes to stdout
 ```
+
+Progress is reported on stderr as JSON lines:
+```json
+{"progress": 45, "message": "Running NVT equilibration"}
+```
+
+---
+
+## Shared Chemistry Utilities (`lib/chemistry/`)
+
+| Module | Purpose |
+|--------|---------|
+| `PDBParserUtils` | Parse PDB format, extract atoms/residues/chains |
+| `MMCIFParserUtils` | Parse mmCIF/CIF format |
+| `ComponentAnalyzer` | Identify ligands, waters, ions, metals in a structure |
+| `ProteinPreparer` | Remove heteroatoms, add missing hydrogens, fix missing residues |
+| `LigandPreparer` | Add hydrogens, generate 3D coordinates, optimize geometry |
+| `smiles_lookup` | SMILES validation and structure lookup |
+
+---
+
+## Gateway API Reference
+
+### Job management
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `POST` | `/api/jobs/submit/{job_type}` | Submit a new job |
+| `GET` | `/api/jobs/stream/{job_id}` | SSE progress stream |
+| `GET` | `/api/jobs/list` | List all jobs |
+| `GET` | `/api/jobs/{job_id}` | Get job details |
+| `POST` | `/api/jobs/{job_id}/cancel` | Cancel a running job |
+| `DELETE` | `/api/jobs/{job_id}` | Delete a job record |
+| `POST` | `/api/jobs/resume/md/{job_id}` | Resume MD job from preview checkpoint |
+
+### Health
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `GET` | `/health` | Gateway health |
+| `GET` | `/api/services/health` | Health of all downstream services |
+
+---
 
 ## Environment Variables
 
 | Variable | Default | Purpose |
 |----------|---------|---------|
-| `CELERY_BROKER_URL` | `amqp://ligandx:ligandx@rabbitmq:5672/` | RabbitMQ connection |
-| `CELERY_RESULT_BACKEND` | `redis://redis:6379/0` | Redis for task results |
+| `CELERY_BROKER_URL` | `amqp://ligandx:ligandx@rabbitmq:5672/` | RabbitMQ broker |
+| `CELERY_RESULT_BACKEND` | `redis://redis:6379/0` | Redis result store |
 | `DATABASE_URL` | `postgresql://...` | PostgreSQL connection |
 | `LOG_LEVEL` | `INFO` | Logging verbosity |
 
-## API Endpoints
+---
 
-### Gateway (Unified)
-| Method | Endpoint | Purpose |
-|--------|----------|---------|
-| `POST` | `/api/jobs/submit/{job_type}` | Submit new job |
-| `GET` | `/api/jobs/stream/{job_id}` | SSE progress stream |
-| `GET` | `/api/jobs/list` | List all jobs |
-| `GET` | `/api/jobs/{job_id}` | Get job details |
-| `POST` | `/api/jobs/{job_id}/cancel` | Cancel running job |
-| `DELETE` | `/api/jobs/{job_id}` | Delete job |
+## Service-Specific Documentation
 
-### Service-Specific
-Each service also exposes direct endpoints (primarily for internal use):
-- ABFE: `http://abfe:8007/api/abfe/`
-- RBFE: `http://rbfe:8008/api/rbfe/`
-- Docking: `http://docking:8002/api/docking/`
-- MD: `http://md:8003/api/md/`
-
-## Related Documentation
-
-- [ABFE_SERVICE.md](./ABFE_SERVICE.md) - Absolute Binding Free Energy
-- [RBFE_SERVICE.md](./RBFE_SERVICE.md) - Relative Binding Free Energy
-- [DOCKING_SERVICE.md](./DOCKING_SERVICE.md) - Molecular Docking
-- [MD_SERVICE.md](./MD_SERVICE.md) - MD Optimization
+- [ABFE_SERVICE.md](./ABFE_SERVICE.md) — Absolute Binding Free Energy
+- [RBFE_SERVICE.md](./RBFE_SERVICE.md) — Relative Binding Free Energy
+- [DOCKING_SERVICE.md](./DOCKING_SERVICE.md) — Molecular Docking
+- [MD_SERVICE.md](./MD_SERVICE.md) — MD Optimization

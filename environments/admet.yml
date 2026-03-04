@@ -33,6 +33,7 @@ dependencies:
   
   # Pip packages
   - pip:
+    - setuptools
     - admet-ai
     - fastapi>=0.104.1
     - uvicorn[standard]>=0.24.0

@@ -2,7 +2,15 @@
 ║                  LIGAND-X BUILD QUICK REFERENCE                            ║
 ╚════════════════════════════════════════════════════════════════════════════╝
 
-MOST COMMON COMMANDS
+LAUNCHER (DESKTOP USERS)
+────────────────────────────────────────────────────────────────────────────
+
+  For running Ligand-X on a desktop machine, use the GUI Launcher instead
+  of the commands below. Download it from the Releases page on GitHub.
+  The launcher handles start/stop, logs, and service monitoring — no
+  terminal required. See launcher/README.md for details.
+
+MOST COMMON COMMANDS (CLI / HEADLESS)
 ────────────────────────────────────────────────────────────────────────────
 
   make pull               Pull pre-built images from GHCR (:latest)

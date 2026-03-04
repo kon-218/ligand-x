@@ -17,9 +17,11 @@ git clone https://github.com/your-org/ligand-x.git
 cd ligand-x
 ```
 
-### Start the Development Environment
+### Run the Application
 
-The recommended way to develop is via Docker with hot reload:
+For simply running Ligand-X, use the [Launcher](../launcher/README.md) — no terminal needed.
+
+For development work (modifying source code), use Docker with hot reload:
 
 ```bash
 make dev
@@ -36,9 +38,9 @@ make dev-md         # Core + editor + MD
 make dev-qc         # Core + editor + quantum chemistry
 ```
 
-### On Windows
+### On Windows (developer CLI)
 
-Replace all `make <target>` commands with `.\start.ps1 <target>`. Examples:
+If you need dev workflow commands (build, test, logs, shell) without WSL2, replace all `make <target>` commands with `.\start.ps1 <target>`. Examples:
 
 ```powershell
 make dev            ->  .\start.ps1 dev

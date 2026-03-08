@@ -128,6 +128,8 @@ class PredictADMETRequest(BaseModel):
     smiles: Optional[str] = None
     smiles_list: Optional[List[str]] = None
     pdb_data: Optional[str] = None
+    molecule_name: Optional[str] = None
+    molecule_names: Optional[List[str]] = None  # parallel list for batch mode
 
 
 def format_admet_results(mol, preds, canonical_smiles, molecule_name, input_smiles, cached=False):
@@ -240,7 +242,8 @@ async def predict_admet(request: PredictADMETRequest):
 
                     # Get canonical form
                     canonical_smiles = Chem.MolToSmiles(mol, canonical=True)
-                    molecule_name = f"Molecule_{canonical_smiles[:15]}"
+                    provided_name = (request.molecule_names[i] if request.molecule_names and i < len(request.molecule_names) else None)
+                    molecule_name = provided_name or f"Molecule_{canonical_smiles[:15]}"
 
                     # Check for duplicate within current batch
                     if canonical_smiles in seen_canonical:
@@ -328,7 +331,9 @@ async def predict_admet(request: PredictADMETRequest):
                         try:
                             mol = Chem.MolFromSmiles(smiles)
                             canonical_smiles = Chem.MolToSmiles(mol, canonical=True)
-                            molecule_name = f"Molecule_{canonical_smiles[:15]}"
+                            original_idx = uncached_indices[i]
+                            provided_name = (request.molecule_names[original_idx] if request.molecule_names and original_idx < len(request.molecule_names) else None)
+                            molecule_name = provided_name or f"Molecule_{canonical_smiles[:15]}"
 
                             formatted_result = format_admet_results(
                                 mol, preds, canonical_smiles, molecule_name, smiles, cached=False
@@ -338,7 +343,6 @@ async def predict_admet(request: PredictADMETRequest):
                             await cache_result(canonical_smiles, smiles, molecule_name, formatted_result)
 
                             # Update results list at correct index
-                            original_idx = uncached_indices[i]
                             results[original_idx] = {
                                 'smiles': smiles,
                                 'canonical_smiles': canonical_smiles,
@@ -412,7 +416,7 @@ async def predict_admet(request: PredictADMETRequest):
         
         # Get canonical SMILES for cache lookup
         canonical_smiles = Chem.MolToSmiles(mol, canonical=True)
-        molecule_name = f"Molecule_{canonical_smiles[:15]}"
+        molecule_name = request.molecule_name or f"Molecule_{canonical_smiles[:15]}"
         
         # Check PostgreSQL cache first
         cached = await get_cached_result(canonical_smiles)

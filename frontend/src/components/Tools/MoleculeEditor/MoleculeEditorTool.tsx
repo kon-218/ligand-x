@@ -85,8 +85,12 @@ export function MoleculeEditorTool() {
   const [libraryMolecules, setLibraryMolecules] = useState<any[]>([])
   const [isLibraryDropdownOpen, setIsLibraryDropdownOpen] = useState(false)
   const [isLoadingLibrary, setIsLoadingLibrary] = useState(false)
+  const [importedLibraryName, setImportedLibraryName] = useState<string | null>(null)
   const libraryFetchedRef = useRef(false)
   const [isLigandSelectorOpen, setIsLigandSelectorOpen] = useState(false)
+  const [saveDialogOpen, setSaveDialogOpen] = useState(false)
+  const [saveDialogName, setSaveDialogName] = useState('New Molecule')
+  const [pendingSaveData, setPendingSaveData] = useState<{ smiles: string; molfile: string; inchi: string } | null>(null)
 
   const fetchLibraryMolecules = useCallback(async () => {
     // Skip if already fetched
@@ -208,6 +212,7 @@ export function MoleculeEditorTool() {
         requestAnimationFrame(() => {
           if (isMountedRef.current) {
             setHasChanges(true)
+            setImportedLibraryName(null)
             if (ketcherRef.current && isKetcherReadyRef.current) {
               updateMoleculeData()
             }
@@ -691,12 +696,32 @@ export function MoleculeEditorTool() {
         return
       }
 
-      // Generate a name from SMILES or ask user
-      const name = prompt('Enter a name for this molecule:', 'New Molecule')
-      if (!name) {
-        setIsLoading(false)
-        return
-      }
+      // Open in-app dialog instead of browser prompt
+      setPendingSaveData({ smiles, molfile, inchi })
+      setSaveDialogName('New Molecule')
+      setSaveDialogOpen(true)
+      setIsLoading(false)
+    } catch (err: any) {
+      console.error('Save error:', err)
+      const errorMessage = err.response?.data?.error || err.message || 'Failed to save to library'
+      setError(errorMessage)
+      setIsLoading(false)
+    }
+  }
+
+  const handleConfirmSave = async () => {
+    if (!pendingSaveData || !saveDialogName.trim()) return
+
+    const { smiles, molfile, inchi } = pendingSaveData
+    const name = saveDialogName.trim()
+
+    setSaveDialogOpen(false)
+    setPendingSaveData(null)
+
+    try {
+      setIsLoading(true)
+      setError(null)
+      setSuccess(null)
 
       console.log('Saving molecule to library:', { name, smiles, hasInchi: !!inchi })
 
@@ -719,18 +744,16 @@ export function MoleculeEditorTool() {
 
         console.log(response.data.already_exists ? 'Molecule already exists:' : 'Molecule saved successfully:', response.data.molecule)
 
-        // Refresh library list
         fetchLibraryMolecules()
 
-        // Also generate 3D and add to viewer
         if (smiles) {
           try {
             console.log('Generating 3D structure from SMILES:', smiles)
-            const response3d = await apiClient.post('/api/structure/smiles_to_3d',{ smiles })
+            const response3d = await apiClient.post('/api/structure/smiles_to_3d', { smiles })
 
             if (response3d.data && (response3d.data.pdb_data || response3d.data.sdf_data)) {
               const newStructure = {
-                structure_id: `mol-${Date.now()}`,
+                structure_id: name || `mol-${Date.now()}`,
                 pdb_data: response3d.data.pdb_data,
                 sdf_data: response3d.data.sdf_data,
                 smiles: smiles,
@@ -741,7 +764,6 @@ export function MoleculeEditorTool() {
             }
           } catch (e) {
             console.error('Failed to generate 3D structure:', e)
-            // Don't show error - saving was successful
           }
         }
       } else {
@@ -828,6 +850,8 @@ export function MoleculeEditorTool() {
         throw new Error('Molecule has no molfile or SMILES data')
       }
 
+      setImportedLibraryName(molecule.name || null)
+
       // Wait for Ketcher to process the structure
       await new Promise(resolve => setTimeout(resolve, 500))
       await updateMoleculeData()
@@ -890,8 +914,8 @@ export function MoleculeEditorTool() {
         return
       }
 
-      // Get molecule name - use SMILES as fallback
-      let moleculeName = smiles.substring(0, 20) + (smiles.length > 20 ? '...' : '')
+      // Get molecule name - prefer library name, fall back to truncated SMILES
+      const moleculeName = importedLibraryName || smiles.substring(0, 20) + (smiles.length > 20 ? '...' : '')
 
       // Call backend to generate 3D structure directly from SMILES
       const response = await apiClient.post('/api/structure/smiles_to_3d',{
@@ -902,7 +926,7 @@ export function MoleculeEditorTool() {
       if (response.data.sdf_data || response.data.pdb_data) {
         // Create a new structure object
         const newStructure = {
-          structure_id: `mol-${Date.now()}`,
+          structure_id: importedLibraryName || `mol-${Date.now()}`,
           pdb_data: response.data.pdb_data,  // Keep for compatibility
           sdf_data: response.data.sdf_data,  // Preferred format
           smiles: smiles,
@@ -945,6 +969,50 @@ export function MoleculeEditorTool() {
     <div ref={containerRef} className="flex flex-col h-full bg-gray-50 relative">
       {/* Lazy load Ketcher CSS */}
       <KetcherStyles />
+
+      {/* Save to Library Dialog */}
+      {saveDialogOpen && (
+        <div className="absolute inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm">
+          <div className="bg-white rounded-xl shadow-xl border border-gray-200 p-6 w-80 flex flex-col gap-4">
+            <div>
+              <h3 className="text-sm font-semibold text-gray-900">Save to Library</h3>
+              <p className="text-xs text-gray-500 mt-1">Enter a name for this molecule</p>
+            </div>
+            <div className="flex flex-col gap-1.5">
+              <Label htmlFor="save-mol-name" className="text-xs text-gray-700">Name</Label>
+              <input
+                id="save-mol-name"
+                value={saveDialogName}
+                onChange={e => setSaveDialogName(e.target.value)}
+                onKeyDown={e => {
+                  if (e.key === 'Enter') handleConfirmSave()
+                  if (e.key === 'Escape') { setSaveDialogOpen(false); setPendingSaveData(null) }
+                }}
+                autoFocus
+                className="flex h-10 w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 placeholder:text-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500"
+              />
+            </div>
+            <div className="flex gap-2 justify-end">
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() => { setSaveDialogOpen(false); setPendingSaveData(null) }}
+                className="text-gray-700 hover:bg-red-50 hover:text-red-600 hover:border-red-300"
+              >
+                Cancel
+              </Button>
+              <Button
+                size="sm"
+                onClick={handleConfirmSave}
+                disabled={!saveDialogName.trim()}
+                className="bg-blue-600 hover:bg-blue-700 text-white"
+              >
+                Save
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Compact Header with All Controls */}
       <div className="flex items-center justify-between px-2 sm:px-3 py-2.5 bg-white border-b border-gray-200 shadow-sm z-10 relative">

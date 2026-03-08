@@ -49,7 +49,8 @@ RUN useradd -m -s /bin/bash appuser && \
              /app/data/qc_jobs \
              /app/data/qc_results_db \
              /app/data/msa_cache && \
-    chown -R appuser:appuser /app
+    chown -R appuser:appuser /app && \
+    chmod -R 777 /app/data
 
 # Ensure OpenMPI libraries are in the library path for ORCA
 ENV LD_LIBRARY_PATH=/usr/lib/openmpi/lib:${LD_LIBRARY_PATH:-}

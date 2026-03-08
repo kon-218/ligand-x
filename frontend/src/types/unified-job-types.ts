@@ -190,7 +190,7 @@ export function getJobDisplaySummary(job: UnifiedJob): string {
     // Add service-specific details
     switch (job.service) {
         case 'docking':
-            if (meta.best_affinity !== undefined) {
+            if (meta.best_affinity != null) {
                 parts.push(`${meta.best_affinity.toFixed(1)} kcal/mol`)
             }
             break;
@@ -205,13 +205,13 @@ export function getJobDisplaySummary(job: UnifiedJob): string {
             }
             break
         case 'abfe':
-            if (meta.binding_free_energy !== undefined) {
+            if (meta.binding_free_energy != null) {
                 parts.push(`ΔG: ${meta.binding_free_energy.toFixed(1)} kcal/mol`)
             }
             break
         case 'boltz2':
             if (meta.is_batch) {
-                if (meta.best_binder_affinity !== undefined) {
+                if (meta.best_binder_affinity != null) {
                     parts.push(`best: ${meta.best_binder_affinity.toFixed(2)}`)
                 }
             } else if (meta.num_poses_generated) {

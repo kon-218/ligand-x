@@ -64,7 +64,20 @@ async def cleanup_stale_jobs():
     try:
         from datetime import datetime, timezone
         from lib.db import get_job_repository
-        from lib.tasks.gpu_tasks import celery_app
+        from lib.tasks.gpu_tasks import celery_app as gpu_celery_app
+
+        # Lazily load QC celery app (may not be importable if QC env not active)
+        qc_celery_app = None
+        try:
+            from services.qc.tasks import celery_app as _qc_app
+            qc_celery_app = _qc_app
+        except Exception:
+            pass
+
+        def get_app_for_job(job_type: str):
+            if job_type == 'qc' and qc_celery_app is not None:
+                return qc_celery_app
+            return gpu_celery_app
 
         logger.info("Checking for stale jobs from previous sessions...")
         repo = get_job_repository()
@@ -74,11 +87,12 @@ async def cleanup_stale_jobs():
             logger.warning("Could not connect to database for stale job cleanup")
             return
 
-        # Get all running/pending jobs
+        # Get all running/pending/submitted jobs
         running_jobs = await repo.list_jobs(status='running', limit=200)
         pending_jobs = await repo.list_jobs(status='pending', limit=200)
+        submitted_jobs = await repo.list_jobs(status='submitted', limit=200)
 
-        all_jobs = running_jobs + pending_jobs
+        all_jobs = running_jobs + pending_jobs + submitted_jobs
         cleaned_count = 0
 
         for job in all_jobs:
@@ -86,8 +100,9 @@ async def cleanup_stale_jobs():
             if not job_id:
                 continue
 
-            # Check Celery state
-            result = celery_app.AsyncResult(job_id)
+            # Use job-type-specific Celery app for accurate status lookup
+            app = get_app_for_job(job.get('job_type', ''))
+            result = app.AsyncResult(job_id)
             celery_state = result.state
 
             # Only clean up if Celery doesn't know about this task
@@ -107,7 +122,7 @@ async def cleanup_stale_jobs():
 
                 if age_minutes > 5:
                     # Mark as failed
-                    logger.info(f"Cleaning up stale job {job_id} (age: {age_minutes:.1f}min, status: {job.get('status')})")
+                    logger.info(f"Cleaning up stale {job.get('job_type', 'unknown')} job {job_id} (age: {age_minutes:.1f}min, status: {job.get('status')})")
                     await repo.update_status(
                         job_id, 'failed',
                         error_message='Job lost due to system restart or worker failure'

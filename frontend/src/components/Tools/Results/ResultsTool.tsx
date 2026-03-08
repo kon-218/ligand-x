@@ -1,12 +1,11 @@
 'use client'
 
-import React, { useEffect } from 'react'
-import { BarChart3, Target, Activity, Brain, FlaskConical, GitBranch } from 'lucide-react'
+import React, { useEffect, useState } from 'react'
+import { BarChart3, Target, Activity, Brain, FlaskConical, GitBranch, Trash2 } from 'lucide-react'
 import { useUnifiedResultsStore } from '@/store/unified-results-store'
 import { UnifiedJobList, UnifiedProgressDisplay } from '../shared'
 import { ServiceResultsRenderer } from './ServiceResultsRenderer'
 import type { ServiceType } from '@/types/unified-job-types'
-
 // Service filter configuration
 const SERVICE_FILTERS: Array<{ id: ServiceType | 'all'; label: string; icon: React.ReactNode; color: string }> = [
     { id: 'all', label: 'All', icon: <BarChart3 className="w-4 h-4" />, color: 'gray' },
@@ -42,6 +41,9 @@ export function ResultsTool() {
         deleteJob,
     } = useUnifiedResultsStore()
 
+    const [isCleaningUp, setIsCleaningUp] = useState(false)
+    const [cleanupResult, setCleanupResult] = useState<string | null>(null)
+
     // WebSocket state from store – use WS for updates when connected, avoid polling
     const wsConnected = useUnifiedResultsStore(state => state.wsConnected)
     
@@ -59,6 +61,23 @@ export function ResultsTool() {
         }
     }, [wsConnected, loadAllJobs, startPolling, stopPolling])
 
+    const handleCleanupStale = async () => {
+        setIsCleaningUp(true)
+        setCleanupResult(null)
+        try {
+            const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'
+            const res = await fetch(`${API_BASE}/api/jobs/cleanup-stale`, { method: 'POST' })
+            const data = await res.json()
+            setCleanupResult(`Cleaned up ${data.cleaned ?? 0} stale job(s)`)
+            await loadAllJobs()
+        } catch {
+            setCleanupResult('Cleanup failed')
+        } finally {
+            setIsCleaningUp(false)
+            setTimeout(() => setCleanupResult(null), 4000)
+        }
+    }
+
     // Get filtered jobs based on current filters
     const filteredJobs = getFilteredJobs()
 
@@ -73,7 +92,21 @@ export function ResultsTool() {
         <div className="h-full flex flex-col">
             {/* Service Filter Tabs */}
             <div className="p-4 border-b border-gray-700">
-                <h2 className="text-lg font-semibold text-white mb-3">Results Browser</h2>
+                <div className="flex items-center justify-between mb-3">
+                    <h2 className="text-lg font-semibold text-white">Results Browser</h2>
+                    <button
+                        onClick={handleCleanupStale}
+                        disabled={isCleaningUp}
+                        title="Mark stale queued/running jobs as failed"
+                        className="flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-medium bg-gray-700 text-gray-300 hover:bg-gray-600 hover:text-white transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                        <Trash2 className={`w-3.5 h-3.5 ${isCleaningUp ? 'animate-pulse' : ''}`} />
+                        {isCleaningUp ? 'Cleaning…' : 'Clean stale'}
+                    </button>
+                </div>
+                {cleanupResult && (
+                    <p className="text-xs text-gray-400 mb-2">{cleanupResult}</p>
+                )}
                 <div className="flex flex-wrap gap-2">
                     {SERVICE_FILTERS.map((filter) => (
                         <button

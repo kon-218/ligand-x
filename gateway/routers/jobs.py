@@ -36,16 +36,37 @@ router = APIRouter(prefix="/api/jobs", tags=["jobs"])
 # ============================================================
 
 _celery_app = None
+_qc_celery_app = None
 _job_repo = None
 
 
 def get_celery_app():
-    """Lazy load Celery app."""
+    """Lazy load Celery app (gpu_tasks / cpu_tasks broker)."""
     global _celery_app
     if _celery_app is None:
         from lib.tasks.gpu_tasks import celery_app
         _celery_app = celery_app
     return _celery_app
+
+
+def get_qc_celery_app():
+    """Lazy load QC Celery app so AsyncResult lookups use the correct app."""
+    global _qc_celery_app
+    if _qc_celery_app is None:
+        try:
+            from services.qc.tasks import celery_app as qc_app
+            _qc_celery_app = qc_app
+        except Exception as e:
+            logger.warning(f"Could not load QC celery app, falling back to gpu_tasks app: {e}")
+            _qc_celery_app = get_celery_app()
+    return _qc_celery_app
+
+
+def get_celery_app_for_job(job_type: str):
+    """Return the appropriate Celery app for a given job type."""
+    if job_type == 'qc':
+        return get_qc_celery_app()
+    return get_celery_app()
 
 
 async def get_job_repo():
@@ -748,7 +769,6 @@ async def list_jobs(
     """
     try:
         repo = await get_job_repo()
-        celery_app = get_celery_app()
 
         jobs = await repo.list_jobs(
             job_type=job_type,
@@ -763,16 +783,19 @@ async def list_jobs(
             if not job_id:
                 continue
 
+            # Use job-type-specific Celery app for accurate status lookup
+            job_celery_app = get_celery_app_for_job(job.get('job_type', ''))
+
             # Get live Celery status
-            result = celery_app.AsyncResult(job_id)
+            result = job_celery_app.AsyncResult(job_id)
             celery_state = result.state
 
-            # Detect stale jobs: DB shows running/pending but Celery has no record and job is old
+            # Detect stale jobs: DB shows running/pending/submitted but Celery has no record and job is old
             db_status = job.get('status')
             created_at = job.get('created_at')
 
             # Check if this might be a stale job
-            if celery_state == 'PENDING' and db_status in ('running', 'pending'):
+            if celery_state == 'PENDING' and db_status in ('running', 'pending', 'submitted'):
                 # Parse created_at timestamp
                 try:
                     from datetime import datetime, timezone
@@ -787,7 +810,7 @@ async def list_jobs(
 
                     if age_minutes > 5:
                         # This is a stale job - mark as failed
-                        logger.warning(f"Detected stale job {job_id} (age: {age_minutes:.1f}min, status: {db_status})")
+                        logger.warning(f"Detected stale {job.get('job_type', 'unknown')} job {job_id} (age: {age_minutes:.1f}min, status: {db_status})")
                         await repo.update_status(
                             job_id, 'failed',
                             error_message='Job lost due to system restart or worker failure'
@@ -896,7 +919,7 @@ async def get_job(job_id: str):
         if not job:
             raise HTTPException(status_code=404, detail="Job not found")
         
-        celery_app = get_celery_app()
+        celery_app = get_celery_app_for_job(job.get('job_type', ''))
         result = celery_app.AsyncResult(job_id)
         
         # If job is running, check Celery for live progress updates
@@ -1042,7 +1065,15 @@ async def cancel_job(job_id: str):
     For running jobs: revokes the Celery task and updates DB.
     For stuck jobs (already completed in Celery but pending in DB): just updates DB.
     """
-    celery_app = get_celery_app()
+    # Look up job type to use the correct Celery app for revocation
+    try:
+        repo = await get_job_repo()
+        job = await repo.get_job(job_id)
+        job_type = job.get('job_type', '') if job else ''
+    except Exception:
+        job_type = ''
+
+    celery_app = get_celery_app_for_job(job_type)
     
     # Check if job exists and is running
     result = celery_app.AsyncResult(job_id)
@@ -1054,8 +1085,8 @@ async def cancel_job(job_id: str):
     
     # Always update database to mark as cancelled
     try:
-        repo = await get_job_repo()
-        await repo.update_status(job_id, 'cancelled')
+        cancel_repo = await get_job_repo()
+        await cancel_repo.update_status(job_id, 'cancelled')
     except Exception as e:
         logger.warning(f"Failed to update cancelled status in DB: {e}")
     
@@ -1119,13 +1150,13 @@ async def cleanup_stale_jobs(
         from datetime import datetime, timezone
 
         repo = await get_job_repo()
-        celery_app = get_celery_app()
 
-        # Get all running/pending jobs
+        # Get all running/pending/submitted jobs
         running_jobs = await repo.list_jobs(status='running', limit=200)
         pending_jobs = await repo.list_jobs(status='pending', limit=200)
+        submitted_jobs = await repo.list_jobs(status='submitted', limit=200)
 
-        all_jobs = running_jobs + pending_jobs
+        all_jobs = running_jobs + pending_jobs + submitted_jobs
         cleaned_count = 0
 
         for job in all_jobs:
@@ -1133,8 +1164,9 @@ async def cleanup_stale_jobs(
             if not job_id:
                 continue
 
-            # Check Celery state
-            result = celery_app.AsyncResult(job_id)
+            # Use the job-type-specific Celery app for accurate status lookup
+            job_celery_app = get_celery_app_for_job(job.get('job_type', ''))
+            result = job_celery_app.AsyncResult(job_id)
             celery_state = result.state
 
             # Only clean up if Celery doesn't know about this task
@@ -1154,7 +1186,7 @@ async def cleanup_stale_jobs(
 
                 if age > age_minutes:
                     # Mark as failed
-                    logger.info(f"Cleaning up stale job {job_id} (age: {age:.1f}min, status: {job.get('status')})")
+                    logger.info(f"Cleaning up stale {job.get('job_type', 'unknown')} job {job_id} (age: {age:.1f}min, status: {job.get('status')})")
                     await repo.update_status(
                         job_id, 'failed',
                         error_message='Job lost due to system restart or worker failure'

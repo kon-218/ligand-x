@@ -295,9 +295,10 @@ services:
   # Frontend - Development Mode
   # ============================================================
   frontend:
+    image: ligandx/frontend:dev  # Override registry image so dev build gets its own local tag
     build:
       context: .
-      dockerfile: docker/Dockerfile.frontend.dev  # Use dev Dockerfile
+      dockerfile: docker/Dockerfile.frontend.dev
     volumes:
       - ./frontend:/app
       - /app/node_modules  # Prevent overwriting node_modules

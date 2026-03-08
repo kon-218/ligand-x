@@ -26,14 +26,15 @@ dependencies:
   - requests
   - pillow
   - pyyaml
-  
+  - setuptools<72
+
   # Machine learning for ADMET predictions
   - pytorch
   - torchvision
-  
+
   # Pip packages
   - pip:
-    - setuptools
+    - "setuptools<72"  # pkg_resources removed in setuptools 72+
     - admet-ai
     - fastapi>=0.104.1
     - uvicorn[standard]>=0.24.0

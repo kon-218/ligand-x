@@ -7,7 +7,7 @@ import { api } from '@/lib/api-client'
 import { Button } from '@/components/ui/button'
 import { Switch } from '@/components/ui/switch'
 import { Input } from '@/components/ui/input'
-import type { ADMETResult, ADMETBatchResult } from '@/types/molecular'
+import type { ADMETResult } from '@/types/molecular'
 import type { MoleculeOption, StoredADMETResult } from '@/types/admet'
 import {
   StructureSelector,
@@ -18,6 +18,7 @@ import {
   accentColorClasses,
 } from './shared'
 import type { StructureOption } from './shared'
+import { parseValueUnit } from './ADMET/utils'
 
 /**
  * Parse SMILES input string supporting multiple delimiters.
@@ -41,20 +42,19 @@ function parseSmilesInput(input: string): string[] {
 }
 
 export function ADMETTool() {
-  const { currentStructure, admetResults, setAdmetResults, isAdmetRunning, setIsAdmetRunning } = useMolecularStore()
+  const { currentStructure, isAdmetRunning, setIsAdmetRunning } = useMolecularStore()
   const colors = accentColorClasses['teal']
 
   const [activeTab, setActiveTab] = useState<'predict' | 'history'>('predict')
-  
+
   // Single mode state
   const [selectedMolecule, setSelectedMolecule] = useState('')
-  
+
   // Batch mode state
   const [isBatchMode, setIsBatchMode] = useState(false)
   const [batchMolecules, setBatchMolecules] = useState<Set<string>>(new Set())
   const [smilesInput, setSmilesInput] = useState('')
-  const [batchResults, setBatchResults] = useState<ADMETBatchResult | null>(null)
-  
+
   // Common state
   const [availableMolecules, setAvailableMolecules] = useState<MoleculeOption[]>([])
   const [storedResults, setStoredResults] = useState<StoredADMETResult[]>([])
@@ -62,7 +62,7 @@ export function ADMETTool() {
   const [expandedResults, setExpandedResults] = useState<{ [key: number]: ADMETResult | null }>({})
   const [loadingResult, setLoadingResult] = useState<number | null>(null)
   const [error, setError] = useState<string | null>(null)
-  const [expandedBatchRow, setExpandedBatchRow] = useState<number | null>(null)
+
 
   const fetchAvailableMolecules = async () => {
     const molecules: MoleculeOption[] = []
@@ -168,8 +168,6 @@ export function ADMETTool() {
 
   useEffect(() => {
     if (activeTab === 'predict') {
-      setAdmetResults(null)
-      setBatchResults(null)
       setError(null)
     }
   }, [])
@@ -216,8 +214,6 @@ export function ADMETTool() {
   const runPrediction = async () => {
     setIsAdmetRunning(true)
     setError(null)
-    setAdmetResults(null)
-    setBatchResults(null)
 
     try {
       if (isBatchMode) {
@@ -226,10 +222,12 @@ export function ADMETTool() {
         }
 
         const smilesList: string[] = []
+        const namesList: string[] = []
         batchMolecules.forEach(id => {
           const mol = availableMolecules.find(m => m.id === id)
           if (mol?.smiles) {
             smilesList.push(mol.smiles)
+            namesList.push(mol.name)
           }
         })
 
@@ -237,9 +235,8 @@ export function ADMETTool() {
           throw new Error('No valid SMILES found in selected molecules')
         }
 
-        const result = await api.predictADMET({ smiles_list: smilesList }) as ADMETBatchResult
-        setBatchResults(result)
-        
+        await api.predictADMET({ smiles_list: smilesList, molecule_names: namesList })
+
       } else {
         if (!selectedMolecule) {
           throw new Error('Please select a molecule')
@@ -249,19 +246,14 @@ export function ADMETTool() {
         if (!molecule) throw new Error('Selected molecule not found')
 
         const request = molecule.smiles
-          ? { smiles: molecule.smiles }
-          : { pdb_data: molecule.pdb_data }
+          ? { smiles: molecule.smiles, molecule_name: molecule.name }
+          : { pdb_data: molecule.pdb_data, molecule_name: molecule.name }
 
-        const result = await api.predictADMET(request) as ADMETResult
-        setAdmetResults(result) // Only set single result here
+        await api.predictADMET(request)
       }
 
       await fetchStoredResults()
-      
-      // If single mode, switch to history tab, otherwise stay to show batch results
-      if (!isBatchMode) {
-        setActiveTab('history')
-      }
+      setActiveTab('history')
       
     } catch (err: any) {
       console.error('ADMET prediction error:', err)
@@ -280,29 +272,99 @@ export function ADMETTool() {
     }))
   }
 
-  const renderPropertyCard = (label: string, value: any, interpretation?: string, status?: 'good' | 'warning' | 'bad' | 'neutral') => {
-    const statusColors = {
-      good: 'border-green-500/50 bg-green-900/20',
-      warning: 'border-yellow-500/50 bg-yellow-900/20',
-      bad: 'border-red-500/50 bg-red-900/20',
-      neutral: 'border-gray-700 bg-gray-800/50',
+  // Properties where high probability is GOOD (favor high)
+  const HIGH_IS_GOOD = new Set([
+    'Human Intestinal Absorption',
+    'Oral Bioavailability',
+    'Blood-Brain Barrier Penetration',
+  ])
+  // Properties where high probability is BAD (flag high values)
+  const HIGH_IS_BAD = new Set([
+    'P-glycoprotein Inhibition',
+    'CYP1A2 Inhibition', 'CYP2C19 Inhibition', 'CYP2C9 Inhibition',
+    'CYP2D6 Inhibition', 'CYP3A4 Inhibition',
+    'CYP2C9 Substrate', 'CYP2D6 Substrate', 'CYP3A4 Substrate',
+    'hERG Blocking', 'Clinical Toxicity', 'Mutagenicity (AMES)',
+    'Drug-Induced Liver Injury', 'Carcinogenicity',
+  ])
+
+  const getProbStatus = (label: string, prob: number): 'good' | 'warning' | 'bad' | 'neutral' => {
+    if (HIGH_IS_GOOD.has(label)) {
+      if (prob >= 0.6) return 'good'
+      if (prob >= 0.3) return 'warning'
+      return 'bad'
+    }
+    if (HIGH_IS_BAD.has(label)) {
+      if (prob <= 0.3) return 'good'
+      if (prob <= 0.6) return 'warning'
+      return 'bad'
+    }
+    return 'neutral'
+  }
+
+  const formatUnit = (unit: string): string => {
+    const unitMap: Record<string, string> = {
+      'Prob.': 'probability',
+      'logD7.4': 'log D (pH 7.4)',
+      'logS': 'log S',
+      'logPapp': 'log Papp (cm/s)',
+      'log(mol/kg)': 'log(mol/kg)',
+    }
+    return unitMap[unit] || unit
+  }
+
+  const renderPropertyRow = (label: string, rawValue: any) => {
+    if (rawValue === undefined || rawValue === null) return null
+
+    const { value: parsedValue, unit } = parseValueUnit(rawValue)
+    const isProb = unit === 'Prob.'
+    const numericVal = parseFloat(parsedValue)
+
+    let status: 'good' | 'warning' | 'bad' | 'neutral' = 'neutral'
+    if (isProb && !isNaN(numericVal)) {
+      status = getProbStatus(label, numericVal)
+    }
+
+    const statusBarColors = {
+      good: 'bg-green-500',
+      warning: 'bg-yellow-500',
+      bad: 'bg-red-500',
+      neutral: 'bg-teal-500',
+    }
+    const statusTextColors = {
+      good: 'text-green-400',
+      warning: 'text-yellow-400',
+      bad: 'text-red-400',
+      neutral: 'text-white',
     }
 
     return (
-      <div className={`p-3 rounded-lg border ${statusColors[status || 'neutral']}`}>
-        <div className="text-xs text-gray-400 mb-1">{label}</div>
-        <div className="text-white font-medium">{value}</div>
-        {interpretation && (
-          <div className="text-xs text-gray-500 mt-1">{interpretation}</div>
+      <div key={label} className="py-2 border-b border-gray-700/40 last:border-0">
+        <div className="flex justify-between items-center gap-3 mb-1">
+          <span className="text-sm text-gray-300">{label}</span>
+          <span className={`text-sm font-semibold tabular-nums ${isProb ? statusTextColors[status] : 'text-white'}`}>
+            {isProb && !isNaN(numericVal)
+              ? `${Math.round(numericVal * 100)}%`
+              : parsedValue}
+          </span>
+        </div>
+        {isProb && !isNaN(numericVal) && (
+          <div className="h-1.5 bg-gray-700 rounded-full overflow-hidden">
+            <div
+              className={`h-full rounded-full transition-all ${statusBarColors[status]}`}
+              style={{ width: `${Math.min(numericVal * 100, 100)}%` }}
+            />
+          </div>
+        )}
+        {unit && !isProb && (
+          <div className="text-xs text-gray-500 mt-0.5 text-right">{formatUnit(unit)}</div>
         )}
       </div>
     )
   }
 
   const renderExpandedResults = (results: ADMETResult) => {
-    // Render all property groups dynamically
     const propertyGroups = ['Physicochemical', 'Absorption', 'Distribution', 'Metabolism', 'Excretion', 'Toxicity'] as const
-    
     const smiles = results._metadata?.canonical_smiles
 
     return (
@@ -310,9 +372,9 @@ export function ADMETTool() {
         {smiles && (
           <div className="flex justify-center mb-6">
             <div className="bg-white p-2 rounded-lg shadow-lg">
-              <img 
-                src={api.getSmilesImageUrl(smiles)} 
-                alt="Molecule Structure" 
+              <img
+                src={api.getSmilesImageUrl(smiles)}
+                alt="Molecule Structure"
                 className="w-48 h-48 object-contain"
                 onError={(e) => {
                   e.currentTarget.style.display = 'none'
@@ -326,157 +388,16 @@ export function ADMETTool() {
         {propertyGroups.map(groupName => {
           const group = results[groupName]
           if (!group || Object.keys(group).length === 0) return null
-          
+
           return (
-            <div key={groupName} className="space-y-2">
-              <h5 className="text-sm font-medium text-teal-400">{groupName}</h5>
-              <div className="grid grid-cols-2 gap-2">
-                {Object.entries(group).map(([key, value]) => {
-                  if (value === undefined || value === null) return null
-                  
-                  // Format the key for display
-                  const label = key.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase())
-                  
-                  // Format the value
-                  let displayValue: string
-                  let status: 'good' | 'warning' | 'bad' | 'neutral' = 'neutral'
-                  
-                  if (typeof value === 'boolean') {
-                    displayValue = value ? 'Yes' : 'No'
-                  } else if (typeof value === 'number') {
-                    displayValue = (value as number).toFixed(2)
-                  } else {
-                    displayValue = String(value)
-                  }
-                  
-                  return renderPropertyCard(label, displayValue, undefined, status)
-                })}
+            <div key={groupName} className="space-y-1">
+              <h5 className="text-sm font-medium text-teal-400 mb-2">{groupName}</h5>
+              <div className="bg-gray-800/40 rounded-lg px-3">
+                {Object.entries(group).map(([key, value]) => renderPropertyRow(key, value))}
               </div>
             </div>
           )
         })}
-      </div>
-    )
-  }
-
-  const renderBatchResults = () => {
-    if (!batchResults) return null
-
-    return (
-      <div className="space-y-4 mt-6">
-        <div className="flex items-center justify-between mb-4">
-          <h3 className="text-lg font-medium text-white">Batch Results Summary</h3>
-        </div>
-
-        {/* Summary stats */}
-        <div className="grid grid-cols-2 gap-3 p-4 bg-gray-800/50 rounded-lg border border-gray-700">
-          <div className="space-y-1">
-            <div className="text-xs text-gray-400">Input SMILES</div>
-            <div className="text-lg font-semibold text-white">{batchResults.total}</div>
-          </div>
-          <div className="space-y-1">
-            <div className="text-xs text-gray-400">Valid Results</div>
-            <div className="text-lg font-semibold text-green-400">{batchResults.valid}</div>
-          </div>
-          {batchResults.duplicates_removed > 0 && (
-            <div className="space-y-1">
-              <div className="text-xs text-gray-400">Duplicates Removed</div>
-              <div className="text-lg font-semibold text-yellow-400">{batchResults.duplicates_removed}</div>
-            </div>
-          )}
-          {batchResults.already_cached > 0 && (
-            <div className="space-y-1">
-              <div className="text-xs text-gray-400">From Cache</div>
-              <div className="text-lg font-semibold text-blue-400">{batchResults.already_cached}</div>
-            </div>
-          )}
-          {batchResults.invalid_count > 0 && (
-            <div className="space-y-1">
-              <div className="text-xs text-gray-400">Invalid SMILES</div>
-              <div className="text-lg font-semibold text-red-400">{batchResults.invalid_count}</div>
-            </div>
-          )}
-          {batchResults.predicted > 0 && (
-            <div className="space-y-1">
-              <div className="text-xs text-gray-400">Newly Predicted</div>
-              <div className="text-lg font-semibold text-teal-400">{batchResults.predicted}</div>
-            </div>
-          )}
-        </div>
-
-        {/* Invalid SMILES list (if any) */}
-        {batchResults.invalid_smiles && batchResults.invalid_smiles.length > 0 && (
-          <div className="p-4 bg-red-900/10 border border-red-500/30 rounded-lg">
-            <div className="text-sm font-medium text-red-400 mb-2">Invalid SMILES ({batchResults.invalid_smiles.length})</div>
-            <div className="space-y-1 max-h-[150px] overflow-y-auto">
-              {batchResults.invalid_smiles.map((item, idx) => (
-                <div key={idx} className="text-xs text-red-300">
-                  <span className="font-mono text-red-200">{item.smiles}</span>
-                  <span className="text-red-400"> — {item.error}</span>
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
-
-        {/* Results table */}
-        <div className="space-y-2">
-          <h4 className="text-sm font-medium text-gray-300">Prediction Results</h4>
-          {batchResults.results.map((item, index) => (
-            <div key={index} className="bg-gray-800/50 border border-gray-700 rounded-lg overflow-hidden">
-              <div className="p-3 flex items-center justify-between cursor-pointer hover:bg-gray-700/50"
-                   onClick={() => setExpandedBatchRow(expandedBatchRow === index ? null : index)}>
-                <div className="flex items-center gap-3 overflow-hidden">
-                  {expandedBatchRow === index ? <ChevronDown className="w-4 h-4 text-teal-400" /> : <ChevronRight className="w-4 h-4 text-gray-400" />}
-                  <div className="flex flex-col">
-                    <span className="text-sm font-medium text-white truncate max-w-[200px]">
-                      {item.molecule_name || `Molecule ${index + 1}`}
-                    </span>
-                    <span className="text-xs text-gray-500 font-mono truncate max-w-[200px]">
-                      {item.smiles}
-                    </span>
-                  </div>
-                </div>
-
-                <div className="flex items-center gap-3">
-                  {item.valid ? (
-                    <>
-                      {item.cached && (
-                        <span className="px-2 py-0.5 text-xs bg-blue-500/20 text-blue-400 rounded-full whitespace-nowrap">
-                          Cached
-                        </span>
-                      )}
-                      {!item.cached && (
-                        <span className="px-2 py-0.5 text-xs bg-teal-500/20 text-teal-400 rounded-full whitespace-nowrap">
-                          Predicted
-                        </span>
-                      )}
-                      <span className="px-2 py-0.5 text-xs bg-green-500/20 text-green-400 rounded-full">
-                        Success
-                      </span>
-                    </>
-                  ) : (
-                    <span className="px-2 py-0.5 text-xs bg-red-500/20 text-red-400 rounded-full">
-                      Error
-                    </span>
-                  )}
-                </div>
-              </div>
-
-              {expandedBatchRow === index && item.result && (
-                <div className="p-4 border-t border-gray-700 bg-gray-900/30">
-                  {renderExpandedResults(item.result)}
-                </div>
-              )}
-
-              {expandedBatchRow === index && item.error && (
-                <div className="p-4 border-t border-gray-700 bg-red-900/10 text-red-400 text-sm">
-                  Error: {item.error}
-                </div>
-              )}
-            </div>
-          ))}
-        </div>
       </div>
     )
   }
@@ -489,8 +410,6 @@ export function ADMETTool() {
         <button
           onClick={() => {
             setActiveTab('predict')
-            setAdmetResults(null)
-            setBatchResults(null)
             setError(null)
           }}
           className={`px-4 py-2 text-sm font-medium transition-colors relative ${
@@ -645,17 +564,13 @@ export function ADMETTool() {
               )}
             </Button>
             
-            {batchResults && renderBatchResults()}
-
-            {!batchResults && (
-              <InfoBox variant="info" title="About ADMET">
-                <p>
-                  ADMET analysis predicts Absorption, Distribution, Metabolism, Excretion, 
-                  and Toxicity properties of drug-like molecules. Results are automatically 
-                  saved to the history tab.
-                </p>
-              </InfoBox>
-            )}
+            <InfoBox variant="info" title="About ADMET">
+              <p>
+                ADMET analysis predicts Absorption, Distribution, Metabolism, Excretion,
+                and Toxicity properties of drug-like molecules. Results are automatically
+                saved to the Stored Results tab.
+              </p>
+            </InfoBox>
           </div>
         ) : (
           <div className="space-y-4">

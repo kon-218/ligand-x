@@ -143,6 +143,8 @@ export interface ADMETRequest {
   smiles?: string
   smiles_list?: string[]
   pdb_data?: string
+  molecule_name?: string
+  molecule_names?: string[]
 }
 
 export interface ADMETBatchResult {

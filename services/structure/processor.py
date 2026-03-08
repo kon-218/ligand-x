@@ -76,6 +76,39 @@ VALID_ELEMENTS = {
 # These should take priority when inferring from atom name
 TWO_LETTER_PRIORITY = {'BR', 'CL', 'FE', 'ZN', 'MG', 'CA', 'NA', 'MN', 'CO', 'CU', 'NI', 'SE', 'SI'}
 
+# Cache for CCD SMILES lookups (None = known-missing, str = SMILES)
+_CCD_SMILES_CACHE: dict = {}
+
+
+def _get_ccd_smiles(res_name: str):
+    """Fetch canonical SMILES from wwPDB CCD REST API for bond order assignment."""
+    key = res_name.upper()
+    if key in _CCD_SMILES_CACHE:
+        return _CCD_SMILES_CACHE[key]
+    try:
+        import requests
+        url = f"https://data.rcsb.org/rest/v1/core/chemcomp/{key}"
+        resp = requests.get(url, timeout=5)
+        if resp.status_code == 200:
+            data = resp.json()
+            # Try rcsb_chem_comp_descriptor first (OpenEye SMILES preferred)
+            for desc in data.get("rcsb_chem_comp_descriptor", {}).get("descriptors", []):
+                if desc.get("type") == "SMILES" and desc.get("program") == "OpenEye OEToolkits":
+                    _CCD_SMILES_CACHE[key] = desc["descriptor"]
+                    return _CCD_SMILES_CACHE[key]
+            # Fallback: pdbx_chem_comp_descriptor (non-stereo SMILES)
+            for desc in data.get("pdbx_chem_comp_descriptor", []):
+                dtype = desc.get("type", "")
+                if "SMILES" in dtype and "stereo" not in dtype.lower():
+                    smiles = desc.get("descriptor")
+                    if smiles:
+                        _CCD_SMILES_CACHE[key] = smiles
+                        return smiles
+    except Exception:
+        pass
+    _CCD_SMILES_CACHE[key] = None
+    return None
+
 
 def infer_element_from_atom_name(atom_name: str, current_element: str = '') -> str:
     """
@@ -484,6 +517,18 @@ class StructureProcessor:
                     # ALWAYS removeHs=True - PDB hydrogens often have invalid (0,0,0) coordinates
                     mol = Chem.MolFromPDBBlock(sanitized_pdb, removeHs=True)
                     if mol is not None:
+                        # Assign correct bond orders using CCD template (fixes aromaticity)
+                        # PDB files have no bond order info; without this, benzene = cyclohexane
+                        ccd_smiles = _get_ccd_smiles(res_name)
+                        if ccd_smiles:
+                            try:
+                                template = Chem.MolFromSmiles(ccd_smiles)
+                                if template is not None:
+                                    Chem.RemoveHs(template)
+                                    mol = AllChem.AssignBondOrdersFromTemplate(template, mol)
+                                    print(f"[COMPLETE] Assigned bond orders from CCD for {ligand_id}")
+                            except Exception as e:
+                                print(f"⚠ CCD bond order assignment failed for {ligand_id}: {e} — using raw parse")
                         # Check if molecule has valid 3D coordinates
                         if mol.GetNumConformers() > 0:
                             conf = mol.GetConformer(0)

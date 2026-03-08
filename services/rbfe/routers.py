@@ -96,7 +96,7 @@ def _run_rbfe_calculation_in_process(
             force=True
         )
         
-        logging.getLogger('services.rbfe').setLevel(logging.DEBUG)
+        logging.getLogger('services.rbfe').setLevel(getattr(logging, log_level, logging.INFO))
         
         subprocess_logger = logging.getLogger(__name__)
         subprocess_logger.info(f"Starting RBFE calculation for job {job_id}")

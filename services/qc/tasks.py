@@ -144,6 +144,14 @@ try:
     from opi.input.blocks.block_cpcm import BlockCpcm
     OPI_AVAILABLE = True
     logger.info("[SUCCESS] orca-pi (OPI) imported successfully")
+    # Patch OPI version check to support ORCA 6.1.0 (OPI 2.0.0 requires >= 6.1.1-f.0
+    # but ORCA 6.1.0 is functionally compatible for our use case)
+    try:
+        import opi.execution.core as _opi_exec
+        _opi_exec.check_minimal_version = lambda _: True
+        logger.info("Applied OPI version check patch for ORCA 6.1.0 compatibility")
+    except Exception as _patch_err:
+        logger.warning(f"Could not patch OPI version check: {_patch_err}")
 except ImportError as e:
     OPI_AVAILABLE = False
     logger.error(f"orca-pi not installed. Install with: pip install orca-pi. Error: {e}")

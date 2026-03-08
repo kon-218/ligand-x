@@ -11,18 +11,14 @@ from .routers import router
 # Configure logging
 import sys
 import os
-from pathlib import Path
 
 log_level = os.getenv('LOG_LEVEL', 'INFO').upper()
-log_file = Path('/tmp/rbfe.log')
-log_file.parent.mkdir(parents=True, exist_ok=True)
 
 logging.basicConfig(
     level=getattr(logging, log_level, logging.INFO),
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     handlers=[
         logging.StreamHandler(sys.stdout),
-        logging.FileHandler(str(log_file), mode='a')
     ]
 )
 
@@ -30,7 +26,7 @@ logging.basicConfig(
 logging.getLogger('uvicorn').setLevel(logging.INFO)
 logging.getLogger('uvicorn.access').setLevel(logging.INFO)
 logging.getLogger('fastapi').setLevel(logging.INFO)
-logging.getLogger('services.rbfe').setLevel(logging.DEBUG)
+logging.getLogger('services.rbfe').setLevel(getattr(logging, log_level, logging.INFO))
 logger = logging.getLogger(__name__)
 
 # Create FastAPI app

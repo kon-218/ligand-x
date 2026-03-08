@@ -43,25 +43,21 @@ def _run_abfe_calculation_in_process(
     # This is necessary because subprocesses don't inherit logging configuration
     import sys
     import os
-    from pathlib import Path
-    
+
     log_level = os.getenv('LOG_LEVEL', 'INFO').upper()
-    log_file = Path('/tmp/abfe.log')
-    log_file.parent.mkdir(parents=True, exist_ok=True)
-    
+
     # Set up logging for the subprocess
     logging.basicConfig(
         level=getattr(logging, log_level, logging.INFO),
         format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
         handlers=[
-            logging.StreamHandler(sys.stdout),  # Log to stdout (visible in console/logs)
-            logging.FileHandler(str(log_file), mode='a')  # Also log to file
+            logging.StreamHandler(sys.stdout),
         ],
         force=True  # Force reconfiguration in case logging was already configured
     )
-    
+
     # Set logger levels
-    logging.getLogger('services.abfe').setLevel(logging.DEBUG)
+    logging.getLogger('services.abfe').setLevel(getattr(logging, log_level, logging.INFO))
     logging.getLogger('openfe').setLevel(logging.INFO)
     logging.getLogger('gufekey').setLevel(logging.INFO)
     

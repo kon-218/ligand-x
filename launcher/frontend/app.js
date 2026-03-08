@@ -24,6 +24,9 @@ async function init() {
     
     // Subscribe to log events
     window.runtime.EventsOn('log', handleLogEvent);
+
+    // Start streaming logs for the default selection (All Services)
+    changeLogService();
 }
 
 // ============================================================

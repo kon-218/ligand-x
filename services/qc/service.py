@@ -246,7 +246,8 @@ class QuantumChemistryService:
                     # Try creating from MolBlock (SDF/V2000/V3000)
                     try:
                         mol = Chem.MolFromMolBlock(molecule_xyz)
-                    except:
+                    except Exception as e:
+                        logger.debug(f"MolFromMolBlock failed: {e}")
                         mol = None
 
                 if mol is None:
@@ -254,16 +255,18 @@ class QuantumChemistryService:
                     if "ATOM" in molecule_xyz or "HETATM" in molecule_xyz:
                         try:
                             mol = Chem.MolFromPDBBlock(molecule_xyz)
-                        except:
+                        except Exception as e:
+                            logger.debug(f"MolFromPDBBlock failed: {e}")
                             mol = None
-                        
+
                         # If standard parse failed (e.g. bad valences in protein), try without sanitization
                         if mol is None:
                             try:
                                 mol = Chem.MolFromPDBBlock(molecule_xyz, sanitize=False)
                                 if mol:
                                     mol.UpdatePropertyCache(strict=False)
-                            except:
+                            except Exception as e:
+                                logger.debug(f"MolFromPDBBlock (no sanitize) failed: {e}")
                                 mol = None
                 
                 if mol:
@@ -642,7 +645,7 @@ class QuantumChemistryService:
         Returns:
             List of job summaries
         """
-        print(f"DEBUG: list_jobs called with limit={limit}")
+        logger.debug(f"list_jobs called with limit={limit}")
         try:
             results_dir = Path(self.config.RESULTS_DB_PATH)
             

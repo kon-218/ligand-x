@@ -127,13 +127,35 @@
                     <div class="logs-controls">
                         <select id="logService" class="select select-sm" onchange="changeLogService()">
                             <option value="all">All Services</option>
-                            <option value="gateway">Gateway</option>
-                            <option value="frontend">Frontend</option>
-                            <option value="structure">Structure</option>
-                            <option value="md">MD</option>
-                            <option value="docking">Docking</option>
-                            <option value="qc">QC</option>
-                            <option value="admet">ADMET</option>
+                            <optgroup label="Core">
+                                <option value="gateway">Gateway</option>
+                                <option value="frontend">Frontend</option>
+                                <option value="structure">Structure</option>
+                                <option value="alignment">Alignment</option>
+                                <option value="ketcher">Ketcher</option>
+                                <option value="msa">MSA</option>
+                            </optgroup>
+                            <optgroup label="Computational">
+                                <option value="docking">Docking</option>
+                                <option value="md">MD</option>
+                                <option value="admet">ADMET</option>
+                                <option value="boltz2">Boltz2</option>
+                                <option value="qc">QC</option>
+                                <option value="abfe">ABFE</option>
+                                <option value="rbfe">RBFE</option>
+                            </optgroup>
+                            <optgroup label="Workers">
+                                <option value="worker-cpu">Worker CPU</option>
+                                <option value="worker-gpu-short">Worker GPU Short</option>
+                                <option value="worker-gpu-long">Worker GPU Long</option>
+                                <option value="worker-qc">Worker QC</option>
+                            </optgroup>
+                            <optgroup label="Infrastructure">
+                                <option value="postgres">PostgreSQL</option>
+                                <option value="redis">Redis</option>
+                                <option value="rabbitmq">RabbitMQ</option>
+                                <option value="flower">Flower</option>
+                            </optgroup>
                         </select>
                         <button class="btn btn-sm btn-ghost" onclick="clearLogs()">Clear</button>
                     </div>

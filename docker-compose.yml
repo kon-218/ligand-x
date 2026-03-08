@@ -46,8 +46,8 @@ services:
       - frontend
       - backend
     environment:
-      - REDIS_URL=${REDIS_URL:-redis://redis:6379/0}
-      - DATABASE_URL=${DATABASE_URL:-postgresql://ligandx:${POSTGRES_PASSWORD:-ligandx}@postgres:5432/ligandx}
+      - REDIS_URL=${REDIS_URL:?REDIS_URL must be set (e.g. redis://redis:6379/0)}
+      - DATABASE_URL=${DATABASE_URL:?DATABASE_URL must be set (e.g. postgresql://ligandx:password@postgres:5432/ligandx)}
       - STRUCTURE_URL=http://structure:8001
       - DOCKING_URL=http://docking:8002
       - MD_URL=http://md:8003
@@ -506,7 +506,7 @@ services:
     environment:
       - CELERY_BROKER_URL=${CELERY_BROKER_URL:-amqp://ligandx:${RABBITMQ_PASSWORD:-ligandx}@rabbitmq:5672/}
       - CELERY_RESULT_BACKEND=${CELERY_RESULT_BACKEND:-redis://redis:6379/0}
-      - DATABASE_URL=${DATABASE_URL:-postgresql://ligandx:${POSTGRES_PASSWORD:-ligandx}@postgres:5432/ligandx}
+      - DATABASE_URL=${DATABASE_URL:?DATABASE_URL must be set (e.g. postgresql://ligandx:password@postgres:5432/ligandx)}
       - ORCA_PATH=/opt/orca/orca
       - SECRET_KEY=${QC_SECRET_KEY:?Set QC_SECRET_KEY in .env or .env.production}
     depends_on:
@@ -558,7 +558,7 @@ services:
     environment:
       - CELERY_BROKER_URL=${CELERY_BROKER_URL:-amqp://ligandx:${RABBITMQ_PASSWORD:-ligandx}@rabbitmq:5672/}
       - CELERY_RESULT_BACKEND=${CELERY_RESULT_BACKEND:-redis://redis:6379/0}
-      - DATABASE_URL=${DATABASE_URL:-postgresql://ligandx:${POSTGRES_PASSWORD:-ligandx}@postgres:5432/ligandx}
+      - DATABASE_URL=${DATABASE_URL:?DATABASE_URL must be set (e.g. postgresql://ligandx:password@postgres:5432/ligandx)}
       - ORCA_PATH=/opt/orca/orca
       - SECRET_KEY=${QC_SECRET_KEY:?Set QC_SECRET_KEY in .env or .env.production}
       - OMPI_ALLOW_RUN_AS_ROOT=1
@@ -612,7 +612,7 @@ services:
     environment:
       - CELERY_BROKER_URL=${CELERY_BROKER_URL:-amqp://ligandx:${RABBITMQ_PASSWORD:-ligandx}@rabbitmq:5672/}
       - CELERY_RESULT_BACKEND=${CELERY_RESULT_BACKEND:-redis://redis:6379/0}
-      - DATABASE_URL=${DATABASE_URL:-postgresql://ligandx:${POSTGRES_PASSWORD:-ligandx}@postgres:5432/ligandx}
+      - DATABASE_URL=${DATABASE_URL:?DATABASE_URL must be set (e.g. postgresql://ligandx:password@postgres:5432/ligandx)}
       - CELERY_CONCURRENCY=${GPU_SHORT_CONCURRENCY:-2}
     depends_on:
       rabbitmq:
@@ -661,7 +661,7 @@ services:
     environment:
       - CELERY_BROKER_URL=${CELERY_BROKER_URL:-amqp://ligandx:${RABBITMQ_PASSWORD:-ligandx}@rabbitmq:5672/}
       - CELERY_RESULT_BACKEND=${CELERY_RESULT_BACKEND:-redis://redis:6379/0}
-      - DATABASE_URL=${DATABASE_URL:-postgresql://ligandx:${POSTGRES_PASSWORD:-ligandx}@postgres:5432/ligandx}
+      - DATABASE_URL=${DATABASE_URL:?DATABASE_URL must be set (e.g. postgresql://ligandx:password@postgres:5432/ligandx)}
       - CELERY_CONCURRENCY=${GPU_LONG_CONCURRENCY:-1}
       - RBFE_OUTPUT_DIR=/app/data/rbfe_outputs
       - ABFE_OUTPUT_DIR=/app/data/abfe_outputs
@@ -713,7 +713,7 @@ services:
     environment:
       - CELERY_BROKER_URL=${CELERY_BROKER_URL:-amqp://ligandx:${RABBITMQ_PASSWORD:-ligandx}@rabbitmq:5672/}
       - CELERY_RESULT_BACKEND=${CELERY_RESULT_BACKEND:-redis://redis:6379/0}
-      - DATABASE_URL=${DATABASE_URL:-postgresql://ligandx:${POSTGRES_PASSWORD:-ligandx}@postgres:5432/ligandx}
+      - DATABASE_URL=${DATABASE_URL:?DATABASE_URL must be set (e.g. postgresql://ligandx:password@postgres:5432/ligandx)}
       - CELERY_CONCURRENCY=${CPU_WORKER_CONCURRENCY:-4}
     depends_on:
       rabbitmq:
@@ -760,7 +760,7 @@ services:
       - "127.0.0.1:${RABBITMQ_MGMT_PORT:-15672}:15672"
     environment:
       - RABBITMQ_DEFAULT_USER=${RABBITMQ_USER:-ligandx}
-      - RABBITMQ_DEFAULT_PASS=${RABBITMQ_PASSWORD:-ligandx}
+      - RABBITMQ_DEFAULT_PASS=${RABBITMQ_PASSWORD:?RABBITMQ_PASSWORD must be set}
       - RABBITMQ_DEFAULT_VHOST=/
     volumes:
       - rabbitmq_data:/var/lib/rabbitmq

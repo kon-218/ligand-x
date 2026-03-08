@@ -11,6 +11,9 @@ from pathlib import Path
 from typing import Optional, Dict, Any, List
 from lib.chemistry import get_pdb_parser, get_component_analyzer
 
+import logging
+logger = logging.getLogger(__name__)
+
 
 def sanitize_pdb_element_columns(pdb_data: str) -> str:
     """
@@ -65,7 +68,7 @@ def sanitize_pdb_element_columns(pdb_data: str) -> str:
             sanitized_lines.append(line)
 
     if fixed_count > 0:
-        print(f"[DockingService] Fixed element column justification for {fixed_count} atoms in PDB")
+        logger.debug(f"[DockingService] Fixed element column justification for {fixed_count} atoms in PDB")
 
     return '\n'.join(sanitized_lines)
 
@@ -74,7 +77,7 @@ try:
     from vina import Vina
     VINA_PACKAGE_AVAILABLE = True
 except ImportError:
-    print("Warning: Official vina package not available. Falling back to command-line execution.")
+    logger.warning("Warning: Official vina package not available. Falling back to command-line execution.")
     VINA_PACKAGE_AVAILABLE = False
 
 # Try to import Open Babel for PDBQT preparation
@@ -82,7 +85,7 @@ try:
     from openbabel import pybel
     OPENBABEL_AVAILABLE = True
 except ImportError:
-    print("Warning: Open Babel not available. PDBQT preparation will use command-line tools.")
+    logger.warning("Warning: Open Babel not available. PDBQT preparation will use command-line tools.")
     OPENBABEL_AVAILABLE = False
 
 # Try to import RDKit for SDF conversion with bond preservation
@@ -91,7 +94,7 @@ try:
     from rdkit.Chem import AllChem, rdDistGeom, rdMolAlign
     RDKIT_AVAILABLE = True
 except ImportError:
-    print("Warning: RDKit not available. SDF conversion with bond preservation will be disabled.")
+    logger.warning("Warning: RDKit not available. SDF conversion with bond preservation will be disabled.")
     RDKIT_AVAILABLE = False
 
 # Try to import Meeko for modern PDBQT preparation (recommended by Vina developers)
@@ -99,7 +102,7 @@ try:
     from meeko import MoleculePreparation, PDBQTWriterLegacy, PDBQTMolecule, RDKitMolCreate
     MEEKO_AVAILABLE = True
 except ImportError:
-    print("Warning: Meeko not available. Falling back to Open Babel for PDBQT preparation.")
+    logger.warning("Warning: Meeko not available. Falling back to Open Babel for PDBQT preparation.")
     MEEKO_AVAILABLE = False
 
 class DockingService:
@@ -127,9 +130,9 @@ class DockingService:
             vina_in_path = shutil.which("vina")
             if vina_in_path:
                 self.vina_executable = vina_in_path
-                print(f"[DockingService] Using vina from PATH: {self.vina_executable}")
+                logger.debug(f"[DockingService] Using vina from PATH: {self.vina_executable}")
             else:
-                print(f"[DockingService] WARNING: Vina executable not found at {self.vina_executable} and not in PATH")
+                logger.warning(f"[DockingService] WARNING: Vina executable not found at {self.vina_executable} and not in PATH")
         
         # Default docking parameters
         self.default_params = {
@@ -168,7 +171,7 @@ class DockingService:
                 existing_data.update(data)
                 data = existing_data
             except Exception as e:
-                print(f"Failed to read existing job data for {job_id}: {e}")
+                logger.warning(f"Failed to read existing job data for {job_id}: {e}")
 
         with open(file_path, 'w') as f:
             json.dump(data, f, indent=2)
@@ -182,7 +185,7 @@ class DockingService:
             with open(file_path, 'r') as f:
                 return json.load(f)
         except Exception as e:
-            print(f"Failed to read job {job_id}: {e}")
+            logger.warning(f"Failed to read job {job_id}: {e}")
             return None
 
     def list_jobs(self) -> List[Dict[str, Any]]:
@@ -194,7 +197,7 @@ class DockingService:
                 with open(file_path, 'r') as f:
                     jobs.append(json.load(f))
             except Exception as e:
-                print(f"Failed to read job file {file_path}: {e}")
+                logger.warning(f"Failed to read job file {file_path}: {e}")
         
         # Sort by creation time (newest first)
         return sorted(jobs, key=lambda x: x.get('created_at', ''), reverse=True)
@@ -216,7 +219,7 @@ class DockingService:
             
             return True
         except Exception as e:
-            print(f"Failed to delete job {job_id}: {e}")
+            logger.warning(f"Failed to delete job {job_id}: {e}")
             return False
 
     def cancel_job(self, job_id: str) -> bool:
@@ -321,7 +324,7 @@ class DockingService:
                     needs_3d = False
 
         if needs_3d:
-            print("[DockingService] Generating 3D coordinates via ETKDGv3")
+            logger.debug("[DockingService] Generating 3D coordinates via ETKDGv3")
             mol.RemoveAllConformers()
             params = rdDistGeom.ETKDGv3()
             result = AllChem.EmbedMolecule(mol, params)
@@ -345,7 +348,7 @@ class DockingService:
         if not is_ok:
             raise ValueError(f"Meeko PDBQT writing failed: {error_msg}")
 
-        print(f"[DockingService] Meeko ligand PDBQT prepared ({len(pdbqt_string)} bytes)")
+        logger.debug(f"[DockingService] Meeko ligand PDBQT prepared ({len(pdbqt_string)} bytes)")
         return pdbqt_string
 
     def prepare_ligand_pdbqt(self, ligand_data, input_format="pdb", output_path=None):
@@ -376,7 +379,7 @@ class DockingService:
                             f.write(pdbqt_data)
                     return pdbqt_data
                 except Exception as e:
-                    print(f"[DockingService] Meeko ligand prep failed, falling back to OpenBabel: {e}")
+                    logger.warning(f"[DockingService] Meeko ligand prep failed, falling back to OpenBabel: {e}")
 
             # Sanitize PDB element columns before OpenBabel processing (if PDB format)
             if input_format.lower() == 'pdb':
@@ -514,7 +517,7 @@ class DockingService:
             if not ligand_atoms:
                 # If no ligand found in the structure, try to use a default binding site
                 # or center the grid box on the protein center
-                print("Warning: No ligand found in structure, using protein center for grid box")
+                logger.warning("Warning: No ligand found in structure, using protein center for grid box")
                 
                 # Get all protein atoms
                 protein_residues = components.get('protein', [])
@@ -833,8 +836,8 @@ class DockingService:
                 with open(ligand_path, 'w') as f:
                     f.write(ligand_pdbqt)
                 
-                print(f"[DockingService] Using command-line vina: {self.vina_executable}")
-                print(f"[DockingService] Working directory: {temp_dir}")
+                logger.debug(f"[DockingService] Using command-line vina: {self.vina_executable}")
+                logger.debug(f"[DockingService] Working directory: {temp_dir}")
                 
                 # Build Vina command based on scoring function
                 cmd = [self.vina_executable]
@@ -877,7 +880,7 @@ class DockingService:
                     '--energy_range', str(params['energy_range'])
                 ])
                 
-                print(f"[DockingService] Running command: {' '.join(cmd)}")
+                logger.debug(f"[DockingService] Running command: {' '.join(cmd)}")
                 
                 # Execute Vina with real-time output processing
                 process = subprocess.Popen(
@@ -895,12 +898,12 @@ class DockingService:
                 # Read stdout line by line
                 for line in iter(process.stdout.readline, ''):
                     stdout_lines.append(line)
-                    print(f"[Vina stdout] {line.strip()}")
+                    logger.debug(f"[Vina stdout] {line.strip()}")
                 
                 # Read stderr line by line
                 for line in iter(process.stderr.readline, ''):
                     stderr_lines.append(line)
-                    print(f"[Vina stderr] {line.strip()}")
+                    logger.debug(f"[Vina stderr] {line.strip()}")
                 
                 # Wait for process to complete
                 process.wait()
@@ -908,8 +911,8 @@ class DockingService:
                 # Check if process completed successfully
                 if process.returncode != 0:
                     error_msg = f"Vina returned non-zero exit code {process.returncode}"
-                    print(f"[DockingService] ERROR: {error_msg}")
-                    print(f"[DockingService] stderr: {''.join(stderr_lines)}")
+                    logger.error(f"[DockingService] ERROR: {error_msg}")
+                    logger.debug(f"[DockingService] stderr: {''.join(stderr_lines)}")
                     raise subprocess.CalledProcessError(process.returncode, cmd, output=''.join(stdout_lines), stderr=''.join(stderr_lines))
 
                 # Combine outputs
@@ -922,15 +925,15 @@ class DockingService:
                 
                 # Parse scores from stdout
                 parsed_results = self._parse_vina_log(log_content)
-                print(f"[DockingService] Parsed {len(parsed_results)} scores from log")
+                logger.debug(f"[DockingService] Parsed {len(parsed_results)} scores from log")
                 
                 # Read output poses (must be done before temp_dir cleanup)
                 if os.path.exists(output_path):
                     with open(output_path, 'r') as f:
                         poses_pdbqt = f.read()
-                    print(f"[DockingService] Read {len(poses_pdbqt)} bytes from output file")
+                    logger.debug(f"[DockingService] Read {len(poses_pdbqt)} bytes from output file")
                 else:
-                    print(f"[DockingService] WARNING: Output file does not exist: {output_path}")
+                    logger.warning(f"[DockingService] WARNING: Output file does not exist: {output_path}")
                 
                 # Ensure scores are a list of dicts as parsed
                 scores_data = parsed_results if isinstance(parsed_results, list) else []
@@ -938,8 +941,8 @@ class DockingService:
                 
                 # Validate that we have results
                 if not scores_data or len(scores_data) == 0:
-                    print(f"[DockingService] ERROR: No scores parsed from vina output!")
-                    print(f"[DockingService] stdout preview: {stdout_content[:500]}")
+                    logger.error(f"[DockingService] ERROR: No scores parsed from vina output!")
+                    logger.debug(f"[DockingService] stdout preview: {stdout_content[:500]}")
                     return {
                         'success': False,
                         'error': 'Vina completed but returned no scores. Check grid box and ligand compatibility.',
@@ -948,7 +951,7 @@ class DockingService:
                     }
                 
                 if not poses_pdbqt or len(poses_pdbqt.strip()) == 0:
-                    print(f"[DockingService] ERROR: No poses generated!")
+                    logger.error(f"[DockingService] ERROR: No poses generated!")
                     return {
                         'success': False,
                         'error': 'Vina completed but generated no poses. Check ligand and grid box parameters.',
@@ -968,7 +971,7 @@ class DockingService:
                     'log': log_content
                 }
                 
-                print(f"[DockingService] Command-line docking successful: {len(scores_data)} poses, {len(poses_pdbqt)} bytes")
+                logger.debug(f"[DockingService] Command-line docking successful: {len(scores_data)} poses, {len(poses_pdbqt)} bytes")
                 return result
                 
             finally:
@@ -1054,12 +1057,12 @@ class DockingService:
                         progress_callback(95, "Processing results...")
                     
                     # Get results
-                    print("[DockingService] Getting energies from Vina...")
+                    logger.debug("[DockingService] Getting energies from Vina...")
                     energies = v.energies(n_poses=params['num_modes'], energy_range=params['energy_range'])
-                    print(f"[DockingService] Retrieved {len(energies)} energy scores")
+                    logger.debug(f"[DockingService] Retrieved {len(energies)} energy scores")
                     
                     if len(energies) == 0:
-                        print("[DockingService] WARNING: No energies returned from docking!")
+                        logger.warning("[DockingService] WARNING: No energies returned from docking!")
                         return {
                             'success': False,
                             'error': 'Docking completed but returned no results. This may indicate the ligand failed to dock.',
@@ -1072,20 +1075,20 @@ class DockingService:
                     with tempfile.NamedTemporaryFile(mode='w', suffix='.pdbqt', delete=False) as poses_file:
                         poses_file_path = poses_file.name
                     
-                    print(f"[DockingService] Writing poses to {poses_file_path}...")
+                    logger.debug(f"[DockingService] Writing poses to {poses_file_path}...")
                     # Write poses to the file (must be done after file handle is closed)
                     try:
                         v.write_poses(poses_file_path, n_poses=params['num_modes'], energy_range=params['energy_range'], overwrite=True)
                     except Exception as write_error:
-                        print(f"[DockingService] ERROR writing poses: {str(write_error)}")
+                        logger.debug(f"[DockingService] ERROR writing poses: {str(write_error)}")
                         raise
                     
                     # Read the poses back
-                    print(f"[DockingService] Reading poses from file...")
+                    logger.debug(f"[DockingService] Reading poses from file...")
                     with open(poses_file_path, 'r') as f:
                         poses_pdbqt = f.read()
                     
-                    print(f"[DockingService] Read {len(poses_pdbqt)} bytes of PDBQT data")
+                    logger.debug(f"[DockingService] Read {len(poses_pdbqt)} bytes of PDBQT data")
                 
                     # Clean up the temporary poses file
                     if os.path.exists(poses_file_path):
@@ -1093,21 +1096,21 @@ class DockingService:
 
                     # Log the number of poses retrieved
                     num_poses_retrieved = poses_pdbqt.count('MODEL ')
-                    print(f"[DockingService] Retrieved {len(energies)} scores and {num_poses_retrieved} poses.")
+                    logger.debug(f"[DockingService] Retrieved {len(energies)} scores and {num_poses_retrieved} poses.")
                     
                     if num_poses_retrieved == 0:
-                        print(f"[DockingService] WARNING: No MODEL entries found in poses_pdbqt!")
-                        print(f"[DockingService] First 500 chars of poses_pdbqt: {poses_pdbqt[:500]}")
+                        logger.warning(f"[DockingService] WARNING: No MODEL entries found in poses_pdbqt!")
+                        logger.debug(f"[DockingService] First 500 chars of poses_pdbqt: {poses_pdbqt[:500]}")
                     
                     if progress_callback:
                         progress_callback(100, "Docking complete!")
                     
                     # Format results - ensure poses_pdbqt is not empty
                     if not poses_pdbqt or len(poses_pdbqt.strip()) == 0:
-                        print(f"[DockingService] ERROR: poses_pdbqt is empty after docking!")
-                        print(f"[DockingService] Energies count: {len(energies)}")
+                        logger.error(f"[DockingService] ERROR: poses_pdbqt is empty after docking!")
+                        logger.debug(f"[DockingService] Energies count: {len(energies)}")
                         if len(energies) > 0:
-                            print(f"[DockingService] First energy: {energies[0]}")
+                            logger.debug(f"[DockingService] First energy: {energies[0]}")
                         return {
                             'success': False,
                             'error': 'Docking completed but no poses were generated. This may indicate a problem with the ligand or grid box.',
@@ -1141,7 +1144,7 @@ class DockingService:
                         'parameters': params
                     }
                     
-                    print(f"[DockingService] Returning results: {len(energies)} scores, {len(poses_pdbqt)} bytes of poses")
+                    logger.debug(f"[DockingService] Returning results: {len(energies)} scores, {len(poses_pdbqt)} bytes of poses")
                     return results
                     
                 finally:
@@ -1210,7 +1213,7 @@ class DockingService:
 
         try:
             poses = self._parse_pdbqt_models(poses_pdbqt)
-            print(f"[DockingService] Converting {len(poses)} poses to SDF using Meeko")
+            logger.debug(f"[DockingService] Converting {len(poses)} poses to SDF using Meeko")
 
             sdf_blocks = []
             for i, pose_pdbqt in enumerate(poses):
@@ -1231,16 +1234,16 @@ class DockingService:
                             sdf_blocks.append(sdf_block.rstrip())
                         break  # Only take first pose from each model
                 except Exception as e:
-                    print(f"[DockingService] Meeko SDF conversion failed for pose {i+1}: {e}")
+                    logger.warning(f"[DockingService] Meeko SDF conversion failed for pose {i+1}: {e}")
                     continue
 
             if sdf_blocks:
                 result = '\n$$$$\n'.join(sdf_blocks) + '\n$$$$\n'
-                print(f"[DockingService] Successfully converted {len(sdf_blocks)} poses to SDF via Meeko")
+                logger.debug(f"[DockingService] Successfully converted {len(sdf_blocks)} poses to SDF via Meeko")
                 return result
             return ""
         except Exception as e:
-            print(f"[DockingService] Error in convert_pdbqt_poses_to_sdf_meeko: {e}")
+            logger.error(f"[DockingService] Error in convert_pdbqt_poses_to_sdf_meeko: {e}")
             return ""
 
     def convert_pdbqt_poses_to_pdb_meeko(self, poses_pdbqt: str) -> str:
@@ -1258,7 +1261,7 @@ class DockingService:
 
         try:
             poses = self._parse_pdbqt_models(poses_pdbqt)
-            print(f"[DockingService] Converting {len(poses)} poses to PDB using Meeko")
+            logger.debug(f"[DockingService] Converting {len(poses)} poses to PDB using Meeko")
 
             pdb_blocks = []
             for i, pose_pdbqt in enumerate(poses):
@@ -1289,16 +1292,16 @@ class DockingService:
                             pdb_blocks.append(model_block)
                         break
                 except Exception as e:
-                    print(f"[DockingService] Meeko PDB conversion failed for pose {i+1}: {e}")
+                    logger.warning(f"[DockingService] Meeko PDB conversion failed for pose {i+1}: {e}")
                     continue
 
             if pdb_blocks:
                 result = '\n'.join(pdb_blocks) + '\nEND\n'
-                print(f"[DockingService] Successfully converted {len(pdb_blocks)} poses to PDB via Meeko")
+                logger.debug(f"[DockingService] Successfully converted {len(pdb_blocks)} poses to PDB via Meeko")
                 return result
             return ""
         except Exception as e:
-            print(f"[DockingService] Error in convert_pdbqt_poses_to_pdb_meeko: {e}")
+            logger.error(f"[DockingService] Error in convert_pdbqt_poses_to_pdb_meeko: {e}")
             return ""
 
     def convert_pdbqt_poses_to_sdf(self, poses_pdbqt: str, template_mol_block: str) -> str:
@@ -1320,7 +1323,7 @@ class DockingService:
             result = self.convert_pdbqt_poses_to_sdf_meeko(poses_pdbqt)
             if result:
                 return result
-            print("[DockingService] Meeko SDF conversion failed, falling back to OpenBabel")
+            logger.warning("[DockingService] Meeko SDF conversion failed, falling back to OpenBabel")
 
         return self.convert_pdbqt_poses_to_sdf_obabel(poses_pdbqt)
     
@@ -1363,13 +1366,13 @@ class DockingService:
             Multi-molecule SDF string
         """
         if not OPENBABEL_AVAILABLE:
-            print("[DockingService] Open Babel not available, cannot convert PDBQT to SDF")
+            logger.warning("[DockingService] Open Babel not available, cannot convert PDBQT to SDF")
             return ""
         
         try:
             # Parse PDBQT poses
             poses = self._parse_pdbqt_models(poses_pdbqt)
-            print(f"[DockingService] Converting {len(poses)} poses to SDF using Open Babel")
+            logger.debug(f"[DockingService] Converting {len(poses)} poses to SDF using Open Babel")
             
             sdf_blocks = []
             for i, pose_pdbqt in enumerate(poses):
@@ -1402,20 +1405,20 @@ class DockingService:
                             os.unlink(temp_pdbqt)
                             
                 except Exception as e:
-                    print(f"[DockingService] Error converting pose {i+1} with Open Babel: {e}")
+                    logger.warning(f"[DockingService] Error converting pose {i+1} with Open Babel: {e}")
                     continue
             
             # Combine into multi-molecule SDF
             if sdf_blocks:
                 result = '\n$$$$\n'.join(sdf_blocks) + '\n$$$$\n'
-                print(f"[DockingService] Successfully converted {len(sdf_blocks)} poses to SDF via Open Babel")
+                logger.debug(f"[DockingService] Successfully converted {len(sdf_blocks)} poses to SDF via Open Babel")
                 return result
             else:
-                print("[DockingService] No poses could be converted to SDF via Open Babel")
+                logger.warning("[DockingService] No poses could be converted to SDF via Open Babel")
                 return ""
                 
         except Exception as e:
-            print(f"[DockingService] Error in convert_pdbqt_poses_to_sdf_obabel: {e}")
+            logger.error(f"[DockingService] Error in convert_pdbqt_poses_to_sdf_obabel: {e}")
             traceback.print_exc()
             return ""
 
@@ -1436,16 +1439,16 @@ class DockingService:
             result = self.convert_pdbqt_poses_to_pdb_meeko(poses_pdbqt)
             if result:
                 return result
-            print("[DockingService] Meeko PDB conversion failed, falling back to OpenBabel")
+            logger.warning("[DockingService] Meeko PDB conversion failed, falling back to OpenBabel")
 
         if not OPENBABEL_AVAILABLE:
-            print("[DockingService] Open Babel not available, cannot convert PDBQT to PDB")
+            logger.warning("[DockingService] Open Babel not available, cannot convert PDBQT to PDB")
             return ""
         
         try:
             # Parse PDBQT poses
             poses = self._parse_pdbqt_models(poses_pdbqt)
-            print(f"[DockingService] Converting {len(poses)} poses to PDB using Open Babel")
+            logger.debug(f"[DockingService] Converting {len(poses)} poses to PDB using Open Babel")
             
             pdb_blocks = []
             for i, pose_pdbqt in enumerate(poses):
@@ -1479,20 +1482,20 @@ class DockingService:
                             os.unlink(temp_pdbqt)
                             
                 except Exception as e:
-                    print(f"[DockingService] Error converting pose {i+1} to PDB with Open Babel: {e}")
+                    logger.warning(f"[DockingService] Error converting pose {i+1} to PDB with Open Babel: {e}")
                     continue
             
             # Combine into multi-model PDB
             if pdb_blocks:
                 result = '\n'.join(pdb_blocks) + '\nEND\n'
-                print(f"[DockingService] Successfully converted {len(pdb_blocks)} poses to PDB via Open Babel")
+                logger.debug(f"[DockingService] Successfully converted {len(pdb_blocks)} poses to PDB via Open Babel")
                 return result
             else:
-                print("[DockingService] No poses could be converted to PDB via Open Babel")
+                logger.warning("[DockingService] No poses could be converted to PDB via Open Babel")
                 return ""
                 
         except Exception as e:
-            print(f"[DockingService] Error in convert_pdbqt_poses_to_pdb: {e}")
+            logger.error(f"[DockingService] Error in convert_pdbqt_poses_to_pdb: {e}")
             traceback.print_exc()
             return ""
 
@@ -1510,7 +1513,7 @@ class DockingService:
             PDB string with proper element symbols and HETATM records for ligands
         """
         if not OPENBABEL_AVAILABLE:
-            print("[DockingService] Open Babel not available, cannot convert PDBQT to PDB")
+            logger.warning("[DockingService] Open Babel not available, cannot convert PDBQT to PDB")
             return ""
         
         try:
@@ -1548,7 +1551,7 @@ class DockingService:
             return ""
                 
         except Exception as e:
-            print(f"[DockingService] Error converting single pose to PDB: {e}")
+            logger.error(f"[DockingService] Error converting single pose to PDB: {e}")
             traceback.print_exc()
             return ""
     
@@ -1610,7 +1613,7 @@ class DockingService:
                     except (ValueError, IndexError) as e:
                         # If we've already parsed some results and hit an error, stop
                         if results:
-                            print(f"[DockingService] Stopped parsing at line {i+1}: {line_stripped[:100]} (error: {e})")
+                            logger.debug(f"[DockingService] Stopped parsing at line {i+1}: {line_stripped[:100]} (error: {e})")
                             break
                         # Otherwise, this might not be a data line yet
                         parsing = False
@@ -1621,9 +1624,9 @@ class DockingService:
                     # If no results yet and this isn't a data line, might not be in table yet
                     pass
             
-        print(f"[DockingService] Parsed {len(results)} scores from log")
+        logger.debug(f"[DockingService] Parsed {len(results)} scores from log")
         if len(results) > 0:
-            print(f"[DockingService] First score: mode={results[0]['mode']}, affinity={results[0]['affinity']}")
+            logger.debug(f"[DockingService] First score: mode={results[0]['mode']}, affinity={results[0]['affinity']}")
         
         return results
     
@@ -1684,7 +1687,7 @@ class DockingService:
                 return result
             
             # If API failed, try falling back to command line
-            print(f"[DockingService] Vina API failed: {result.get('error')}. Falling back to command line.")
+            logger.warning(f"[DockingService] Vina API failed: {result.get('error')}. Falling back to command line.")
             return self.dock_with_vina_cmdline(receptor_pdbqt, ligand_pdbqt, grid_box, docking_params)
         else:
             return self.dock_with_vina_cmdline(receptor_pdbqt, ligand_pdbqt, grid_box, docking_params)
@@ -1726,7 +1729,7 @@ class DockingService:
             center = [grid_box['center_x'], grid_box['center_y'], grid_box['center_z']]
             box_size = [grid_box['size_x'], grid_box['size_y'], grid_box['size_z']]
             v.compute_vina_maps(center=center, box_size=box_size)
-            print(f"[DockingService] Affinity maps computed once for {len(ligand_pdbqts)} ligands")
+            logger.debug(f"[DockingService] Affinity maps computed once for {len(ligand_pdbqts)} ligands")
 
             results = []
             for i, ligand_pdbqt in enumerate(ligand_pdbqts):
@@ -1759,10 +1762,10 @@ class DockingService:
                         'grid_box': grid_box,
                         'parameters': params
                     })
-                    print(f"[DockingService] Ligand {i+1}/{len(ligand_pdbqts)} docked: {scores_data[0]['affinity']:.2f} kcal/mol")
+                    logger.debug(f"[DockingService] Ligand {i+1}/{len(ligand_pdbqts)} docked: {scores_data[0]['affinity']:.2f} kcal/mol")
 
                 except Exception as e:
-                    print(f"[DockingService] Ligand {i+1}/{len(ligand_pdbqts)} failed: {e}")
+                    logger.warning(f"[DockingService] Ligand {i+1}/{len(ligand_pdbqts)} failed: {e}")
                     results.append({
                         'success': False,
                         'error': str(e),
@@ -1870,7 +1873,7 @@ class DockingService:
 
             # Use the first (or specified) ligand
             target_resname = ligand_residues[0].get_resname().strip()
-            print(f"[DockingService] Redocking validation for ligand: {target_resname}")
+            logger.debug(f"[DockingService] Redocking validation for ligand: {target_resname}")
 
             # 2. Separate protein-only PDB (exclude the target ligand HETATM lines)
             protein_lines = []
@@ -1936,7 +1939,7 @@ class DockingService:
                         if docked_mol is not None:
                             break
                 except Exception as e:
-                    print(f"[DockingService] Meeko pose conversion failed: {e}")
+                    logger.warning(f"[DockingService] Meeko pose conversion failed: {e}")
 
             # Fallback: convert PDBQT → PDB via OpenBabel, then parse with RDKit
             if docked_mol is None and OPENBABEL_AVAILABLE:
@@ -1953,12 +1956,12 @@ class DockingService:
                                 Chem.SanitizeMol(docked_mol)
                             except Exception:
                                 pass  # Keep unsanitized mol for coordinate comparison
-                            print("[DockingService] Converted docked pose via OpenBabel fallback")
+                            logger.debug("[DockingService] Converted docked pose via OpenBabel fallback")
                     finally:
                         if os.path.exists(tmp_pdbqt):
                             os.unlink(tmp_pdbqt)
                 except Exception as e:
-                    print(f"[DockingService] OpenBabel pose conversion also failed: {e}")
+                    logger.warning(f"[DockingService] OpenBabel pose conversion also failed: {e}")
 
             if docked_mol is None:
                 return {'success': False, 'error': 'Failed to convert docked pose to RDKit mol (neither Meeko nor OpenBabel succeeded)'}
@@ -1971,7 +1974,7 @@ class DockingService:
                 rmsd = rdMolAlign.CalcRMS(docked_mol_noH, crystal_mol)
             except Exception as e:
                 # If symmetry-corrected fails, try basic RMSD
-                print(f"[DockingService] Symmetry-corrected RMSD failed ({e}), trying basic alignment")
+                logger.debug(f"[DockingService] Symmetry-corrected RMSD failed ({e}), trying basic alignment")
                 try:
                     rmsd = rdMolAlign.AlignMol(docked_mol_noH, crystal_mol)
                 except Exception as e2:
@@ -1985,7 +1988,7 @@ class DockingService:
                 f"({'PASS' if passed else 'FAIL'} - threshold 2.0 A). "
                 f"Best affinity: {best_affinity:.2f} kcal/mol."
             )
-            print(f"[DockingService] {message}")
+            logger.debug(f"[DockingService] {message}")
 
             return {
                 'success': True,

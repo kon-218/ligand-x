@@ -24,30 +24,22 @@ The simplest way to run Ligand-X on any desktop platform. No terminal required.
 
 ### Steps
 
-1. Clone the repository:
-   ```bash
-   git clone https://github.com/kon-218/ligand-x.git
-   ```
-
-2. Download the launcher for your platform from the [Releases page](https://github.com/kon-218/ligand-x/releases):
+1. Download the launcher for your platform from the [Releases page](https://github.com/kon-218/ligand-x/releases):
 
    | Platform | File |
    |----------|------|
    | Windows | `ligandx-launcher-windows-amd64-installer.exe` |
-   | macOS (Apple Silicon) | `ligandx-launcher-darwin-arm64.dmg` |
-   | macOS (Intel) | `ligandx-launcher-darwin-amd64.dmg` |
+   | macOS | `ligandx-launcher-darwin-arm64.dmg` |
    | Linux | `ligandx-launcher-linux-amd64.AppImage` |
 
-3. Install and launch:
+2. Install and launch:
    - **Windows**: Run the installer, then launch from the Start Menu
    - **macOS**: Open the DMG, drag to Applications, launch from there
    - **Linux**: `chmod +x ligandx-launcher-linux-amd64.AppImage` then run it
 
-4. Point the launcher at the cloned folder if it is not auto-detected (click the folder path in the footer)
+3. In the launcher, select a start mode and click **Start**
 
-5. Select a start mode and click **Start**
-
-6. Click **Open App** or navigate to http://localhost:3000
+4. Click **Open App** or navigate to http://localhost:3000
 
 See [launcher/README.md](../launcher/README.md) for full launcher documentation and troubleshooting.
 

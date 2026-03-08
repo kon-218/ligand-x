@@ -1,7 +1,6 @@
 """MD Service - FastAPI application."""
 import logging
 import sys
-from pathlib import Path
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from lib.common.config import CORS_ORIGINS
@@ -10,15 +9,12 @@ from services.md import routers
 # Configure logging to be visible
 import os
 log_level = os.getenv('LOG_LEVEL', 'INFO').upper()
-log_file = Path('/tmp/md.log')
-log_file.parent.mkdir(parents=True, exist_ok=True)
 
 logging.basicConfig(
     level=getattr(logging, log_level, logging.INFO),
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     handlers=[
-        logging.StreamHandler(sys.stdout),  # Log to stdout (visible in console/logs)
-        logging.FileHandler(str(log_file), mode='a')  # Also log to file
+        logging.StreamHandler(sys.stdout),
     ]
 )
 
@@ -26,8 +22,8 @@ logging.basicConfig(
 logging.getLogger('uvicorn').setLevel(logging.INFO)
 logging.getLogger('uvicorn.access').setLevel(logging.INFO)
 logging.getLogger('fastapi').setLevel(logging.INFO)
-logging.getLogger('services.md').setLevel(logging.DEBUG)  # Very verbose for MD service
-logging.getLogger('lib.services').setLevel(logging.DEBUG)  # Verbose for service runner
+logging.getLogger('services.md').setLevel(getattr(logging, log_level, logging.INFO))
+logging.getLogger('lib.services').setLevel(getattr(logging, log_level, logging.INFO))
 logger = logging.getLogger(__name__)
 logger.info("MD service starting up...")
 

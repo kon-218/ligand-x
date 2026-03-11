@@ -345,7 +345,21 @@ class StructureService:
         }
     
     def extract_ligand_by_hetid(self, pdb_data: str, het_id: str, ligand_name: Optional[str] = None) -> Dict[str, Any]:
-        """Extract a specific ligand by HET ID from PDB structure."""
+        """Extract a specific ligand by HET ID from PDB structure.
+        
+        This method extracts a ligand and ensures proper 3D structure with hydrogens:
+        1. Fetches canonical SMILES from CCD for correct bond orders
+        2. Uses SMILES as template to assign aromaticity (e.g., benzene vs cyclohexane)
+        3. Adds hydrogens with proper 3D coordinates
+        
+        Args:
+            pdb_data: PDB format string containing the structure
+            het_id: 3-letter HET ID (e.g., 'BEN' for benzene, 'ATP' for ATP)
+            ligand_name: Optional custom name (defaults to het_id)
+            
+        Returns:
+            Dictionary with ligand data including PDB, SDF, SMILES, and het_id
+        """
         if not pdb_data:
             raise ValueError("PDB data is required")
         if not het_id:
@@ -379,26 +393,75 @@ class StructureService:
         # Extract the ligand using the processor
         ligand_pdb = structure_processor.pdb_parser.extract_residues_as_string(structure, [found_ligand])
         
-        # Convert to SDF format
+        # Fetch canonical SMILES from CCD for correct bond orders and structure
+        from services.structure.processor import _get_ccd_smiles
+        ccd_smiles = _get_ccd_smiles(het_id)
+        
+        # Convert to SDF format with proper hydrogens
         ligand_sdf = None
+        canonical_smiles = None
         try:
             sanitized_pdb = structure_processor.sanitize_pdb_for_rdkit(ligand_pdb)
+            # Parse PDB without hydrogens first (PDB hydrogens often have bad coordinates)
             mol = Chem.MolFromPDBBlock(sanitized_pdb, removeHs=True)
+            
             if mol is not None:
+                # Use CCD SMILES as template to assign correct bond orders
+                # This fixes aromaticity issues (e.g., benzene appearing as cyclohexane)
+                if ccd_smiles:
+                    try:
+                        template = Chem.MolFromSmiles(ccd_smiles)
+                        if template is not None:
+                            Chem.RemoveHs(template)
+                            mol = AllChem.AssignBondOrdersFromTemplate(template, mol)
+                            print(f"[COMPLETE] Assigned bond orders from CCD SMILES for {het_id}")
+                    except Exception as e:
+                        print(f"Warning: CCD bond order assignment failed for {het_id}: {e}")
+                
+                # Add hydrogens - this is critical for QC calculations
                 mol = Chem.AddHs(mol, addCoords=True)
+                
+                # If no conformer or hydrogens lack coordinates, generate proper 3D structure
                 if mol.GetNumConformers() == 0:
+                    # No conformer at all - generate from scratch
                     AllChem.EmbedMolecule(mol, AllChem.ETKDGv3())
-                ligand_sdf = Chem.MolToMolBlock(mol, confId=0)
+                    AllChem.MMFFOptimizeMolecule(mol)
+                    print(f"[COMPLETE] Generated 3D coordinates for {het_id}")
+                else:
+                    # Check if hydrogens have valid coordinates (not at origin)
+                    conf = mol.GetConformer(0)
+                    h_atoms_at_origin = 0
+                    for atom in mol.GetAtoms():
+                        if atom.GetAtomicNum() == 1:  # Hydrogen
+                            pos = conf.GetAtomPosition(atom.GetIdx())
+                            if abs(pos.x) < 0.001 and abs(pos.y) < 0.001 and abs(pos.z) < 0.001:
+                                h_atoms_at_origin += 1
+                    
+                    if h_atoms_at_origin > 0:
+                        # Hydrogens at origin - re-embed to get proper coordinates
+                        AllChem.EmbedMolecule(mol, AllChem.ETKDGv3())
+                        AllChem.MMFFOptimizeMolecule(mol)
+                        print(f"[COMPLETE] Re-generated 3D coordinates for {het_id} (hydrogens were at origin)")
+                
+                # Generate canonical SMILES for the complete molecule
+                canonical_smiles = Chem.MolToSmiles(mol, canonical=True)
+                
+                # Convert to SDF format
+                if mol.GetNumConformers() > 0:
+                    ligand_sdf = Chem.MolToMolBlock(mol, confId=0)
+                    print(f"[COMPLETE] Generated SDF with {mol.GetNumAtoms()} atoms for {het_id}")
         except Exception as e:
             print(f"Warning: Could not convert ligand to SDF: {e}")
         
-        # Prepare ligand name
+        # Prepare ligand name - use het_id as the name (3-letter code)
         if not ligand_name:
             ligand_name = het_id
         
-        # Save to library
+        # Save to library with SMILES
         library_result = self._save_molecule_to_library(
             name=ligand_name,
+            smiles=ccd_smiles,
+            canonical_smiles=canonical_smiles,
             molfile=ligand_sdf or ligand_pdb,
             source='hetid_extraction'
         )
@@ -410,6 +473,8 @@ class StructureService:
             "sdf_data": ligand_sdf,
             "ligand_name": ligand_name,
             "het_id": het_id,
+            "smiles": ccd_smiles,
+            "canonical_smiles": canonical_smiles,
             "library_save": library_result
         }
         

@@ -1099,6 +1099,14 @@ def parse_normal_modes(output_file: Path) -> Dict[str, Any]:
         
     except Exception as e:
         logger.error(f"Error parsing normal modes: {e}", exc_info=True)
+        # Try .hess file fallback (most reliable — structured binary-free format)
+        try:
+            hess_result = parse_normal_modes_hess(output_file)
+            if hess_result and "error" not in hess_result:
+                logger.info("Normal modes parsed from .hess file (cclib fallback)")
+                return hess_result
+        except Exception as e_hess:
+            logger.warning(f".hess normal modes parse failed: {e_hess}")
         # Try JSON fallback
         try:
             json_result = parse_normal_modes_json(output_file)
@@ -1150,6 +1158,435 @@ def parse_normal_modes_json(output_file: Path) -> Dict[str, Any]:
             logger.warning(f"Failed to parse job.json for normal modes: {e}")
     
     return {"error": "No normal mode data in JSON files"}
+
+
+def parse_normal_modes_hess(output_file: Path) -> Dict[str, Any]:
+    """Parse normal mode data directly from ORCA's .hess file.
+
+    The .hess file is a structured, machine-readable file that ORCA always
+    writes alongside the .out file.  It contains:
+      $vibrational_frequencies – all 3N frequencies (cm⁻¹, 0-indexed)
+      $normal_modes             – mass-weighted displacement matrix (dofs × modes)
+      $atoms                    – atom symbols and Cartesian coordinates (Bohr)
+      $ir_spectrum              – IR intensities (km/mol)
+
+    Because the .hess file is written before ORCA attempts certain post-SCF
+    analyses that can trigger cclib parser errors, this fallback reliably
+    provides displacement vectors even when cclib cannot finish parsing the
+    .out file.
+    """
+    import numpy as np
+
+    BOHR_TO_ANG = 0.529177210903
+
+    job_dir = output_file.parent
+    hess_file = job_dir / "job.hess"
+
+    if not hess_file.exists():
+        return {"error": "job.hess not found"}
+
+    try:
+        with open(hess_file, "r") as f:
+            lines = f.readlines()
+
+        # Index section starts by name
+        section_start: Dict[str, int] = {}
+        for i, line in enumerate(lines):
+            stripped = line.strip()
+            if stripped.startswith("$"):
+                section_start[stripped] = i
+
+        # ---------- $vibrational_frequencies ----------
+        if "$vibrational_frequencies" not in section_start:
+            return {"error": "No $vibrational_frequencies in .hess"}
+
+        idx = section_start["$vibrational_frequencies"] + 1
+        n_modes = int(lines[idx].strip())
+        idx += 1
+        frequencies: List[float] = []
+        for _ in range(n_modes):
+            parts = lines[idx].strip().split()
+            frequencies.append(float(parts[1]))
+            idx += 1
+
+        # ---------- $ir_spectrum ----------
+        intensities: List[float] = [0.0] * n_modes
+        if "$ir_spectrum" in section_start:
+            idx2 = section_start["$ir_spectrum"] + 1
+            n_ir = int(lines[idx2].strip())
+            idx2 += 1
+            for i in range(min(n_ir, n_modes)):
+                parts = lines[idx2].strip().split()
+                # columns: freq  eps  Int(km/mol)  Tx  Ty  Tz
+                if len(parts) >= 3:
+                    intensities[i] = float(parts[2])
+                idx2 += 1
+
+        # ---------- $atoms ----------
+        if "$atoms" not in section_start:
+            return {"error": "No $atoms in .hess"}
+
+        idx = section_start["$atoms"] + 1
+        n_atoms = int(lines[idx].strip())
+        idx += 1
+        atom_symbols: List[str] = []
+        equilibrium: List[List[float]] = []
+        for _ in range(n_atoms):
+            parts = lines[idx].strip().split()
+            atom_symbols.append(parts[0])
+            # Coordinates are in Bohr
+            equilibrium.append([
+                float(parts[2]) * BOHR_TO_ANG,
+                float(parts[3]) * BOHR_TO_ANG,
+                float(parts[4]) * BOHR_TO_ANG,
+            ])
+            idx += 1
+
+        # ---------- $normal_modes ----------
+        if "$normal_modes" not in section_start:
+            return {"error": "No $normal_modes in .hess"}
+
+        idx = section_start["$normal_modes"] + 1
+        dims = lines[idx].strip().split()
+        n_modes_mat = int(dims[0])
+        n_dofs = int(dims[1])
+        idx += 1
+
+        # Matrix stored column-major in blocks; rows = DOF, cols = mode
+        matrix = np.zeros((n_dofs, n_modes_mat), dtype=float)
+
+        end_idx = section_start.get("$atoms", len(lines))
+        # Find the actual section end (next $ after $normal_modes)
+        nm_start = section_start["$normal_modes"]
+        for sec_name, sec_idx in section_start.items():
+            if sec_idx > nm_start and (sec_idx < end_idx):
+                end_idx = sec_idx
+
+        while idx < end_idx:
+            line = lines[idx].strip()
+            if not line or line.startswith("$"):
+                break
+
+            parts = line.split()
+            # Detect column-header rows (all tokens are plain integers)
+            try:
+                col_indices = [int(p) for p in parts]
+                idx += 1
+                # Read the following n_dofs data rows
+                for _ in range(n_dofs):
+                    row_parts = lines[idx].strip().split()
+                    row_idx = int(row_parts[0])
+                    for j, col_idx in enumerate(col_indices):
+                        if j + 1 < len(row_parts):
+                            matrix[row_idx, col_idx] = float(row_parts[j + 1])
+                    idx += 1
+            except ValueError:
+                idx += 1
+
+        # Reshape into [mode][atom][xyz]
+        displacements: List[List[List[float]]] = []
+        for mode_idx in range(n_modes_mat):
+            mode_disp: List[List[float]] = []
+            for atom_idx in range(n_atoms):
+                mode_disp.append([
+                    float(matrix[atom_idx * 3,     mode_idx]),
+                    float(matrix[atom_idx * 3 + 1, mode_idx]),
+                    float(matrix[atom_idx * 3 + 2, mode_idx]),
+                ])
+            displacements.append(mode_disp)
+
+        return {
+            "frequencies": frequencies,
+            "intensities": intensities,
+            "displacements": displacements,
+            "equilibrium_geometry": equilibrium,
+            "atom_symbols": atom_symbols,
+        }
+
+    except Exception as e:
+        logger.error(f"Error parsing .hess file: {e}", exc_info=True)
+        return {"error": f"Failed to parse .hess file: {str(e)}"}
+
+
+# ---------------------------------------------------------------------------
+# Vibrational mode classification via internal coordinate displacement analysis
+# ---------------------------------------------------------------------------
+
+# Covalent radii (Å) — Alvarez 2008 (DOI: 10.1039/b801115j)
+_COVALENT_RADII: Dict[str, float] = {
+    'H': 0.31, 'He': 0.28,
+    'Li': 1.28, 'Be': 0.96, 'B': 0.84, 'C': 0.76, 'N': 0.71, 'O': 0.66,
+    'F': 0.57, 'Ne': 0.58,
+    'Na': 1.66, 'Mg': 1.41, 'Al': 1.21, 'Si': 1.11, 'P': 1.07, 'S': 1.05,
+    'Cl': 1.02, 'Ar': 1.06,
+    'K': 2.03, 'Ca': 1.76, 'Fe': 1.32, 'Co': 1.26, 'Ni': 1.24, 'Cu': 1.32,
+    'Zn': 1.22, 'Br': 1.20, 'Se': 1.20, 'I': 1.39,
+}
+_DEFAULT_RCOV = 1.20
+
+
+def _build_connectivity(coords: np.ndarray, symbols: List[str]) -> List[tuple]:
+    """Return bonded (i, j) pairs using covalent radii + 15% tolerance."""
+    bonds = []
+    n = len(symbols)
+    radii = [_COVALENT_RADII.get(s, _DEFAULT_RCOV) for s in symbols]
+    for i in range(n):
+        for j in range(i + 1, n):
+            threshold = 1.15 * (radii[i] + radii[j])
+            if float(np.linalg.norm(coords[i] - coords[j])) < threshold:
+                bonds.append((i, j))
+    return bonds
+
+
+def _angle_deg(a: np.ndarray, b: np.ndarray, c: np.ndarray) -> float:
+    """Angle A-B-C at vertex B in degrees."""
+    ba = a - b
+    bc = c - b
+    norm_ba = np.linalg.norm(ba)
+    norm_bc = np.linalg.norm(bc)
+    if norm_ba < 1e-12 or norm_bc < 1e-12:
+        return 0.0
+    cos_val = np.dot(ba, bc) / (norm_ba * norm_bc)
+    return float(np.degrees(np.arccos(np.clip(cos_val, -1.0, 1.0))))
+
+
+def _dihedral_deg(a: np.ndarray, b: np.ndarray,
+                  c: np.ndarray, d: np.ndarray) -> float:
+    """Dihedral angle A-B-C-D in degrees."""
+    b1 = b - a
+    b2 = c - b
+    b3 = d - c
+    n1 = np.cross(b1, b2)
+    n2 = np.cross(b2, b3)
+    norm_b2 = np.linalg.norm(b2)
+    if norm_b2 < 1e-12:
+        return 0.0
+    m1 = np.cross(n1, b2 / norm_b2)
+    x = np.dot(n1, n2)
+    y = np.dot(m1, n2)
+    return float(np.degrees(np.arctan2(y, x)))
+
+
+def classify_normal_modes(
+    displacements: List[List[List[float]]],
+    equilibrium_geometry: List[List[float]],
+    atom_symbols: List[str],
+) -> List[Dict[str, Any]]:
+    """
+    Classify each normal mode using internal coordinate displacement analysis.
+
+    For each mode the Cartesian displacement vector is used to compute a
+    virtual displaced geometry (amplitude 0.1 Å equivalent).  Changes in all
+    bond lengths, valence angles and dihedral angles are measured, normalised
+    by empirical sensitivity thresholds, and summed to give % stretch / bend /
+    torsion character.  The dominant internal coordinate and its atoms supply
+    the human-readable label (e.g. "C3-H7 stretch").
+
+    This is the same approach used by Molden and ASE for mode description and
+    is consistent with approximate PED analysis without requiring the full
+    Wilson GF matrix.
+
+    Args:
+        displacements:        [N_modes][N_atoms][3] Cartesian displacement vectors
+        equilibrium_geometry: [N_atoms][3] equilibrium Cartesian coordinates (Å)
+        atom_symbols:         [N_atoms] element symbols
+
+    Returns:
+        List of dicts (one per mode) containing type, primary_label, atom_indices,
+        atom_labels, contributions, participation, top_bonds, top_angles, top_dihedrals.
+    """
+    coords_eq = np.array(equilibrium_geometry, dtype=float)   # [N_atoms, 3]
+    disps     = np.array(displacements,        dtype=float)   # [N_modes, N_atoms, 3]
+    n_modes   = disps.shape[0]
+    n_atoms   = coords_eq.shape[0]
+
+    # ORCA normal modes are mass-weighted eigenvectors.
+    # Convert to Cartesian displacements: Δr_i = q_i / sqrt(m_i)
+    _ATOMIC_MASSES = {
+        'H': 1.008, 'He': 4.003, 'Li': 6.941, 'Be': 9.012,
+        'B': 10.81, 'C': 12.011, 'N': 14.007, 'O': 15.999,
+        'F': 18.998, 'Ne': 20.180, 'Na': 22.990, 'Mg': 24.305,
+        'Al': 26.982, 'Si': 28.086, 'P': 30.974, 'S': 32.065,
+        'Cl': 35.453, 'Ar': 39.948, 'K': 39.098, 'Ca': 40.078,
+        'Fe': 55.845, 'Co': 58.933, 'Ni': 58.693, 'Cu': 63.546,
+        'Zn': 65.38, 'Br': 79.904, 'Se': 78.971, 'I': 126.904,
+    }
+    sqrt_masses = np.sqrt([_ATOMIC_MASSES.get(s, 12.0) for s in atom_symbols])
+    # Broadcast: divide each atom's xyz by its sqrt(mass)
+    disps = disps / sqrt_masses[np.newaxis, :, np.newaxis]
+
+    bonds = _build_connectivity(coords_eq, atom_symbols)
+
+    # Build neighbour map → enumerate angles and dihedrals
+    nbrs: Dict[int, List[int]] = {i: [] for i in range(n_atoms)}
+    for i, j in bonds:
+        nbrs[i].append(j)
+        nbrs[j].append(i)
+
+    angles: List[tuple] = []
+    for b in range(n_atoms):
+        ns = nbrs[b]
+        for ia in range(len(ns)):
+            for ic in range(ia + 1, len(ns)):
+                angles.append((ns[ia], b, ns[ic]))
+
+    dihedrals: List[tuple] = []
+    for (b, c) in bonds:
+        for a in nbrs[b]:
+            if a == c:
+                continue
+            for d in nbrs[c]:
+                if d == b or d == a:
+                    continue
+                dihedrals.append((a, b, c, d))
+
+    # Sensitivity thresholds for normalisation
+    BOND_THRESH   = 0.05   # Å
+    ANGLE_THRESH  = 5.0    # degrees
+    DIHED_THRESH  = 10.0   # degrees
+    AMP           = 0.1    # Å equivalent amplitude for virtual displacement
+
+    def fmt(idx_list: List[int]) -> List[str]:
+        return [f"{atom_symbols[i]}{i + 1}" for i in idx_list]
+
+    classifications: List[Dict[str, Any]] = []
+
+    for mode_idx in range(n_modes):
+        d   = disps[mode_idx]                          # [N_atoms, 3]
+        mag = np.linalg.norm(d, axis=1)                # per-atom displacement magnitude
+        scale = float(np.max(mag))
+
+        # Zero / near-zero modes (translational / rotational)
+        if scale < 1e-10:
+            classifications.append({
+                "type": "translation/rotation",
+                "primary_label": "—",
+                "atom_indices": [],
+                "atom_labels": [],
+                "contributions": {"stretch": 0.0, "bend": 0.0, "torsion": 0.0},
+                "participation": [0.0] * n_atoms,
+                "top_bonds": [],
+                "top_angles": [],
+                "top_dihedrals": [],
+            })
+            continue
+
+        # Virtual displaced geometry
+        d_unit     = d / scale * AMP
+        coords_d   = coords_eq + d_unit
+
+        # --- Bond length changes ---
+        bond_rows: List[Dict] = []
+        for (i, j) in bonds:
+            r_eq = float(np.linalg.norm(coords_eq[i] - coords_eq[j]))
+            r_d  = float(np.linalg.norm(coords_d[i]  - coords_d[j]))
+            dr   = abs(r_d - r_eq)
+            bond_rows.append({
+                "atoms":     [i, j],
+                "score":     dr / BOND_THRESH,
+                "delta_r_mA": round(dr * 1000, 1),
+            })
+
+        # --- Valence angle changes ---
+        angle_rows: List[Dict] = []
+        for (a, b, c) in angles:
+            th_eq = _angle_deg(coords_eq[a], coords_eq[b], coords_eq[c])
+            th_d  = _angle_deg(coords_d[a],  coords_d[b],  coords_d[c])
+            dth   = abs(th_d - th_eq)
+            angle_rows.append({
+                "atoms":            [a, b, c],
+                "score":            dth / ANGLE_THRESH,
+                "delta_theta_deg":  round(dth, 2),
+            })
+
+        # --- Dihedral angle changes ---
+        dihedral_rows: List[Dict] = []
+        for (a, b, c, d_atom) in dihedrals:
+            phi_eq = _dihedral_deg(coords_eq[a], coords_eq[b],
+                                   coords_eq[c], coords_eq[d_atom])
+            phi_d  = _dihedral_deg(coords_d[a],  coords_d[b],
+                                   coords_d[c],  coords_d[d_atom])
+            raw    = abs(phi_d - phi_eq)
+            dphi   = min(raw, 360.0 - raw)
+            dihedral_rows.append({
+                "atoms":          [a, b, c, d_atom],
+                "score":          dphi / DIHED_THRESH,
+                "delta_phi_deg":  round(dphi, 2),
+            })
+
+        # Sum scores per type
+        s_str = sum(r["score"] for r in bond_rows)
+        s_ben = sum(r["score"] for r in angle_rows)
+        s_tor = sum(r["score"] for r in dihedral_rows)
+        total = s_str + s_ben + s_tor + 1e-12
+
+        pct_str = round(100 * s_str / total, 1)
+        pct_ben = round(100 * s_ben / total, 1)
+        pct_tor = round(100 * s_tor / total, 1)
+
+        # Dominant type
+        if s_str >= s_ben and s_str >= s_tor:
+            dom = "stretch"
+        elif s_ben >= s_tor:
+            dom = "bend"
+        else:
+            dom = "torsion"
+
+        # Top internal coordinates
+        top_bonds     = sorted(bond_rows,     key=lambda x: -x["score"])[:3]
+        top_angles    = sorted(angle_rows,    key=lambda x: -x["score"])[:3]
+        top_dihedrals = sorted(dihedral_rows, key=lambda x: -x["score"])[:2]
+
+        # Primary label from dominant coordinate
+        if dom == "stretch" and top_bonds:
+            i, j = top_bonds[0]["atoms"]
+            label       = f"{atom_symbols[i]}-{atom_symbols[j]} stretch"
+            dom_indices = [i, j]
+        elif dom == "bend" and top_angles:
+            a, b, c = top_angles[0]["atoms"]
+            label       = f"{atom_symbols[a]}-{atom_symbols[b]}-{atom_symbols[c]} bend"
+            dom_indices = [a, b, c]
+        elif dom == "torsion" and top_dihedrals:
+            a, b, c, d_atom = top_dihedrals[0]["atoms"]
+            label       = f"{atom_symbols[b]}-{atom_symbols[c]} torsion"
+            dom_indices = [a, b, c, d_atom]
+        else:
+            label       = "—"
+            dom_indices = []
+
+        # Per-atom participation (% of total displacement magnitude)
+        total_mag   = float(mag.sum()) + 1e-12
+        participation = [round(float(m) / total_mag * 100, 1) for m in mag]
+
+        def _ser_bond(r: Dict) -> Dict:
+            return {"atoms": r["atoms"], "labels": fmt(r["atoms"]),
+                    "delta_r_mA": r["delta_r_mA"]}
+
+        def _ser_angle(r: Dict) -> Dict:
+            return {"atoms": r["atoms"], "labels": fmt(r["atoms"]),
+                    "delta_theta_deg": r["delta_theta_deg"]}
+
+        def _ser_dihed(r: Dict) -> Dict:
+            return {"atoms": r["atoms"], "labels": fmt(r["atoms"]),
+                    "delta_phi_deg": r["delta_phi_deg"]}
+
+        classifications.append({
+            "type":          dom,
+            "primary_label": label,
+            "atom_indices":  dom_indices,
+            "atom_labels":   fmt(dom_indices),
+            "contributions": {
+                "stretch": pct_str,
+                "bend":    pct_ben,
+                "torsion": pct_tor,
+            },
+            "participation":  participation,
+            "top_bonds":     [_ser_bond(r)  for r in top_bonds],
+            "top_angles":    [_ser_angle(r) for r in top_angles],
+            "top_dihedrals": [_ser_dihed(r) for r in top_dihedrals],
+        })
+
+    return classifications
 
 
 def check_orca_termination(output_file: Path) -> Dict[str, Any]:

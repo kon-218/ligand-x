@@ -199,6 +199,11 @@ export function SidePanel() {
   // Track if initial health check has completed
   const [healthCheckComplete, setHealthCheckComplete] = useState(false)
 
+  // Once a service is confirmed available, keep it visible even if a subsequent
+  // health check fails (e.g. service is busy processing a long computation).
+  // This prevents tools from disappearing from the sidebar during heavy workloads.
+  const [everAvailableServices, setEverAvailableServices] = useState<Set<string>>(new Set())
+
   // Poll service health every 30 seconds
   useEffect(() => {
     const check = async () => {
@@ -207,6 +212,12 @@ export function SidePanel() {
         // Only update on a real response - don't wipe tabs on transient network errors
         setServiceStatus(status)
         setHealthCheckComplete(true)
+        // Record any services that are currently up so we never hide them later
+        setEverAvailableServices(prev => {
+          const next = new Set(prev)
+          Object.entries(status).forEach(([svc, up]) => { if (up) next.add(svc) })
+          return next
+        })
       } else if (!healthCheckComplete) {
         // First check failed: mark complete so we don't block indefinitely
         setHealthCheckComplete(true)
@@ -217,15 +228,21 @@ export function SidePanel() {
     return () => clearInterval(interval)
   }, [setServiceStatus, healthCheckComplete])
 
-  // Filter tools based on which services are available
-  // Before hydration/health check: only show tools that don't require a service
-  // After health check completes: show tools whose service is available
+  // Filter tools based on which services are available.
+  // Before hydration/health check: only show tools that don't require a service.
+  // After health check completes: show tools whose service is (or was ever) available.
+  // A service that was once available stays visible even if a single poll returns false —
+  // transient failures (e.g. service busy with a long job) must not collapse the sidebar.
   const visibleTools = tools.filter(tool =>
     !tool.service ||                              // no service required → always show
-    (hydrated && healthCheckComplete && serviceStatus[tool.service] === true)  // service confirmed available
+    (hydrated && healthCheckComplete && (
+      serviceStatus[tool.service] === true ||     // currently up
+      everAvailableServices.has(tool.service)     // was up at some point
+    ))
   )
 
-  // Auto-deselect active tool if its service becomes unavailable
+  // Auto-deselect active tool only if its service has never been confirmed available
+  // (i.e. was never reachable, not just temporarily busy).
   useEffect(() => {
     if (activeTool && !visibleTools.find(t => t.id === activeTool)) {
       setActiveTool(null)

@@ -10,10 +10,11 @@ import { IRSpectrumPlot } from '@/components/QC/IRSpectrumPlot'
 import { IRModesTable } from '@/components/QC/IRModesTable'
 import { FukuiIndicesTable } from '@/components/QC/FukuiIndicesTable'
 import { ConformerList } from '@/components/QC/ConformerList'
-import { VibrationalModesTable } from '@/components/QC/VibrationalModesTable'
 import { AtomicChargesTable } from '@/components/QC/AtomicChargesTable'
+import { OrbitalControls } from '@/components/QC/OrbitalControls'
 import { useUnifiedResultsStore } from '@/store/unified-results-store'
 import { UnifiedJobList } from '../shared'
+import type { MolstarViewerHandle } from '@/components/MolecularViewer/MolecularViewer'
 
 interface QCTabResultsProps {
     activeJobId: string | null
@@ -27,7 +28,10 @@ interface QCTabResultsProps {
     onViewLog: (jobId: string, filename?: string, title?: string) => void
     onVisualizeFukui?: (type: string, values: number[]) => Promise<void>
     onClearFukui?: () => Promise<void>
+    onVisualizeCharges?: (values: number[], type: 'chelpg' | 'mulliken') => Promise<void>
+    onClearCharges?: () => Promise<void>
     onLoadStructure?: (jobId: string) => void
+    viewerRef?: MolstarViewerHandle | null
 }
 
 export function QCTabResults({
@@ -42,7 +46,10 @@ export function QCTabResults({
     onViewLog,
     onVisualizeFukui,
     onClearFukui,
+    onVisualizeCharges,
+    onClearCharges,
     onLoadStructure,
+    viewerRef,
 }: QCTabResultsProps) {
     const {
         resultsTab,
@@ -106,6 +113,14 @@ export function QCTabResults({
                                 />
                             </div>
 
+                            {/* Molecular Orbitals — rendered in the main Molstar viewer */}
+                            {activeJobId && viewerRef && (
+                                <OrbitalControls
+                                    jobId={activeJobId}
+                                    viewerRef={viewerRef}
+                                />
+                            )}
+
                             {/* Atomic Charges Table — shown for SP (Electronic Properties) jobs */}
                             {(activeResults?.chelpg_charges || activeResults?.mulliken_charges) && (
                                 <div className="bg-gray-800 rounded-lg p-4 mt-4">
@@ -114,6 +129,8 @@ export function QCTabResults({
                                         chelpgCharges={activeResults.chelpg_charges}
                                         mullikenCharges={activeResults.mulliken_charges}
                                         finalStructureXyz={(activeResults as any).final_structure_xyz}
+                                        onVisualize={onVisualizeCharges}
+                                        onClearVisualization={onClearCharges}
                                     />
                                 </div>
                             )}
@@ -159,17 +176,6 @@ export function QCTabResults({
                                 </div>
                             )}
 
-                            {/* Vibrational Modes */}
-                            {activeResults?.normal_modes && (
-                                <div className="bg-gray-800 rounded-lg p-4 mt-4">
-                                    <h3 className="text-lg font-semibold text-white mb-3">Vibrational Modes</h3>
-                                    <VibrationalModesTable
-                                        jobId={activeJobId}
-                                        frequencies={activeResults.normal_modes.frequencies}
-                                        intensities={activeResults.normal_modes.intensities}
-                                    />
-                                </div>
-                            )}
 
                             {/* Conformers */}
                             {activeResults?.conformers && (

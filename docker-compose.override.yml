@@ -190,7 +190,7 @@ services:
       - ./services/alignment:/app/services/alignment
       - ./lib:/app/lib
       - msa_cache:/app/data/msa_cache
-      - ./data/boltz_outputs:/app/data/boltz_results_input/outputs
+      - ./data/boltz_outputs:/app/data/boltz_results_input
     environment:
       - LOG_LEVEL=DEBUG
     deploy:

@@ -152,6 +152,20 @@ try:
         logger.info("Applied OPI version check patch for ORCA 6.1.0 compatibility")
     except Exception as _patch_err:
         logger.warning(f"Could not patch OPI version check: {_patch_err}")
+    # Also patch version checks in OPI output parsing (added in newer OPI versions)
+    try:
+        import opi.output.core as _opi_out_core
+        if hasattr(_opi_out_core, 'check_minimal_version'):
+            _opi_out_core.check_minimal_version = lambda _: True
+        try:
+            import opi.output.property_file as _opi_prop
+            if hasattr(_opi_prop, 'check_minimal_version'):
+                _opi_prop.check_minimal_version = lambda _: True
+        except ImportError:
+            pass
+        logger.info("Applied OPI output version check patch for ORCA 6.1.0 compatibility")
+    except Exception as _patch_err2:
+        logger.warning(f"Could not patch OPI output version check: {_patch_err2}")
 except ImportError as e:
     OPI_AVAILABLE = False
     logger.error(f"orca-pi not installed. Install with: pip install orca-pi. Error: {e}")
@@ -424,11 +438,16 @@ def run_orca_job_opi(self, job_data: Dict[str, Any]) -> Dict[str, Any]:
             
             raise RuntimeError(f"ORCA did not terminate normally. Check output file for errors.{error_context}")
         
-        # Parse the output
-        output.parse()
-        
-        # Parse the output
-        output.parse()
+        # Parse the output with OPI (version-check errors are non-fatal since
+        # all KPI parsers read directly from output files, not the OPI output object)
+        try:
+            output.parse()
+        except Exception as e:
+            logger.warning(
+                f"OPI output.parse() failed for {job_id} "
+                f"(will use file-based parsers): {e}"
+            )
+            # Continue — file-based parsers don't need the OPI output object
         
         # Get basic results
         output_file = job_dir / "job.out"

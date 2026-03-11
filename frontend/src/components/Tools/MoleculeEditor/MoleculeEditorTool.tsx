@@ -37,8 +37,8 @@ import { api, apiClient } from '@/lib/api-client'
 import { getStructServiceProvider } from '@/lib/ketcher-service-provider'
 import { KetcherErrorBoundary } from './KetcherErrorBoundary'
 
-// Load CSS asynchronously after component mounts
-const KetcherStyles = dynamic(() => import('./KetcherStyles'), { ssr: false })
+// Import Ketcher CSS directly - dynamic import for CSS-only components causes ChunkLoadError
+import 'ketcher-react/dist/index.css'
 
 // Ketcher instance type (using any for flexibility with library versions)
 type KetcherInstance = any
@@ -967,8 +967,6 @@ export function MoleculeEditorTool() {
 
   return (
     <div ref={containerRef} className="flex flex-col h-full bg-gray-50 relative">
-      {/* Lazy load Ketcher CSS */}
-      <KetcherStyles />
 
       {/* Save to Library Dialog */}
       {saveDialogOpen && (

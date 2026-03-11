@@ -16,6 +16,7 @@ import { StateTransforms } from 'molstar/lib/mol-plugin-state/transforms'
 import { StripedResidues } from './themes/StripedResidues'
 import { CustomColorThemeProvider } from './themes/CustomColorTheme'
 import { FukuiColorThemeProvider } from './themes/FukuiColorTheme'
+import { ChargesColorThemeProvider } from './themes/ChargesColorTheme'
 import { StructureTabBar } from './StructureTabBar'
 import { TextFileViewer } from './TextFileViewer'
 import { ImageFileViewer } from './ImageFileViewer'
@@ -24,13 +25,8 @@ import { useMolecularStore } from '@/store/molecular-store'
 import { getDefaultVisualizationSettings, detectStructureType } from '@/lib/structure-utils'
 import * as MolstarControls from '@/lib/molstar-controls'
 import { showGridBox, removeGridBox, toggleGridBox } from '@/lib/molstar-grid-box'
-
-// Declare global molstar variable
-declare global {
-  interface Window {
-    molstar?: any;
-  }
-}
+import { convertOrcaToMolstarFormat } from '@/lib/orbital-utils'
+import { qcService } from '@/lib/qc-service'
 
 // Distinct colors applied as translucent surfaces to each docked pose (matches DockingStepResults.tsx)
 const POSE_SURFACE_COLORS = [0x00CC66, 0xFF8C00, 0xBB44FF, 0x00CCFF, 0xFFCC00, 0xFF4444, 0x44AAFF, 0xFF88CC, 0x88FFCC]
@@ -62,6 +58,11 @@ export interface GridBoxParams {
   size_z: number
 }
 
+export interface OrbitalInfo {
+  homoIndex: number
+  totalMOs: number
+}
+
 export interface MolstarViewerHandle {
   plugin: any | null
   load: (params: LoadParams) => Promise<void>
@@ -81,6 +82,7 @@ export interface MolstarViewerHandle {
     applyCustomTheme: () => Promise<void>
     applyDefault: () => Promise<void>
     applyFukuiTheme: (values: number[], type: string) => Promise<void>
+    applyChargesTheme: (values: number[]) => Promise<void>
   }
   interactivity: {
     highlightResidue: (seqId: number) => void
@@ -90,6 +92,12 @@ export interface MolstarViewerHandle {
     show: (params: GridBoxParams) => Promise<void>
     hide: () => Promise<void>
     toggle: (params: GridBoxParams | null, show: boolean) => Promise<void>
+  }
+  orbitals: {
+    load: (jobId: string) => Promise<OrbitalInfo>
+    show: (moIndex: number, isovalue: number) => Promise<void>
+    hide: () => Promise<void>
+    clear: () => Promise<void>
   }
 }
 
@@ -105,6 +113,9 @@ export const MolecularViewer: React.FC<MolecularViewerProps> = ({
   const [currentPdbId, setCurrentPdbId] = useState(initialPdbId)
   const [loadedStructureId, setLoadedStructureId] = useState<string | null>(null)
   const isInitializedRef = useRef(false)
+  const orbitalBasisRef = useRef<any>(null)
+  const orbitalSelectorsRef = useRef<any>(null)
+  const orbitalJobIdRef = useRef<string | null>(null)
 
   const {
     currentStructure,
@@ -353,6 +364,53 @@ export const MolecularViewer: React.FC<MolecularViewerProps> = ({
           throw fallbackError;
         }
       }
+    },
+    applyChargesTheme: async (values: number[]) => {
+      if (!pluginRef.current) return;
+
+      try {
+        const registry = pluginRef.current.representation.structure.themes.colorThemeRegistry;
+        if (!registry.has(ChargesColorThemeProvider.name)) {
+          registry.add(ChargesColorThemeProvider);
+        }
+      } catch { /* non-fatal */ }
+
+      const themeParams = { values: [...values] };
+
+      try {
+        await pluginRef.current.dataTransaction(async () => {
+          const structures = pluginRef.current!.managers.structure.hierarchy.current.structures;
+          for (const s of structures) {
+            await pluginRef.current!.managers.structure.component.updateRepresentationsTheme(
+              s.components,
+              { color: ChargesColorThemeProvider.name as any, colorParams: themeParams }
+            );
+          }
+        });
+
+        // State-builder pass for robustness
+        const state = pluginRef.current.state.data;
+        const representations = state.selectQ(q =>
+          q.ofTransformer(StateTransforms.Representation.StructureRepresentation3D)
+        );
+        if (representations.length > 0) {
+          const builder = state.build();
+          for (const repr of representations) {
+            builder.to(repr).update(old => ({
+              ...old,
+              colorTheme: { name: ChargesColorThemeProvider.name as any, params: themeParams }
+            }));
+          }
+          await pluginRef.current.runTask(state.updateTree(builder));
+        }
+
+        if (pluginRef.current.canvas3d) {
+          pluginRef.current.canvas3d.requestDraw();
+        }
+      } catch (error) {
+        console.error('ERROR: Failed to apply charges theme:', error);
+        throw error;
+      }
     }
   }
 
@@ -421,6 +479,142 @@ export const MolecularViewer: React.FC<MolecularViewerProps> = ({
     toggle: async (params: GridBoxParams | null, show: boolean) => {
       if (!pluginRef.current) return
       await toggleGridBox(pluginRef.current, params, show)
+    }
+  }
+
+  // Orbital visualization controls
+  const orbitalControls = {
+    load: async (jobId: string): Promise<OrbitalInfo> => {
+      if (!pluginRef.current) throw new Error('Plugin not initialized')
+
+      // If already loaded for this job, return cached info
+      if (orbitalJobIdRef.current === jobId && orbitalBasisRef.current) {
+        // Re-derive info from basis ref
+        const orbitalsData = orbitalBasisRef.current._orbitalsData
+        const homoIndex = orbitalBasisRef.current._homoIndex
+        return { homoIndex, totalMOs: orbitalsData.length }
+      }
+
+      // Clear any previous orbital data
+      await orbitalControls.clear()
+
+      console.log('[ORBITAL] Fetching MO data for job:', jobId)
+      const moData = await qcService.getMOData(jobId)
+      const { basisData, orbitalsData, homoIndex } = convertOrcaToMolstarFormat(moData)
+      console.log(`[ORBITAL] Converted: ${orbitalsData.length} orbitals, HOMO=${homoIndex}, ${basisData.atoms.length} atoms`)
+
+      const { StaticBasisAndOrbitals } = await import('molstar/lib/extensions/alpha-orbitals/transforms')
+
+      const basis = await pluginRef.current.build().toRoot().apply(StaticBasisAndOrbitals, {
+        basis: basisData,
+        orbitals: orbitalsData,
+        order: 'gaussian' // ORCA uses gaussian spherical harmonic order (pz, px, py)
+      }).commit()
+
+      if (!basis) {
+        throw new Error('StaticBasisAndOrbitals commit returned null - alpha-orbitals extension may not be compatible')
+      }
+
+      orbitalBasisRef.current = basis
+      orbitalBasisRef.current._orbitalsData = orbitalsData
+      orbitalBasisRef.current._homoIndex = homoIndex
+      orbitalJobIdRef.current = jobId
+      console.log('[ORBITAL] Basis loaded successfully, ready for visualization')
+
+      return { homoIndex, totalMOs: orbitalsData.length }
+    },
+
+    show: async (moIndex: number, isovalue: number) => {
+      if (!pluginRef.current || !orbitalBasisRef.current) {
+        console.warn('[ORBITAL] Cannot show: plugin or basis not available')
+        return
+      }
+
+      // Verify the basis node still exists in the state tree (it gets destroyed on plugin.clear())
+      const basisRef = orbitalBasisRef.current
+      const basisCell = typeof basisRef === 'string'
+        ? pluginRef.current.state.data.cells.get(basisRef)
+        : pluginRef.current.state.data.cells.get(basisRef?.ref)
+      if (!basisCell) {
+        console.warn('[ORBITAL] Basis node destroyed (structure was reloaded) - invalidating refs')
+        orbitalBasisRef.current = null
+        orbitalSelectorsRef.current = null
+        orbitalJobIdRef.current = null
+        return
+      }
+
+      console.log(`[ORBITAL] Showing MO ${moIndex} with isovalue ${isovalue}`)
+
+      const { CreateOrbitalVolume, CreateOrbitalRepresentation3D } =
+        await import('molstar/lib/extensions/alpha-orbitals/transforms')
+      const { ColorNames } = await import('molstar/lib/mol-util/color/names')
+
+      if (orbitalSelectorsRef.current) {
+        try {
+          await pluginRef.current.build().delete(orbitalSelectorsRef.current.volume).commit()
+        } catch { /* node may already be gone */ }
+        orbitalSelectorsRef.current = null
+      }
+
+      const update = pluginRef.current.build()
+      const volume = update
+        .to(orbitalBasisRef.current)
+        .apply(CreateOrbitalVolume, { index: moIndex })
+
+      const volumeParams = {
+        alpha: 0.85,
+        relativeIsovalue: isovalue,
+        pickable: false,
+        xrayShaded: true,
+        tryUseGpu: true
+      }
+
+      const positive = volume.apply(CreateOrbitalRepresentation3D, {
+        ...volumeParams,
+        kind: 'positive',
+        color: ColorNames.blue
+      }).selector
+
+      const negative = volume.apply(CreateOrbitalRepresentation3D, {
+        ...volumeParams,
+        kind: 'negative',
+        color: ColorNames.red
+      }).selector
+
+      await update.commit()
+
+      orbitalSelectorsRef.current = {
+        volume: volume.selector,
+        positive,
+        negative
+      }
+
+      console.log('[ORBITAL] MO visualization committed successfully')
+    },
+
+    hide: async () => {
+      if (!pluginRef.current || !orbitalSelectorsRef.current) return
+      try {
+        await pluginRef.current.build().delete(orbitalSelectorsRef.current.volume).commit()
+      } catch { /* node may already be gone */ }
+      orbitalSelectorsRef.current = null
+    },
+
+    clear: async () => {
+      if (!pluginRef.current) return
+      if (orbitalSelectorsRef.current) {
+        try {
+          await pluginRef.current.build().delete(orbitalSelectorsRef.current.volume).commit()
+        } catch { /* may already be gone */ }
+        orbitalSelectorsRef.current = null
+      }
+      if (orbitalBasisRef.current) {
+        try {
+          await pluginRef.current.build().delete(orbitalBasisRef.current).commit()
+        } catch { /* may already be gone */ }
+        orbitalBasisRef.current = null
+      }
+      orbitalJobIdRef.current = null
     }
   }
 
@@ -557,9 +751,6 @@ export const MolecularViewer: React.FC<MolecularViewerProps> = ({
           await pluginRef.current.builders.structure.representation.addRepresentation(ligand, {
             type: 'ball-and-stick',
             color: 'element-symbol',
-            typeParams: {
-              sizeFactor: 0.3,
-            }
           })
           hasLigands = true
           console.log('SUCCESS: Ball-and-stick representation added for ligands')
@@ -579,9 +770,6 @@ export const MolecularViewer: React.FC<MolecularViewerProps> = ({
             await pluginRef.current.builders.structure.representation.addRepresentation(nonStandard, {
               type: 'ball-and-stick',
               color: 'element-symbol',
-              typeParams: {
-                sizeFactor: 0.3,
-              }
             })
             hasLigands = true
             console.log('SUCCESS: Ball-and-stick representation added for non-standard entities')
@@ -589,6 +777,41 @@ export const MolecularViewer: React.FC<MolecularViewerProps> = ({
         } catch (e) {
           // Continue
         }
+      }
+
+      // Add water representation (Molstar default behavior)
+      try {
+        const water = await pluginRef.current.builders.structure.tryCreateComponentStatic(
+          structure,
+          'water'
+        )
+        if (water) {
+          await pluginRef.current.builders.structure.representation.addRepresentation(water, {
+            type: 'ball-and-stick',
+            color: 'element-symbol',
+            typeParams: { sizeFactor: 0.15 }
+          })
+          console.log('SUCCESS: Ball-and-stick representation added for water')
+        }
+      } catch (e) {
+        console.log('[INFO] No water found')
+      }
+
+      // Add ion representation (Molstar default behavior)
+      try {
+        const ion = await pluginRef.current.builders.structure.tryCreateComponentStatic(
+          structure,
+          'ion'
+        )
+        if (ion) {
+          await pluginRef.current.builders.structure.representation.addRepresentation(ion, {
+            type: 'ball-and-stick',
+            color: 'element-symbol',
+          })
+          console.log('SUCCESS: Ball-and-stick representation added for ions')
+        }
+      } catch (e) {
+        console.log('[INFO] No ions found')
       }
 
       // Fallback: if no components, show everything as ball-and-stick
@@ -697,6 +920,46 @@ export const MolecularViewer: React.FC<MolecularViewerProps> = ({
     }
   }, [onStructureLoaded, effectiveBackgroundColor])
 
+  // Load each docking pose as a separate Mol* structure to prevent cross-molecule bonding.
+  // Bond inference is per-structure, so poses loaded independently won't bond to each other.
+  const loadOverlayPoses = useCallback(async (
+    overlayPoses: Array<{ pdbData: string; chainId: string }>
+  ) => {
+    if (!pluginRef.current) return
+
+    for (let i = 0; i < overlayPoses.length; i++) {
+      const { pdbData } = overlayPoses[i]
+      const color = POSE_SURFACE_COLORS[i % POSE_SURFACE_COLORS.length]
+
+      try {
+        // Load as independent structure (no clear() call — adds on top of existing)
+        const data = await pluginRef.current.builders.data.rawData({
+          data: pdbData,
+          label: `Docked Pose ${i + 1}`
+        })
+        const trajectory = await pluginRef.current.builders.structure.parseTrajectory(data, 'pdb')
+        const model = await pluginRef.current.builders.structure.createModel(trajectory)
+        const structure = await pluginRef.current.builders.structure.createStructure(model)
+
+        // Pose PDBs are HETATM-only — use 'all' to get all atoms
+        const poseComp = await pluginRef.current.builders.structure.tryCreateComponentStatic(
+          structure,
+          'all'
+        )
+        if (poseComp) {
+          // Ball-and-stick representation with element coloring
+          await pluginRef.current.builders.structure.representation.addRepresentation(poseComp, {
+            type: 'ball-and-stick',
+            color: 'element-symbol',
+          })
+          console.log(`SUCCESS: Loaded overlay pose ${i + 1} as separate structure`)
+        }
+      } catch (e) {
+        console.warn(`WARNING: Failed to load overlay pose ${i + 1}:`, e)
+      }
+    }
+  }, [])
+
   // Load trajectory function
   const loadTrajectory = useCallback(async (
     trajectoryUrl: string | { pdbData: string },
@@ -780,9 +1043,6 @@ export const MolecularViewer: React.FC<MolecularViewerProps> = ({
           await pluginRef.current.builders.structure.representation.addRepresentation(ligand, {
             type: 'ball-and-stick',
             color: 'element-symbol',
-            typeParams: {
-              sizeFactor: 0.3,
-            }
           })
           hasLigands = true
         }
@@ -815,7 +1075,9 @@ export const MolecularViewer: React.FC<MolecularViewerProps> = ({
     }
   }, [onStructureLoaded])
 
-  // Animate normal mode from trajectory PDB data
+  // Animate normal mode from a multi-model trajectory PDB.
+  // Uses the community-approved applyPreset path so AnimateModelIndex can locate
+  // the trajectory/model nodes in the state tree correctly.
   const animateNormalMode = useCallback(async (
     pdbData: string,
     options: { loop?: boolean; speed?: number; mode?: 'loop' | 'palindrome' | 'once' } = {}
@@ -825,40 +1087,42 @@ export const MolecularViewer: React.FC<MolecularViewerProps> = ({
       return
     }
 
-    const {
-      loop = true,
-      speed = 30, // frames per second
-      mode = 'loop'
-    } = options
+    const { mode = 'palindrome' } = options
 
     console.log('[PROCESS] Loading normal mode trajectory for animation...')
 
     try {
-      // Load trajectory
-      await loadTrajectory({ pdbData }, 'pdb')
+      await pluginRef.current.clear()
 
-      // Wait a bit for structure to be ready
-      await new Promise(resolve => setTimeout(resolve, 300))
+      const data = await pluginRef.current.builders.data.rawData(
+        { data: pdbData, label: 'Normal Mode Trajectory' }
+      )
 
-      // Start animation based on mode
+      const trajectory = await pluginRef.current.builders.structure.parseTrajectory(data, 'pdb')
+
+      // applyPreset registers the model in Mol*'s hierarchy so AnimateModelIndex
+      // can find and step through the trajectory frames via its state-tree query.
+      await pluginRef.current.builders.structure.hierarchy.applyPreset(trajectory, 'default')
+
+      const { canvas3d } = pluginRef.current
+      if (canvas3d) {
+        setTimeout(() => canvas3d.requestCameraReset(), 100)
+      }
+
       if (mode === 'palindrome') {
         animate.palindrome()
       } else if (mode === 'once') {
         animate.onceForward()
       } else {
-        // Default: loop
         animate.loop()
       }
 
-      // Adjust animation speed if needed
-      // Note: Molstar's AnimateModelIndex uses targetFps, but we can't directly set it here
-      // The speed parameter is informational for now
-      console.log(`[SUCCESS] Normal mode animation started (mode: ${mode}, target speed: ${speed} fps)`)
+      console.log(`[SUCCESS] Normal mode animation started (mode: ${mode})`)
     } catch (error) {
       console.error('ERROR: Failed to animate normal mode:', error)
       throw error
     }
-  }, [loadTrajectory, animate])
+  }, [animate])
 
   // Set background color
   const setBackground = useCallback((color: number) => {
@@ -881,7 +1145,11 @@ export const MolecularViewer: React.FC<MolecularViewerProps> = ({
     }, 500)
   }
 
-  // Initialize plugin
+  // Initialize plugin using npm package's createPluginUI so that all Molstar
+  // code (viewer + alpha-orbitals extension) shares a single module instance.
+  // The pre-built bundle at /molstar/molstar.js does NOT include the
+  // alpha-orbitals extension, causing transforms imported from the npm package
+  // to be incompatible with a bundle-created plugin.
   const initPlugin = async () => {
     const targetElement = containerRef.current
 
@@ -890,89 +1158,81 @@ export const MolecularViewer: React.FC<MolecularViewerProps> = ({
       return
     }
 
-    console.log('[PROCESS] Initializing Molstar plugin from bundle...')
+    console.log('[PROCESS] Initializing Molstar plugin from npm package...')
 
     try {
-      // Suppress console errors from PDBe API fetch failures in dev mode
-      const originalError = console.error
-      const originalWarn = console.warn
-      let suppressNextError = false
+      const { createPluginUI } = await import('molstar/lib/mol-plugin-ui')
+      const { DefaultPluginUISpec } = await import('molstar/lib/mol-plugin-ui/spec')
+      const { renderReact18 } = await import('molstar/lib/mol-plugin-ui/react18')
+      const { PluginConfig } = await import('molstar/lib/mol-plugin/config')
 
-      // Temporarily suppress fetch errors from PDBe API
-      console.error = function(...args: any[]) {
-        const message = args[0]?.toString?.() || ''
-        if (message.includes('Failed to fetch') || message.includes('ERR_CONNECTION_REFUSED')) {
-          suppressNextError = true
-          return
+      const defaultSpec = DefaultPluginUISpec()
+      const plugin = await createPluginUI({
+        target: targetElement,
+        render: renderReact18,
+        spec: {
+          ...defaultSpec,
+          layout: {
+            initial: {
+              isExpanded: false,
+              showControls: false,
+              controlsDisplay: 'landscape'
+            },
+          },
+          components: {
+            controls: { top: 'none', bottom: 'none' },
+            hideTaskOverlay: true,
+          },
+          config: [
+            [PluginConfig.Viewport.ShowExpand, false],
+            [PluginConfig.Viewport.ShowControls, true],
+            [PluginConfig.Viewport.ShowSelectionMode, false],
+            [PluginConfig.Viewport.ShowAnimation, true],
+          ]
         }
-        if (!suppressNextError) {
-          originalError.apply(console, args)
-        }
-        suppressNextError = false
-      }
-
-      const viewer = await window.molstar.Viewer.create(targetElement, {
-        layoutIsExpanded: false,
-        layoutShowControls: false,
-        viewportShowExpand: false,
-        collapseLeftPanel: true
       })
 
-      // Restore original console methods
-      console.error = originalError
-      console.warn = originalWarn
-
-      viewerRef.current = viewer
-      pluginRef.current = viewer.plugin
+      viewerRef.current = plugin
+      pluginRef.current = plugin
       isInitializedRef.current = true
       setIsReady(true)
 
-      console.log('SUCCESS: Molstar plugin initialized from bundle')
+      console.log('SUCCESS: Molstar plugin initialized from npm package')
 
-      // Set background color using simplified API
-      await MolstarControls.setBackgroundColor(viewer.plugin, effectiveBackgroundColor)
+      await MolstarControls.setBackgroundColor(plugin, effectiveBackgroundColor)
 
-      // Remove background images from canvas (CSS handles this, but ensure it's clean)
       const canvas = targetElement.querySelector('canvas')
       if (canvas) {
         canvas.style.backgroundImage = 'none'
       }
 
-      // Create handle object for store and other components
       const handle: MolstarViewerHandle = {
-        plugin: viewer.plugin,
+        plugin,
         load,
         loadTrajectory,
         animateNormalMode,
         setBackground,
-        toggleSpin: () => MolstarControls.toggleSpin(viewer.plugin),
+        toggleSpin: () => MolstarControls.toggleSpin(plugin),
         animate,
         coloring,
         interactivity,
-        gridBox: gridBoxControls
+        gridBox: gridBoxControls,
+        orbitals: orbitalControls
       }
 
-      // Store handle in store for other components to access
       setStoreViewerRef(handle)
-
-      // Apply background color immediately
       setBackground(effectiveBackgroundColor)
     } catch (error) {
       console.error('[ERROR] Failed to initialize plugin:', error)
     }
   }
 
-  // Load Molstar assets and initialize
+  // Load Molstar CSS and initialize plugin
   useEffect(() => {
     if (isInitializedRef.current) return
 
-    const loadAssets = async () => {
-      if (window.molstar) {
-        initPlugin()
-        return
-      }
-
-      // Load CSS
+    // Load Molstar CSS (still from public directory for styling)
+    if (!document.querySelector('link[href="/molstar/molstar.css"]')) {
       const link = document.createElement('link')
       link.href = '/molstar/molstar.css'
       link.rel = 'stylesheet'
@@ -980,31 +1240,9 @@ export const MolecularViewer: React.FC<MolecularViewerProps> = ({
         console.warn('WARNING: Failed to load molstar.css')
       }
       document.head.appendChild(link)
-
-      // Load JS
-      const script = document.createElement('script')
-      script.src = '/molstar/molstar.js'
-      script.async = true
-      script.onload = () => {
-        if (window.molstar && window.molstar.Viewer) {
-          initPlugin()
-        } else {
-          setTimeout(() => {
-            if (window.molstar && window.molstar.Viewer) {
-              initPlugin()
-            } else {
-              console.error('[ERROR] Molstar not available after script load')
-            }
-          }, 100)
-        }
-      }
-      script.onerror = () => {
-        console.error('ERROR: Failed to load molstar.js')
-      }
-      document.body.appendChild(script)
     }
 
-    loadAssets()
+    initPlugin()
   }, [])
 
   // Watch for structure changes from the store
@@ -1012,7 +1250,10 @@ export const MolecularViewer: React.FC<MolecularViewerProps> = ({
     if (!pluginRef.current) return
 
     if (!currentStructure) {
-      console.log('🧹 Clearing viewer - no structure loaded')
+      console.log('Clearing viewer - no structure loaded')
+      orbitalBasisRef.current = null
+      orbitalSelectorsRef.current = null
+      orbitalJobIdRef.current = null
       pluginRef.current.clear().then(() => {
         console.log('SUCCESS: Viewer cleared')
         setLoadedStructureId(null)
@@ -1095,6 +1336,13 @@ export const MolecularViewer: React.FC<MolecularViewerProps> = ({
             console.log(`SUCCESS: Loaded structure with format: ${primaryFormat.toUpperCase()}`);
           }
 
+          // Load overlay poses as separate Mol* structures (multi-pose docking comparison)
+          const overlayPoses = currentStructure.metadata?.overlay_poses as
+            Array<{ pdbData: string; chainId: string }> | undefined
+          if (overlayPoses && overlayPoses.length > 0) {
+            await loadOverlayPoses(overlayPoses)
+          }
+
           setLoadedStructureId(currentStructure.structure_id)
           if (onStructureLoaded) {
             onStructureLoaded(currentStructure.structure_id || 'uploaded')
@@ -1106,7 +1354,7 @@ export const MolecularViewer: React.FC<MolecularViewerProps> = ({
 
       loadStructure()
     }
-  }, [currentStructure, load, loadTrajectory, onStructureLoaded, loadedStructureId])
+  }, [currentStructure, load, loadTrajectory, loadOverlayPoses, onStructureLoaded, loadedStructureId])
 
   // Apply background color when it changes
   useEffect(() => {
@@ -1173,7 +1421,8 @@ export const MolecularViewer: React.FC<MolecularViewerProps> = ({
     animate,
     coloring,
     interactivity,
-    gridBox: gridBoxControls
+    gridBox: gridBoxControls,
+    orbitals: orbitalControls
   } : null
 
   return (

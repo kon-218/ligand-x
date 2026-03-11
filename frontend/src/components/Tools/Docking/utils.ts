@@ -321,14 +321,14 @@ export function parsePDBQT(pdbqtData: string): string[] {
             if (currentPose.length > 0) {
                 poses.push(currentPose.join('\n'))
             }
-        } else if (inModel && (line.startsWith('ATOM') || line.startsWith('HETATM'))) {
+        } else if (inModel && (line.startsWith('ATOM') || line.startsWith('HETATM') || line.startsWith('CONECT'))) {
             currentPose.push(line)
         }
     }
 
     // If no MODEL/ENDMDL tags, treat entire content as one pose
     if (poses.length === 0 && lines.some(l => l.startsWith('ATOM') || l.startsWith('HETATM'))) {
-        poses.push(lines.filter(l => l.startsWith('ATOM') || l.startsWith('HETATM')).join('\n'))
+        poses.push(lines.filter(l => l.startsWith('ATOM') || l.startsWith('HETATM') || l.startsWith('CONECT')).join('\n'))
     }
 
     return poses

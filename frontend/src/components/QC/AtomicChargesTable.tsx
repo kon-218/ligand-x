@@ -1,12 +1,14 @@
 'use client'
 
 import React, { useMemo, useState } from 'react'
-import { ChevronDown, ChevronUp } from 'lucide-react'
+import { ChevronDown, ChevronUp, Eye, EyeOff } from 'lucide-react'
 
 interface AtomicChargesTableProps {
     chelpgCharges?: number[]
     mullikenCharges?: number[]
     finalStructureXyz?: string
+    onVisualize?: (values: number[], type: 'chelpg' | 'mulliken') => Promise<void>
+    onClearVisualization?: () => Promise<void>
 }
 
 function parseAtomsFromXyz(xyz: string): string[] {
@@ -20,7 +22,6 @@ function parseAtomsFromXyz(xyz: string): string[] {
         for (let i = 2; i < 2 + nAtoms && i < lines.length; i++) {
             const parts = lines[i].trim().split(/\s+/)
             if (parts.length >= 1) {
-                // Capitalize properly: first char upper, rest lower
                 const sym = parts[0]
                 atoms.push(sym.charAt(0).toUpperCase() + sym.slice(1).toLowerCase())
             }
@@ -39,8 +40,10 @@ function getChargeColor(charge: number): string {
     return 'text-gray-300'
 }
 
-export function AtomicChargesTable({ chelpgCharges, mullikenCharges, finalStructureXyz }: AtomicChargesTableProps) {
+export function AtomicChargesTable({ chelpgCharges, mullikenCharges, finalStructureXyz, onVisualize, onClearVisualization }: AtomicChargesTableProps) {
     const [isExpanded, setIsExpanded] = useState(false)
+    const [activeViz, setActiveViz] = useState<'chelpg' | 'mulliken' | null>(null)
+    const [vizLoading, setVizLoading] = useState(false)
 
     const atoms = useMemo(() => parseAtomsFromXyz(finalStructureXyz || ''), [finalStructureXyz])
 
@@ -63,6 +66,30 @@ export function AtomicChargesTable({ chelpgCharges, mullikenCharges, finalStruct
 
     const displayRows = isExpanded ? rows : rows.slice(0, PREVIEW_ROWS)
 
+    const handleVisualize = async (type: 'chelpg' | 'mulliken') => {
+        if (!onVisualize) return
+        const vals = type === 'chelpg' ? chelpgCharges : mullikenCharges
+        if (!vals) return
+        setVizLoading(true)
+        try {
+            await onVisualize(vals, type)
+            setActiveViz(type)
+        } finally {
+            setVizLoading(false)
+        }
+    }
+
+    const handleClear = async () => {
+        if (!onClearVisualization) return
+        setVizLoading(true)
+        try {
+            await onClearVisualization()
+            setActiveViz(null)
+        } finally {
+            setVizLoading(false)
+        }
+    }
+
     return (
         <div className="bg-gradient-to-br from-gray-800/50 to-gray-800/30 border border-gray-700/50 rounded-xl overflow-hidden">
             <div className="flex items-center justify-between px-4 py-3 border-b border-gray-700/50">
@@ -70,11 +97,69 @@ export function AtomicChargesTable({ chelpgCharges, mullikenCharges, finalStruct
                     Atomic Charges
                     {hasBoth ? ' (CHELPG & Mulliken)' : ` (${chargeLabel})`}
                 </h4>
-                <span className="text-xs text-gray-500">
-                    Total: <span className={getChargeColor(totalCharge)}>{totalCharge.toFixed(3)} e</span>
-                    {' · '}{rowCount} atoms
-                </span>
+                <div className="flex items-center gap-2">
+                    <span className="text-xs text-gray-500">
+                        Total: <span className={getChargeColor(totalCharge)}>{totalCharge.toFixed(3)} e</span>
+                        {' · '}{rowCount} atoms
+                    </span>
+                    {onVisualize && (
+                        <div className="flex items-center gap-1 ml-2">
+                            {chelpgCharges && (
+                                <button
+                                    onClick={() => handleVisualize('chelpg')}
+                                    disabled={vizLoading}
+                                    className={`flex items-center gap-1 px-2 py-1 rounded text-xs font-medium transition-colors ${
+                                        activeViz === 'chelpg'
+                                            ? 'bg-purple-600/60 text-purple-200 border border-purple-500/50'
+                                            : 'bg-gray-700/60 text-gray-300 border border-gray-600/50 hover:bg-gray-600/60'
+                                    }`}
+                                >
+                                    <Eye className="w-3 h-3" />
+                                    CHELPG
+                                </button>
+                            )}
+                            {mullikenCharges && (
+                                <button
+                                    onClick={() => handleVisualize('mulliken')}
+                                    disabled={vizLoading}
+                                    className={`flex items-center gap-1 px-2 py-1 rounded text-xs font-medium transition-colors ${
+                                        activeViz === 'mulliken'
+                                            ? 'bg-purple-600/60 text-purple-200 border border-purple-500/50'
+                                            : 'bg-gray-700/60 text-gray-300 border border-gray-600/50 hover:bg-gray-600/60'
+                                    }`}
+                                >
+                                    <Eye className="w-3 h-3" />
+                                    Mulliken
+                                </button>
+                            )}
+                            {activeViz && (
+                                <button
+                                    onClick={handleClear}
+                                    disabled={vizLoading}
+                                    className="flex items-center gap-1 px-2 py-1 rounded text-xs font-medium bg-gray-700/60 text-gray-400 border border-gray-600/50 hover:bg-gray-600/60 transition-colors"
+                                >
+                                    <EyeOff className="w-3 h-3" />
+                                    Clear
+                                </button>
+                            )}
+                        </div>
+                    )}
+                </div>
             </div>
+
+            {activeViz && (
+                <div className="px-4 py-2 border-b border-gray-700/40 flex items-center gap-3 text-xs text-gray-400">
+                    <span className="flex items-center gap-1.5">
+                        <span className="inline-block w-3 h-3 rounded-full bg-blue-500 opacity-80" />
+                        Negative (electron-rich)
+                    </span>
+                    <span className="flex-1 h-px bg-gradient-to-r from-blue-500 via-gray-300 to-red-500 opacity-40" />
+                    <span className="flex items-center gap-1.5">
+                        <span className="inline-block w-3 h-3 rounded-full bg-red-500 opacity-80" />
+                        Positive (electron-poor)
+                    </span>
+                </div>
+            )}
 
             <div className="overflow-x-auto">
                 <table className="w-full text-xs">

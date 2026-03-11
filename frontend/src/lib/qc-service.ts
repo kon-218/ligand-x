@@ -2,6 +2,18 @@ import { QCJob, QCResults, QCPreset } from '@/store/qc-store'
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'
 
+export interface ModeClassification {
+  type: 'stretch' | 'bend' | 'torsion' | 'translation/rotation'
+  primary_label: string
+  atom_indices: number[]
+  atom_labels: string[]
+  contributions: { stretch: number; bend: number; torsion: number }
+  participation: number[]
+  top_bonds: { atoms: number[]; labels: string[]; delta_r_mA: number }[]
+  top_angles: { atoms: number[]; labels: string[]; delta_theta_deg: number }[]
+  top_dihedrals: { atoms: number[]; labels: string[]; delta_phi_deg: number }[]
+}
+
 export interface SubmitJobRequest {
   molecule_xyz: string // XYZ format coordinates
   molecule_name?: string // Name of the molecule for display
@@ -341,6 +353,7 @@ class QCService {
       displacements?: number[][][]
       equilibrium_geometry?: number[][]
       atom_symbols?: string[]
+      classifications?: ModeClassification[] | null
     }
   }> {
     try {

@@ -79,8 +79,8 @@ export function InputFilePreviewModal({
     const solventLabel = parameters.solvation || 'None'
 
     return (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm">
-            <div className="bg-gray-800 rounded-lg shadow-2xl w-[90%] max-w-lg max-h-[90vh] flex flex-col">
+        <div className="absolute inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm">
+            <div className="bg-gray-800 rounded-lg shadow-2xl w-[calc(100%-32px)] max-w-[calc(480px-32px)] max-h-[90vh] flex flex-col">
                 {/* Header */}
                 <div className="flex items-center justify-between p-4 border-b border-gray-700">
                     <h2 className="text-base font-semibold text-white">{title}</h2>

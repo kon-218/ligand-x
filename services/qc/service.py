@@ -403,6 +403,7 @@ class QuantumChemistryService:
                 # Re-parse electrostatics for completed jobs that are missing CHELPG/dipole
                 # (handles jobs run before the regex fallback parsers were added)
                 result = self._backfill_electrostatics(job_id, result)
+                result = self._backfill_missing_kpis(job_id, result)
                 return result, 200
             
             # Fallback to Celery backend
@@ -632,6 +633,111 @@ class QuantumChemistryService:
                             f"dipole={electro.get('dipole_magnitude_debye')}")
         except Exception as e:
             logger.warning(f"Electrostatics back-fill failed for job {job_id}: {e}")
+
+        return result
+
+    def _backfill_missing_kpis(self, job_id: str, result: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Re-parse all KPIs for jobs missing data due to OPI version check crashes.
+
+        The OPI output.parse() call can fail with an unsupported-version error even
+        though ORCA itself completed normally. When that happens the task handler
+        stores status=FAILED before running any parsers. This method detects that
+        situation (key results absent + valid ORCA output on disk) and runs the
+        file-based parsers retroactively, then promotes the job to COMPLETED.
+
+        Covers: final_energy, FMO, thermochemistry, IR spectrum, final structure.
+        Only triggers when key data is missing to avoid re-running on good jobs.
+        """
+        computed = result.get('results', {})
+        if not isinstance(computed, dict):
+            return result
+
+        missing_energy = 'final_energy_hartree' not in computed
+        orca_type = result.get('orca_task_type', '')
+        missing_ir = orca_type == 'OPT_FREQ' and 'ir_frequencies' not in computed
+
+        if not missing_energy and not missing_ir:
+            return result
+
+        job_dir = Path(self.config.JOB_STORAGE_PATH) / job_id
+        output_file = job_dir / 'job.out'
+        if not output_file.exists():
+            return result
+
+        from services.qc.parsers import check_orca_termination
+        term = check_orca_termination(output_file)
+        if not term.get('success'):
+            return result
+
+        try:
+            from services.qc.parsers import (
+                parse_final_energy, parse_fmo_data, parse_electrostatics,
+                parse_thermo, parse_ir_spectrum
+            )
+            from services.qc.tasks import generate_ir_dat_file
+            changed = False
+
+            if missing_energy:
+                energy = parse_final_energy(output_file)
+                if energy is not None:
+                    computed['final_energy_hartree'] = energy
+                    changed = True
+
+                fmo = parse_fmo_data(output_file)
+                if 'error' not in fmo:
+                    computed.update(fmo)
+                    changed = True
+
+                if not computed.get('chelpg_charges') and not computed.get('dipole_magnitude_debye'):
+                    elec = parse_electrostatics(output_file)
+                    if 'error' not in elec:
+                        computed.update(elec)
+                        changed = True
+
+            if missing_ir or (orca_type == 'OPT_FREQ' and 'gibbs_free_energy_hartree' not in computed):
+                thermo = parse_thermo(output_file)
+                if 'error' not in thermo:
+                    computed.update(thermo)
+                    changed = True
+
+                ir = parse_ir_spectrum(output_file)
+                if 'error' not in ir:
+                    if 'frequencies' in ir:
+                        computed['ir_frequencies'] = ir['frequencies']
+                    if 'intensities' in ir:
+                        computed['ir_intensities'] = ir['intensities']
+                    for field in ('modes', 'eps', 't_squared', 'tx', 'ty', 'tz'):
+                        if field in ir:
+                            computed[f'ir_{field}'] = ir[field]
+                    try:
+                        generate_ir_dat_file(job_dir, ir)
+                        computed['ir_spectrum_file'] = str(job_dir / 'job.ir.dat')
+                        result.setdefault('files', {})['ir_spectrum'] = str(job_dir / 'job.ir.dat')
+                    except Exception:
+                        pass
+                    changed = True
+
+            if 'final_structure_xyz' not in computed:
+                xyz_path = job_dir / 'job.xyz'
+                if xyz_path.exists():
+                    computed['final_structure_xyz'] = xyz_path.read_text()
+                    result.setdefault('files', {})['final_structure'] = str(xyz_path)
+                    changed = True
+
+            if changed:
+                result['results'] = computed
+                if result.get('status', '').upper() == 'FAILED' and computed.get('final_energy_hartree'):
+                    result['status'] = 'COMPLETED'
+                    result.pop('error', None)
+                import json as _json
+                db_file = Path(self.config.RESULTS_DB_PATH) / f"{job_id}.json"
+                with open(db_file, 'w') as f:
+                    _json.dump(result, f, indent=2)
+                logger.info(f"Back-filled missing KPIs for job {job_id}")
+
+        except Exception as e:
+            logger.warning(f"KPI back-fill failed for job {job_id}: {e}")
 
         return result
 
@@ -900,7 +1006,24 @@ class QuantumChemistryService:
             
             if "error" in normal_modes:
                 return normal_modes, 400
-            
+
+            # Classify modes using internal coordinate displacement analysis
+            if (normal_modes.get("displacements") and
+                    normal_modes.get("equilibrium_geometry") and
+                    normal_modes.get("atom_symbols")):
+                try:
+                    from services.qc.parsers import classify_normal_modes
+                    normal_modes["classifications"] = classify_normal_modes(
+                        normal_modes["displacements"],
+                        normal_modes["equilibrium_geometry"],
+                        normal_modes["atom_symbols"],
+                    )
+                except Exception as cls_err:
+                    logger.warning(f"Mode classification failed for {job_id}: {cls_err}")
+                    normal_modes["classifications"] = None
+            else:
+                normal_modes["classifications"] = None
+
             return {
                 "job_id": job_id,
                 "normal_modes": normal_modes
@@ -936,7 +1059,7 @@ class QuantumChemistryService:
         """
         try:
             import numpy as np
-            from services.qc.parsers import parse_normal_modes
+            from services.qc.parsers import parse_normal_modes, _build_connectivity
             from services.qc.config import QCConfig
             
             # Get job directory
@@ -992,7 +1115,24 @@ class QuantumChemistryService:
             # Get the specific mode's displacement vector
             mode_displacement = np.array(displacements[mode_index])  # [atom][x,y,z]
             equilibrium = np.array(equilibrium_geometry)  # [atom][x,y,z]
-            
+
+            # ORCA normal modes are mass-weighted eigenvectors.
+            # Convert to Cartesian displacements: Δr_i = q_i / sqrt(m_i)
+            _ATOMIC_MASSES = {
+                'H': 1.008, 'He': 4.003, 'Li': 6.941, 'Be': 9.012,
+                'B': 10.81, 'C': 12.011, 'N': 14.007, 'O': 15.999,
+                'F': 18.998, 'Ne': 20.180, 'Na': 22.990, 'Mg': 24.305,
+                'Al': 26.982, 'Si': 28.086, 'P': 30.974, 'S': 32.065,
+                'Cl': 35.453, 'Ar': 39.948, 'K': 39.098, 'Ca': 40.078,
+                'Fe': 55.845, 'Co': 58.933, 'Ni': 58.693, 'Cu': 63.546,
+                'Zn': 65.38, 'Br': 79.904, 'Se': 78.971, 'I': 126.904,
+            }
+            masses = np.array([
+                _ATOMIC_MASSES.get(s, 12.0) for s in atom_symbols
+            ])  # shape (n_atoms,)
+            sqrt_masses = np.sqrt(masses)[:, np.newaxis]  # shape (n_atoms, 1) for broadcasting
+            mode_displacement = mode_displacement / sqrt_masses
+
             # Normalize displacement vector (scale to unit magnitude)
             # Calculate magnitude for each atom's displacement
             atom_displacements_magnitude = np.linalg.norm(mode_displacement, axis=1)
@@ -1023,17 +1163,29 @@ class QuantumChemistryService:
                 # Write MODEL record
                 pdb_lines.append(f"MODEL        {frame_idx + 1:4d}")
                 
-                # Write ATOM records
+                # Write HETATM records (HETATM lets Mol* recognise the residue as a
+                # small-molecule ligand so the 'ligand' component selector picks it up)
                 for atom_idx, (symbol, coords) in enumerate(zip(atom_symbols, frame_coords)):
                     x, y, z = coords
-                    # PDB format: ATOM record
+                    # PDB HETATM: cols 1-6 record, 7-11 serial, 12 blank,
+                    # 13-16 name, 17 altLoc, 18-20 resName, 22 chain,
+                    # 23-26 resSeq, 31-38 x, 39-46 y, 47-54 z,
+                    # 55-60 occ, 61-66 bfac, 77-78 element
+                    name = f" {symbol:<3s}" if len(symbol) == 1 else f"{symbol:<4s}"
                     pdb_lines.append(
-                        f"ATOM  {atom_idx+1:5d}  {symbol:>2s}   MOL A   1    "
-                        f"{x:8.3f}{y:8.3f}{z:8.3f}  1.00  0.00          {symbol:>2s}  "
+                        f"HETATM{atom_idx+1:5d} {name} MOL A   1    "
+                        f"{x:8.3f}{y:8.3f}{z:8.3f}  1.00  0.00          {symbol:>2s}"
                     )
                 
                 pdb_lines.append("ENDMDL")
             
+            # Add CONECT records so Mol* uses explicit connectivity instead of
+            # distance-based bond detection — bonds won't disappear during animation
+            # when atoms swing past the distance threshold.
+            bonds = _build_connectivity(equilibrium, atom_symbols)
+            for i, j in bonds:
+                pdb_lines.append(f"CONECT{i+1:5d}{j+1:5d}")
+            pdb_lines.append("END")
             pdb_content = "\n".join(pdb_lines)
             
             return {

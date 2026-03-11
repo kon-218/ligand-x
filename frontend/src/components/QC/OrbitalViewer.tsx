@@ -103,22 +103,9 @@ export function OrbitalViewer({
         const model = await plugin.builders.structure.createModel(trajectory)
         const structure = await plugin.builders.structure.createStructure(model)
         
-        // For XYZ format, coordinates should not be transformed by Mol*
-        // Use original coordinates directly - they should match the structure exactly
-        // Convert atomCoords array to the format expected by convertOrcaToMolstarFormat
-        const structureCoords: number[][] = atomCoords.map((atom: { x: number; y: number; z: number }) => [atom.x, atom.y, atom.z])
-        
-        console.log('🔧 Using original coordinates for basis alignment:', structureCoords.length, 'atoms')
-        if (structureCoords.length > 0) {
-          console.log('Coordinates (first 3):', structureCoords.slice(0, 3))
-        }
-        
-        // Convert ORCA data to Molstar alpha-orbitals format using original coordinates
-        // Since XYZ format is not transformed, these should align perfectly with the structure
-        const { basisData, orbitalsData, homoIndex } = convertOrcaToMolstarFormat(
-          moData, 
-          structureCoords // Use original coordinates (XYZ format is not transformed)
-        )
+        // Convert ORCA data to Molstar alpha-orbitals format
+        // Basis centers are passed in Bohr; Molstar converts to Angstroms internally
+        const { basisData, orbitalsData, homoIndex } = convertOrcaToMolstarFormat(moData)
         
         console.log(`[SUCCESS] Converted data: ${orbitalsData.length} orbitals, HOMO index: ${homoIndex}`)
         
@@ -130,15 +117,14 @@ export function OrbitalViewer({
         })
 
         // Create basis and orbitals data using Molstar alpha-orbitals extension
-        // Basis centers now use the same coordinate system as the parsed structure
-        console.log('🔧 Creating basis with aligned coordinates...')
-        console.log('Structure coordinates (first 3):', structureCoords.slice(0, 3))
-        console.log('Basis centers (first 3):', basisData.atoms.slice(0, 3).map((a: any) => a.center))
+        // Basis centers are in Bohr; Molstar handles Bohr→Angstrom conversion for the grid
+        console.log('🔧 Creating basis with Bohr coordinates...')
+        console.log('Basis centers (first 3, Bohr):', basisData.atoms.slice(0, 3).map((a: any) => a.center))
         
-        const basis = await plugin.build().to(structure).apply(StaticBasisAndOrbitals, {
+        const basis = await plugin.build().toRoot().apply(StaticBasisAndOrbitals, {
           basis: basisData,
           orbitals: orbitalsData,
-          order: 'cca-reverse' // Use same order as example
+          order: 'gaussian' // ORCA uses gaussian spherical harmonic order (pz, px, py)
         }).commit()
         
         basisRef.current = basis
@@ -426,39 +412,30 @@ export function OrbitalViewer({
 /**
  * Convert ORCA JSON format to Molstar alpha-orbitals format
  * @param moData - ORCA molecular orbital data
- * @param structureCoords - Optional: parsed structure coordinates from Mol* to ensure alignment
  */
-function convertOrcaToMolstarFormat(moData: any, structureCoords?: number[][]): {
+function convertOrcaToMolstarFormat(moData: any): {
   basisData: any
   orbitalsData: any[]
   homoIndex: number
 } {
   const coords = moData.geometry.Coordinates.Cartesians
   const isBohr = moData.geometry.Coordinates.Units === 'a.u.'
-  const conversionFactor = isBohr ? 0.529177 : 1.0
-  
+
+  // Molstar's alpha-orbitals extension expects basis centers in Bohr (atomic units).
+  // It converts to Angstroms internally in createGrid via BohrToAngstromFactor.
+  // If ORCA gives Bohr coords, use as-is. If Angstroms, convert to Bohr.
+  const bohrFactor = isBohr ? 1.0 : (1.0 / 0.529177)
+
   console.log('[PROCESS] Converting ORCA data to Molstar format...')
-  console.log('Coordinates:', coords)
-  console.log('Units:', moData.geometry.Coordinates.Units, 'Conversion factor:', conversionFactor)
-  console.log('Using structure coordinates for alignment:', structureCoords ? 'Yes' : 'No')
-  
+  console.log('Units:', moData.geometry.Coordinates.Units, 'Bohr factor:', bohrFactor)
+
   // Convert basis functions to Molstar format
   const atoms = moData.atoms.map((atom: any, atomIndex: number) => {
-    // Use parsed structure coordinates if available, otherwise use original coordinates
-    let x: number, y: number, z: number
-    if (structureCoords && structureCoords[atomIndex]) {
-      // Use coordinates from parsed structure to ensure perfect alignment
-      [x, y, z] = structureCoords[atomIndex]
-      if (atomIndex < 3) {
-        console.log(`Atom ${atomIndex}: Using parsed coords [${x.toFixed(4)}, ${y.toFixed(4)}, ${z.toFixed(4)}]`)
-      }
-    } else {
-      // Fallback to original coordinates with unit conversion
-      const [, origX, origY, origZ] = coords[atomIndex]
-      x = origX * conversionFactor
-      y = origY * conversionFactor
-      z = origZ * conversionFactor
-    }
+    // Basis centers must be in Bohr for Molstar's orbital grid computation
+    const [, origX, origY, origZ] = coords[atomIndex]
+    const x = origX * bohrFactor
+    const y = origY * bohrFactor
+    const z = origZ * bohrFactor
     
     const shells = atom.Basis.map((basis: any) => {
       // Map shell type to angular momentum for Molstar

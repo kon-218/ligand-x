@@ -453,7 +453,7 @@ services:
       - backend
     volumes:
       - msa_cache:/app/data/msa_cache
-      - boltz_outputs:/app/data/boltz_results_input/outputs
+      - boltz_outputs:/app/data/boltz_results_input
     expose:
       - "8005"
     environment:

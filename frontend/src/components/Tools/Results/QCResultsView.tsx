@@ -12,7 +12,6 @@ import { IRSpectrumPlot } from '@/components/QC/IRSpectrumPlot'
 import { IRModesTable } from '@/components/QC/IRModesTable'
 import { FukuiIndicesTable } from '@/components/QC/FukuiIndicesTable'
 import { ConformerList } from '@/components/QC/ConformerList'
-import { VibrationalModesTable } from '@/components/QC/VibrationalModesTable'
 import { AtomicChargesTable } from '@/components/QC/AtomicChargesTable'
 
 interface QCResultsViewProps {
@@ -230,17 +229,6 @@ export function QCResultsView({ jobId }: QCResultsViewProps) {
                 </div>
             )}
 
-            {/* Vibrational Modes */}
-            {results.normal_modes && (
-                <div className="bg-gray-800 rounded-lg p-4 mt-4">
-                    <h3 className="text-lg font-semibold text-white mb-3">Vibrational Modes</h3>
-                    <VibrationalModesTable
-                        jobId={jobId}
-                        frequencies={results.normal_modes.frequencies}
-                        intensities={results.normal_modes.intensities}
-                    />
-                </div>
-            )}
 
             {/* Conformers */}
             {results.conformers && (

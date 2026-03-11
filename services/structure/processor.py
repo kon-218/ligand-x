@@ -507,6 +507,8 @@ class StructureProcessor:
             # IMPORTANT: Preserve original 3D coordinates if they exist
             ligand_sdf = None
             has_valid_3d_coords = False
+            # Fetch CCD SMILES for bond order assignment and structure representation
+            ccd_smiles = _get_ccd_smiles(res_name)
             try:
                 if RDKIT_AVAILABLE:
                     from rdkit import Chem
@@ -519,7 +521,6 @@ class StructureProcessor:
                     if mol is not None:
                         # Assign correct bond orders using CCD template (fixes aromaticity)
                         # PDB files have no bond order info; without this, benzene = cyclohexane
-                        ccd_smiles = _get_ccd_smiles(res_name)
                         if ccd_smiles:
                             try:
                                 template = Chem.MolFromSmiles(ccd_smiles)
@@ -544,11 +545,28 @@ class StructureProcessor:
                             # No conformer, add hydrogens with coordinates
                             mol = Chem.AddHs(mol, addCoords=True)
                         
-                        # Only regenerate conformer if we don't have valid 3D coordinates
-                        if not has_valid_3d_coords and mol.GetNumConformers() == 0:
+                        # Check if hydrogens have valid coordinates (not at origin)
+                        # This is critical for QC calculations - hydrogens at (0,0,0) will fail
+                        if mol.GetNumConformers() > 0:
+                            conf = mol.GetConformer(0)
+                            h_atoms_at_origin = 0
+                            for atom in mol.GetAtoms():
+                                if atom.GetAtomicNum() == 1:  # Hydrogen
+                                    pos = conf.GetAtomPosition(atom.GetIdx())
+                                    if abs(pos.x) < 0.001 and abs(pos.y) < 0.001 and abs(pos.z) < 0.001:
+                                        h_atoms_at_origin += 1
+                            
+                            if h_atoms_at_origin > 0:
+                                # Hydrogens at origin - need to re-embed
+                                has_valid_3d_coords = False
+                                print(f"⚠ {h_atoms_at_origin} hydrogens at origin for {ligand_id}, will re-embed")
+                        
+                        # Regenerate conformer if we don't have valid 3D coordinates
+                        if not has_valid_3d_coords or mol.GetNumConformers() == 0:
                             try:
                                 AllChem.EmbedMolecule(mol, AllChem.ETKDGv3())
-                                print(f"[COMPLETE] Generated new conformer for ligand {ligand_id}")
+                                AllChem.MMFFOptimizeMolecule(mol)
+                                print(f"[COMPLETE] Generated new 3D conformer for ligand {ligand_id}")
                             except:
                                 AllChem.Compute2DCoords(mol)
                                 print(f"⚠ Generated 2D coordinates for ligand {ligand_id}")
@@ -573,13 +591,15 @@ class StructureProcessor:
             # Ensure all numeric values are native Python types for JSON serialization
             ligand_data = {
                 "name": str(res_name),
+                "het_id": str(res_name),  # 3-letter HET ID for QC naming
                 "chain": str(chain_id),
                 "residue_number": int(res_id),
                 "pdb_data": ligand_pdb,
                 "atom_count": int(atom_count),
                 "center_of_mass": center_of_mass_native,
                 "original_coordinates": original_coordinates,  # Full atom coordinates
-                "has_valid_3d_coords": bool(has_valid_3d_coords)
+                "has_valid_3d_coords": bool(has_valid_3d_coords),
+                "smiles": ccd_smiles,  # CCD SMILES for proper structure representation
             }
             
             # Add target information if provided

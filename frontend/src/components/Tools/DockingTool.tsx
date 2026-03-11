@@ -688,9 +688,9 @@ export function DockingTool() {
         }
       }
 
-      let cleanProtein = (proteinPDB || currentStructure.pdb_data).replace(/END\s*$/, '').replace(/ENDMDL\s*$/, '').trim()
-      let combinedPDB = cleanProtein
-      const usedChainIds: string[] = []
+      // Build overlay poses array — each pose loaded as a separate Mol* structure
+      // to prevent cross-molecule bonding from distance-based bond inference
+      const overlayPoses: Array<{ pdbData: string; chainId: string }> = []
 
       for (let i = 0; i < poseIndices.length; i++) {
         const poseIndex = poseIndices[i]
@@ -724,12 +724,8 @@ export function DockingTool() {
         }
 
         const chainId = POSE_CHAINS[i % POSE_CHAINS.length]
-        const taggedPose = assignPoseChain(pdbData.trim(), chainId)
-        combinedPDB += '\nTER\n' + taggedPose
-        usedChainIds.push(chainId)
+        overlayPoses.push({ pdbData: pdbData.trim(), chainId })
       }
-
-      combinedPDB += '\nEND'
 
       const structureId = currentStructure.structure_id || 'structure'
       const baseId = structureId.split('_pose_')[0]
@@ -737,11 +733,11 @@ export function DockingTool() {
       setCurrentStructure({
         ...currentStructure,
         structure_id: `${baseId}_compare_${poseIndices.map(i => i + 1).join('_')}`,
-        pdb_data: combinedPDB,
+        pdb_data: proteinPDB || currentStructure.pdb_data,
         metadata: {
           ...currentStructure.metadata,
           is_docked_pose: true,
-          pose_chain_ids: usedChainIds,
+          overlay_poses: overlayPoses,
         } as any,
       })
       setSelectedPoseIndex(poseIndices[0])
@@ -1224,54 +1220,35 @@ export function DockingTool() {
             </div>
 
             {gridBox && (
-              <div className="space-y-4">
+              <div className="space-y-3">
                 <h4 className="text-sm font-medium text-white">Grid Box Configuration</h4>
-                <div className="grid grid-cols-2 gap-4">
-                  <NumberParameter
-                    label="Center X"
-                    value={gridBox.center_x}
-                    onChange={(v: number) => setGridBox({ ...gridBox, center_x: v })}
-                    step={0.1}
-                    unit="Å"
-                  />
-                  <NumberParameter
-                    label="Size X"
-                    value={gridBox.size_x}
-                    onChange={(v: number) => setGridBox({ ...gridBox, size_x: v })}
-                    min={5}
-                    step={1}
-                    unit="Å"
-                  />
-                  <NumberParameter
-                    label="Center Y"
-                    value={gridBox.center_y}
-                    onChange={(v: number) => setGridBox({ ...gridBox, center_y: v })}
-                    step={0.1}
-                    unit="Å"
-                  />
-                  <NumberParameter
-                    label="Size Y"
-                    value={gridBox.size_y}
-                    onChange={(v: number) => setGridBox({ ...gridBox, size_y: v })}
-                    min={5}
-                    step={1}
-                    unit="Å"
-                  />
-                  <NumberParameter
-                    label="Center Z"
-                    value={gridBox.center_z}
-                    onChange={(v: number) => setGridBox({ ...gridBox, center_z: v })}
-                    step={0.1}
-                    unit="Å"
-                  />
-                  <NumberParameter
-                    label="Size Z"
-                    value={gridBox.size_z}
-                    onChange={(v: number) => setGridBox({ ...gridBox, size_z: v })}
-                    min={5}
-                    step={1}
-                    unit="Å"
-                  />
+                {/* Compact table layout: Axis | Center | Size */}
+                <div className="space-y-1.5">
+                  <div className="grid grid-cols-[2rem_1fr_1fr] gap-1.5 text-xs text-gray-400 px-1">
+                    <span></span>
+                    <span>Center (Å)</span>
+                    <span>Size (Å)</span>
+                  </div>
+                  {(['x', 'y', 'z'] as const).map((axis) => (
+                    <div key={axis} className="grid grid-cols-[2rem_1fr_1fr] gap-1.5 items-center">
+                      <span className="text-xs font-medium text-gray-400 uppercase text-center">{axis}</span>
+                      <input
+                        type="number"
+                        value={gridBox[`center_${axis}`]}
+                        onChange={(e) => setGridBox({ ...gridBox, [`center_${axis}`]: Number(e.target.value) })}
+                        step={0.1}
+                        className="w-full p-1.5 bg-gray-800 border border-gray-700 rounded text-white text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/50"
+                      />
+                      <input
+                        type="number"
+                        value={gridBox[`size_${axis}`]}
+                        onChange={(e) => setGridBox({ ...gridBox, [`size_${axis}`]: Number(e.target.value) })}
+                        min={5}
+                        step={1}
+                        className="w-full p-1.5 bg-gray-800 border border-gray-700 rounded text-white text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/50"
+                      />
+                    </div>
+                  ))}
                 </div>
                 <ToggleParameter
                   label="Preview Grid Box"
@@ -1336,6 +1313,7 @@ export function DockingTool() {
                       ...currentStructure.metadata,
                       is_docked_pose: false,
                       pose_chain_ids: undefined,
+                      overlay_poses: undefined,
                     } as any
                   })
                 }

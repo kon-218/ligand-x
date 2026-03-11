@@ -42,6 +42,43 @@ from services.qc.config import QCConfig
 
 logger = logging.getLogger(__name__)
 
+def _extract_het_id_from_pdb(pdb_data: str) -> Optional[str]:
+    """Extract HET ID (residue name) from PDB HETATM records."""
+    for line in pdb_data.split('\n'):
+        if line.startswith('HETATM'):
+            # Residue name is in columns 18-20 (0-indexed: 17-20)
+            if len(line) >= 20:
+                return line[17:20].strip()
+    return None
+
+
+def _get_ccd_smiles_for_qc(het_id: str) -> Optional[str]:
+    """Fetch canonical SMILES from wwPDB CCD REST API for bond order assignment."""
+    if not het_id:
+        return None
+    try:
+        import requests
+        key = het_id.upper()
+        url = f"https://data.rcsb.org/rest/v1/core/chemcomp/{key}"
+        resp = requests.get(url, timeout=5)
+        if resp.status_code == 200:
+            data = resp.json()
+            # Try rcsb_chem_comp_descriptor first (OpenEye SMILES preferred)
+            for desc in data.get("rcsb_chem_comp_descriptor", {}).get("descriptors", []):
+                if desc.get("type") == "SMILES" and desc.get("program") == "OpenEye OEToolkits":
+                    return desc["descriptor"]
+            # Fallback: pdbx_chem_comp_descriptor (non-stereo SMILES)
+            for desc in data.get("pdbx_chem_comp_descriptor", []):
+                dtype = desc.get("type", "")
+                if "SMILES" in dtype and "stereo" not in dtype.lower():
+                    smiles = desc.get("descriptor")
+                    if smiles:
+                        return smiles
+    except Exception as e:
+        logger.debug(f"CCD SMILES lookup failed for {het_id}: {e}")
+    return None
+
+
 def convert_to_simple_xyz(molecule_data: str) -> str:
     """
     Convert various molecular formats (PDB, SDF, MOL, SMILES) to simple XYZ format.
@@ -70,6 +107,8 @@ def convert_to_simple_xyz(molecule_data: str) -> str:
     try:
         # Try to parse as different formats
         mol = None
+        is_from_pdb = False
+        het_id = None
         
         # Try SMILES first (simplest)
         if not mol and len(molecule_data.strip().split('\n')) == 1:
@@ -93,7 +132,10 @@ def convert_to_simple_xyz(molecule_data: str) -> str:
         # Try PDB format
         if not mol:
             try:
-                mol = Chem.MolFromPDBBlock(molecule_data)
+                mol = Chem.MolFromPDBBlock(molecule_data, removeHs=True)
+                if mol:
+                    is_from_pdb = True
+                    het_id = _extract_het_id_from_pdb(molecule_data)
             except:
                 pass
         
@@ -106,9 +148,50 @@ def convert_to_simple_xyz(molecule_data: str) -> str:
             logger.error("Could not parse molecular data in any known format")
             return molecule_data
         
-        # Get conformer (3D coordinates)
-        if mol.GetNumConformers() == 0:
-            mol = Chem.AddHs(mol)
+        # For PDB format, assign correct bond orders using CCD SMILES template
+        # PDB files have no bond order info; without this, benzene = cyclohexane (all single bonds)
+        if is_from_pdb and het_id:
+            ccd_smiles = _get_ccd_smiles_for_qc(het_id)
+            if ccd_smiles:
+                try:
+                    template = Chem.MolFromSmiles(ccd_smiles)
+                    if template is not None:
+                        Chem.RemoveHs(template)
+                        mol = AllChem.AssignBondOrdersFromTemplate(template, mol)
+                        logger.info(f"Assigned bond orders from CCD SMILES for {het_id}")
+                except Exception as e:
+                    logger.warning(f"CCD bond order assignment failed for {het_id}: {e}")
+        
+        # Always add hydrogens for QC calculations
+        # PDB/SDF from protein structures often lack hydrogens (e.g., benzene with only 6 C atoms)
+        # Check if molecule already has hydrogens
+        has_hydrogens = any(atom.GetAtomicNum() == 1 for atom in mol.GetAtoms())
+        
+        if not has_hydrogens:
+            # Add hydrogens - preserve existing 3D coordinates if available
+            if mol.GetNumConformers() > 0:
+                mol = Chem.AddHs(mol, addCoords=True)
+                # Check if hydrogens have valid coordinates (not at origin)
+                conf = mol.GetConformer(0)
+                h_atoms_at_origin = sum(
+                    1 for atom in mol.GetAtoms()
+                    if atom.GetAtomicNum() == 1 and
+                    abs(conf.GetAtomPosition(atom.GetIdx()).x) < 0.001 and
+                    abs(conf.GetAtomPosition(atom.GetIdx()).y) < 0.001 and
+                    abs(conf.GetAtomPosition(atom.GetIdx()).z) < 0.001
+                )
+                if h_atoms_at_origin > 0:
+                    # Hydrogens at origin - re-embed entire molecule
+                    logger.info(f"Re-embedding molecule: {h_atoms_at_origin} hydrogens at origin")
+                    AllChem.EmbedMolecule(mol, AllChem.ETKDGv3())
+                    AllChem.MMFFOptimizeMolecule(mol)
+            else:
+                # No conformer - add hydrogens and generate 3D
+                mol = Chem.AddHs(mol)
+                AllChem.EmbedMolecule(mol, randomSeed=42)
+                AllChem.MMFFOptimizeMolecule(mol)
+        elif mol.GetNumConformers() == 0:
+            # Has hydrogens but no conformer - generate 3D
             AllChem.EmbedMolecule(mol, randomSeed=42)
             AllChem.MMFFOptimizeMolecule(mol)
         

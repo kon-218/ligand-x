@@ -101,10 +101,26 @@ async function updateProjectPath() {
 // Service Controls
 // ============================================================
 
+function setControlButtonsLoading(activeIcon) {
+    ['startBtn', 'stopBtn', 'restartBtn'].forEach(id => {
+        document.getElementById(id).disabled = true;
+    });
+    activeIcon.innerHTML = '<circle cx="12" cy="12" r="9" stroke-dasharray="28 29" stroke-linecap="round" fill="none"/>';
+    activeIcon.style.animation = 'spin 0.8s linear infinite';
+}
+
+function clearControlButtonLoading(activeIcon, originalIconHtml) {
+    activeIcon.innerHTML = originalIconHtml;
+    activeIcon.style.animation = '';
+}
+
 async function startServices() {
     const mode = document.getElementById('startMode').value;
-    showLoading(`Starting ${mode} services...`);
-    
+    const btn = document.getElementById('startBtn');
+    const icon = btn.querySelector('svg');
+    const originalIcon = icon.innerHTML;
+    setControlButtonsLoading(icon);
+
     try {
         await window.go.main.App.StartServices(mode);
         await updateStatus();
@@ -112,13 +128,17 @@ async function startServices() {
     } catch (err) {
         addLog('launcher', `Error: ${err.message}`, 'error');
     } finally {
-        hideLoading();
+        clearControlButtonLoading(icon, originalIcon);
+        await updateStatus();
     }
 }
 
 async function stopServices() {
-    showLoading('Stopping services...');
-    
+    const btn = document.getElementById('stopBtn');
+    const icon = btn.querySelector('svg');
+    const originalIcon = icon.innerHTML;
+    setControlButtonsLoading(icon);
+
     try {
         await window.go.main.App.StopServices();
         await updateStatus();
@@ -126,13 +146,17 @@ async function stopServices() {
     } catch (err) {
         addLog('launcher', `Error: ${err.message}`, 'error');
     } finally {
-        hideLoading();
+        clearControlButtonLoading(icon, originalIcon);
+        await updateStatus();
     }
 }
 
 async function restartServices() {
-    showLoading('Restarting services...');
-    
+    const btn = document.getElementById('restartBtn');
+    const icon = btn.querySelector('svg');
+    const originalIcon = icon.innerHTML;
+    setControlButtonsLoading(icon);
+
     try {
         await window.go.main.App.RestartServices();
         await updateStatus();
@@ -140,20 +164,28 @@ async function restartServices() {
     } catch (err) {
         addLog('launcher', `Error: ${err.message}`, 'error');
     } finally {
-        hideLoading();
+        clearControlButtonLoading(icon, originalIcon);
+        await updateStatus();
     }
 }
 
 async function pullImages() {
-    showLoading('Pulling latest images...');
-    
+    const btn = document.getElementById('pullBtn');
+    const icon = document.getElementById('pullIcon');
+    btn.disabled = true;
+    icon.innerHTML = '<circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/>';
+    icon.style.animation = 'spin 0.8s linear infinite';
+    addLog('launcher', 'Pulling latest images...');
+
     try {
         await window.go.main.App.PullImages();
-        addLog('launcher', 'Images updated');
+        addLog('launcher', 'Images updated successfully');
     } catch (err) {
         addLog('launcher', `Error: ${err.message}`, 'error');
     } finally {
-        hideLoading();
+        btn.disabled = false;
+        icon.innerHTML = '<path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7,10 12,15 17,10"/><line x1="12" y1="15" x2="12" y2="3"/>';
+        icon.style.animation = '';
     }
 }
 
@@ -190,15 +222,22 @@ async function selectProjectFolder() {
 }
 
 async function cleanDocker() {
-    showLoading('Cleaning Docker resources...');
-    
+    const btn = document.querySelector('.footer-btn[onclick="cleanDocker()"]');
+    const icon = btn.querySelector('svg');
+    const originalIcon = icon.innerHTML;
+    btn.disabled = true;
+    icon.innerHTML = '<circle cx="12" cy="12" r="9" stroke-dasharray="28 29" stroke-linecap="round" fill="none"/>';
+    icon.style.animation = 'spin 0.8s linear infinite';
+
     try {
         await window.go.main.App.CleanDocker();
         addLog('launcher', 'Docker cleanup completed');
     } catch (err) {
         addLog('launcher', `Error: ${err.message}`, 'error');
     } finally {
-        hideLoading();
+        btn.disabled = false;
+        icon.innerHTML = originalIcon;
+        icon.style.animation = '';
     }
 }
 
@@ -264,15 +303,6 @@ async function changeLogService() {
 // ============================================================
 // Utilities
 // ============================================================
-
-function showLoading(text = 'Loading...') {
-    document.getElementById('loadingText').textContent = text;
-    document.getElementById('loadingOverlay').classList.add('visible');
-}
-
-function hideLoading() {
-    document.getElementById('loadingOverlay').classList.remove('visible');
-}
 
 function escapeHtml(text) {
     const div = document.createElement('div');

@@ -1,18 +1,18 @@
 'use client'
 
 import React, { useState, useEffect, useMemo, useCallback } from 'react'
-import { Settings, BarChart3, Eye } from 'lucide-react'
+import { Settings, BarChart3 } from 'lucide-react'
 import { useQCStore } from '@/store/qc-store'
 import { useMolecularStore } from '@/store/molecular-store'
 import { useUIStore } from '@/store/ui-store'
 import { qcService } from '@/lib/qc-service'
 import { QCTabSetup } from './QuantumChemistry/QCTabSetup'
 import { QCTabResults } from './QuantumChemistry/QCTabResults'
-import { QCTabVisualization } from './QuantumChemistry/QCTabVisualization'
 import { normalizeStatus } from './QuantumChemistry/utils'
 import type { QCAdvancedParameters as QCAdvancedParametersType } from '@/components/Tools/QC/QCAdvancedParameters'
 import { LoadingOverlay } from '@/components/ui/LoadingOverlay'
 import { useUnifiedResultsStore } from '@/store/unified-results-store'
+import type { Ligand } from '@/types/molecular'
 
 export function QuantumChemistryTool() {
     const { addNotification } = useUIStore()
@@ -41,7 +41,7 @@ export function QuantumChemistryTool() {
     const qcJobs = useMemo(() => allJobs.filter((j: any) => j.service === 'qc'), [allJobs])
 
     // Local State
-    const [activeTab, setActiveTab] = useState<'setup' | 'results' | 'visualization'>('setup')
+    const [activeTab, setActiveTab] = useState<'setup' | 'results'>('setup')
     const [resultsSubtab, setResultsSubtab] = useState<'recent' | 'completed'>('completed')
     const [jobTypeFilter, setJobTypeFilter] = useState<'all' | 'standard' | 'ir' | 'fukui' | 'conformer'>('all')
     const [loadingResults, setLoadingResults] = useState(false)
@@ -164,7 +164,8 @@ export function QuantumChemistryTool() {
         setSubmitting(true)
         setAdvancedParameters(params)
         try {
-            const ligands = currentStructure.ligands ? Object.values(currentStructure.ligands) : []
+            const ligands: Ligand[] = currentStructure.ligands ? Object.values(currentStructure.ligands) : []
+            const ligandKeys = currentStructure.ligands ? Object.keys(currentStructure.ligands) : []
 
             const moleculeData = currentStructure.sdf_data ||
                                ligands[0]?.sdf_data ||
@@ -175,6 +176,14 @@ export function QuantumChemistryTool() {
             if (!moleculeData) {
                 addNotification('error', 'No 3D molecular data available')
                 return
+            }
+
+            // Determine molecule name: use ligand residue_name (het_id) if from protein, otherwise structure_id
+            let moleculeName = currentStructure.structure_id || 'unknown'
+            if (ligands.length > 0) {
+                const firstLigand = ligands[0]
+                // Use residue_name (3-letter het_id like 'BEN', 'ATP') or ligand name as the molecule name
+                moleculeName = firstLigand.residue_name || firstLigand.name || ligandKeys[0] || moleculeName
             }
 
             let backendJobType = params.job_type
@@ -188,7 +197,7 @@ export function QuantumChemistryTool() {
             const submission = await api.submitJob('qc', {
                 qc_job_type: 'standard',
                 molecule_xyz: moleculeData,
-                molecule_name: currentStructure.structure_id || 'unknown',
+                molecule_name: moleculeName,
                 charge: params.charge,
                 multiplicity: params.multiplicity,
                 method: params.method,
@@ -235,7 +244,8 @@ export function QuantumChemistryTool() {
         if (!currentStructure) return
         setSubmitting(true)
         try {
-            const ligands = currentStructure.ligands ? Object.values(currentStructure.ligands) : []
+            const ligands: Ligand[] = currentStructure.ligands ? Object.values(currentStructure.ligands) : []
+            const ligandKeys = currentStructure.ligands ? Object.keys(currentStructure.ligands) : []
 
             // Prioritize ligand data (SDF/PDB) over the main structure PDB/XYZ
             // This prevents sending a full protein complex for Fukui calculations
@@ -250,12 +260,19 @@ export function QuantumChemistryTool() {
                 return
             }
 
+            // Determine molecule name: use ligand residue_name (het_id) if from protein, otherwise structure_id
+            let moleculeName = currentStructure.structure_id || 'unknown'
+            if (ligands.length > 0) {
+                const firstLigand = ligands[0]
+                moleculeName = firstLigand.residue_name || firstLigand.name || ligandKeys[0] || moleculeName
+            }
+
             // Use unified job submission endpoint
             const { api } = await import('@/lib/api-client')
             const submission = await api.submitJob('qc', {
                 qc_job_type: 'fukui',  // Specify Fukui job type for gateway routing
                 molecule_xyz: moleculeData,
-                molecule_name: currentStructure.structure_id || 'unknown',
+                molecule_name: moleculeName,
                 method: fukuiMethod,
                 basis_set: fukuiBasisSet,
                 job_type: 'SP',
@@ -286,7 +303,8 @@ export function QuantumChemistryTool() {
         if (!currentStructure) return
         setSubmitting(true)
         try {
-            const ligands = currentStructure.ligands ? Object.values(currentStructure.ligands) : []
+            const ligands: Ligand[] = currentStructure.ligands ? Object.values(currentStructure.ligands) : []
+            const ligandKeys = currentStructure.ligands ? Object.keys(currentStructure.ligands) : []
             const smiles = currentStructure.smiles || ligands[0]?.smiles
             
             // Prioritize ligand data (SDF/PDB) over the main structure PDB/XYZ
@@ -306,13 +324,20 @@ export function QuantumChemistryTool() {
                 addNotification('info', 'No SMILES found, attempting to generate from structure...')
             }
 
+            // Determine molecule name: use ligand residue_name (het_id) if from protein, otherwise structure_id
+            let moleculeName = currentStructure.structure_id || 'unknown'
+            if (ligands.length > 0) {
+                const firstLigand = ligands[0]
+                moleculeName = firstLigand.residue_name || firstLigand.name || ligandKeys[0] || moleculeName
+            }
+
             // Use unified job submission endpoint
             const { api } = await import('@/lib/api-client')
             const submission = await api.submitJob('qc', {
                 qc_job_type: 'conformer',  // Specify conformer job type for gateway routing
                 smiles: smiles,
                 molecule_xyz: moleculeData,
-                molecule_name: currentStructure.structure_id || 'unknown',
+                molecule_name: moleculeName,
                 n_confs: conformerCount,
                 rms_thresh: 0.5,
                 energy_window: energyWindow,
@@ -490,6 +515,32 @@ export function QuantumChemistryTool() {
         }
     }
 
+    const handleVisualizeCharges = async (values: number[], type: 'chelpg' | 'mulliken') => {
+        if (viewerRef && 'coloring' in viewerRef && typeof (viewerRef.coloring as any)?.applyChargesTheme === 'function') {
+            try {
+                await (viewerRef.coloring as any).applyChargesTheme(values)
+                addNotification('success', `${type === 'chelpg' ? 'CHELPG' : 'Mulliken'} charges visualised`)
+            } catch (error) {
+                console.error('Failed to apply charges theme:', error)
+                addNotification('error', 'Failed to visualise charges')
+            }
+        } else {
+            addNotification('warning', 'Molecular viewer not available for charge visualisation')
+        }
+    }
+
+    const handleClearCharges = async () => {
+        if (viewerRef && 'coloring' in viewerRef && typeof viewerRef.coloring?.applyDefault === 'function') {
+            try {
+                await viewerRef.coloring.applyDefault()
+                addNotification('success', 'Charge colours cleared')
+            } catch (error) {
+                console.error('Failed to clear charges theme:', error)
+                addNotification('error', 'Failed to clear charge colours')
+            }
+        }
+    }
+
 
 
     return (
@@ -499,7 +550,6 @@ export function QuantumChemistryTool() {
                 {[
                     { id: 'setup', label: 'Setup', icon: Settings },
                     { id: 'results', label: 'Results', icon: BarChart3 },
-                    { id: 'visualization', label: '3D View', icon: Eye },
                 ].map(({ id, label, icon: Icon }) => (
                     <button
                         key={id}
@@ -559,14 +609,10 @@ export function QuantumChemistryTool() {
                         onViewLog={handleViewLog}
                         onVisualizeFukui={handleVisualizeFukui}
                         onClearFukui={handleClearFukui}
+                        onVisualizeCharges={handleVisualizeCharges}
+                        onClearCharges={handleClearCharges}
                         onLoadStructure={handleLoadStructure}
-                    />
-                )}
-
-                {activeTab === 'visualization' && (
-                    <QCTabVisualization
-                        activeResults={activeResults}
-                        activeJobId={activeJobId}
+                        viewerRef={viewerRef && 'orbitals' in viewerRef ? viewerRef as any : null}
                     />
                 )}
 

@@ -80,6 +80,16 @@ class SubmitIRRequest(BaseModel):
     dispersion: Optional[str] = "D4"
 
 
+class SubmitBDERequest(BaseModel):
+    molecule_xyz: str
+    molecule_name: Optional[str] = None
+    mode: Optional[str] = "rapid"  # reckless, rapid, careful, meticulous
+    charge: int = 0
+    n_procs: Optional[int] = None
+    memory_mb: Optional[int] = None
+    parallel_bonds: Optional[int] = None  # number of bonds computed in parallel
+
+
 @router.post("/jobs")
 async def submit_qc_job(request: SubmitJobRequest):
     """Submit QC job."""
@@ -105,6 +115,30 @@ async def submit_conformer_job(request: SubmitConformerRequest):
     """Submit Conformer Search job."""
     job_data = request.dict()
     result, status_code = qc_service.submit_conformer_job(job_data)
+    if status_code >= 400:
+        raise HTTPException(status_code=status_code, detail=result.get('error', 'Job submission failed'))
+    return result
+
+
+@router.post("/jobs/bde")
+async def submit_bde_job(request: SubmitBDERequest):
+    """
+    Submit Bond Dissociation Energy (BDE) calculation.
+    
+    Computes BDEs for all bonds in a molecule using homolytic cleavage.
+    BDE = E(fragment1) + E(fragment2) - E(parent)
+    
+    Modes:
+    - reckless: GFN-FF opt → GFN2-xTB SP (fastest, no fragment optimization)
+    - rapid: GFN2-xTB opt → r2SCAN-3c SP (recommended)
+    - careful: r2SCAN-3c opt → ωB97X-3c SP (accurate)
+    - meticulous: ωB97X-3c opt → ωB97M-D3(BJ)/def2-TZVPPD SP (highest accuracy)
+    
+    Results include raw and corrected BDE values (linear regression correction
+    approximates enthalpic/entropic effects).
+    """
+    job_data = request.dict()
+    result, status_code = qc_service.submit_bde_job(job_data)
     if status_code >= 400:
         raise HTTPException(status_code=status_code, detail=result.get('error', 'Job submission failed'))
     return result

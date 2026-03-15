@@ -1419,6 +1419,26 @@ class RBFEService:
                 except (ValueError, TypeError):
                     pass
 
+        # Auto-detect compute platform if not explicitly set
+        if not (simulation_settings and 'compute_platform' in simulation_settings):
+            try:
+                import openmm
+                available_platforms = [
+                    openmm.Platform.getPlatform(i).getName()
+                    for i in range(openmm.Platform.getNumPlatforms())
+                ]
+                if 'CUDA' in available_platforms:
+                    settings.engine_settings.compute_platform = 'CUDA'
+                elif 'OpenCL' in available_platforms:
+                    settings.engine_settings.compute_platform = 'OpenCL'
+                    logger.warning("No CUDA GPU found, falling back to OpenCL platform")
+                else:
+                    settings.engine_settings.compute_platform = 'CPU'
+                    logger.warning("No GPU found, falling back to CPU platform (calculations will be slow)")
+                logger.info(f"  Auto-selected compute platform: {settings.engine_settings.compute_platform}")
+            except Exception:
+                pass  # Let OpenFE pick the default
+
         # Apply HMR and integrator settings
         settings.forcefield_settings.hydrogen_mass = default_hydrogen_mass
         settings.integrator_settings.timestep = default_timestep
@@ -1884,6 +1904,16 @@ class RBFEService:
                     estimate = result.get_estimate()
                     uncertainty = result.get_uncertainty()
 
+                    # Extract overlap matrix (n_repeats, n_states, n_states) → average across repeats
+                    overlap_matrix = None
+                    try:
+                        raw_matrix = result.get_overlap_matrix()
+                        if hasattr(raw_matrix, 'ndim'):
+                            avg = raw_matrix.mean(axis=0) if raw_matrix.ndim == 3 else raw_matrix
+                            overlap_matrix = [[float(v) for v in row] for row in avg.tolist()]
+                    except Exception as om_err:
+                        logger.debug(f"Could not extract overlap matrix for {transformation.name}: {om_err}")
+
                     results.append({
                         'name': transformation.name,
                         'ligand_a': ligand_a_name,
@@ -1892,7 +1922,8 @@ class RBFEService:
                         'estimate_kcal_mol': float(estimate.m_as(unit.kilocalorie_per_mole)),
                         'uncertainty_kcal_mol': float(uncertainty.m_as(unit.kilocalorie_per_mole)),
                         'status': 'completed',
-                        'validation_warnings': validation.get('warnings', [])
+                        'validation_warnings': validation.get('warnings', []),
+                        'overlap_matrix': overlap_matrix,
                     })
 
                     successful_transformations += 1
@@ -1971,6 +2002,18 @@ class RBFEService:
 
             # Check if we have any successful results
             if successful_transformations == 0:
+                # Check if all failures are GPU/CUDA related
+                gpu_error_keywords = ['cuda', 'opencl', 'no device', 'gpu', 'cudaerror', 'openmmexception']
+                all_gpu_errors = failed_transformations and all(
+                    any(kw in f.get('error', '').lower() for kw in gpu_error_keywords)
+                    for f in failed_transformations
+                )
+                if all_gpu_errors:
+                    raise ValueError(
+                        f"All {len(transformations)} transformations failed due to GPU/CUDA error: "
+                        f"{failed_transformations[0].get('error', 'unknown error')}\n"
+                        f"Ensure the worker container has GPU access (nvidia runtime) and CUDA drivers are installed."
+                    )
                 raise ValueError(
                     f"All {len(transformations)} transformations failed. "
                     f"Check logs for detailed error messages. Common issues:\n"
@@ -2172,9 +2215,175 @@ class RBFEService:
         """Get logs for a job."""
         job_dir = self.output_dir / job_id
         log_file = job_dir / "console.log"
-        
+
         if log_file.exists():
             return log_file.read_text()
-        
+
         return ""
 
+    def _prepare_ligands_for_preview(
+        self,
+        ligands_data: List[Dict[str, Any]],
+    ) -> List['openfe.SmallMoleculeComponent']:
+        """Prepare ligands for atom mapping preview (no charge assignment).
+
+        Loads each ligand, adds hydrogens, generates 3D coordinates if needed,
+        creates a SmallMoleculeComponent without partial charges, then aligns all
+        ligands to a common reference frame (required by Kartograf).
+
+        Skipping bulk_assign_partial_charges makes this ~100x faster than
+        prepare_ligands_batch — atom mapping does not require partial charges.
+
+        Args:
+            ligands_data: List of dicts with 'id', 'data', 'format' keys.
+
+        Returns:
+            List of SmallMoleculeComponent objects ready for atom mapping.
+        """
+        from rdkit.Chem import AllChem
+
+        prepared: List[openfe.SmallMoleculeComponent] = []
+        has_docked_pose: List[bool] = []
+
+        for lig_info in ligands_data:
+            ligand_data = lig_info.get('data', '')
+            ligand_id = lig_info.get('id', 'ligand')
+            data_format = lig_info.get('format', 'sdf').lower()
+
+            try:
+                if data_format in ('sdf', 'mol'):
+                    mol = Chem.MolFromMolBlock(ligand_data, removeHs=False)
+                elif data_format == 'pdb':
+                    mol = Chem.MolFromPDBBlock(ligand_data, removeHs=False)
+                else:
+                    logger.error(f"Unsupported format for preview: {data_format}")
+                    continue
+
+                if mol is None:
+                    logger.error(f"Failed to parse ligand {ligand_id} for preview")
+                    continue
+
+                # Add hydrogens
+                mol = Chem.AddHs(mol)
+
+                # Determine whether we need to generate 3D coordinates
+                is_3d = lig_info.get('has_docked_pose', False) or not self._is_2d_structure(
+                    ligand_data, data_format
+                )
+
+                if not is_3d:
+                    # Generate 3D coordinates with RDKit ETKDG
+                    params = AllChem.ETKDGv3()
+                    params.randomSeed = 42
+                    result = AllChem.EmbedMolecule(mol, params)
+                    if result == -1:
+                        # Fallback: distance geometry without ETKDG
+                        AllChem.EmbedMolecule(mol, AllChem.ETKDG())
+                    AllChem.MMFFOptimizeMolecule(mol)
+                    logger.info(f"Generated 3D coordinates for {ligand_id}")
+                else:
+                    logger.info(f"Using existing 3D coordinates for {ligand_id}")
+
+                component = openfe.SmallMoleculeComponent.from_rdkit(mol, name=ligand_id)
+                prepared.append(component)
+                has_docked_pose.append(lig_info.get('has_docked_pose', False))
+
+            except Exception as e:
+                logger.error(f"Error preparing ligand {ligand_id} for preview: {e}")
+                logger.error(traceback.format_exc())
+
+        if len(prepared) < 2:
+            return prepared
+
+        # Align ligands (required by Kartograf geometric mapper)
+        needs_alignment = (
+            self._ligands_need_alignment(prepared) or not all(has_docked_pose)
+        )
+        if needs_alignment:
+            ref_idx = next((i for i, d in enumerate(has_docked_pose) if d), 0)
+            ref = prepared[ref_idx]
+            logger.info(f"Aligning preview ligands to reference: {ref.name}")
+            for i, lig in enumerate(prepared):
+                if i == ref_idx or has_docked_pose[i]:
+                    continue
+                aligned = self._align_ligand_to_reference(lig, ref)
+                if aligned is not None:
+                    prepared[i] = aligned
+                else:
+                    logger.warning(f"Could not align {lig.name} for preview; keeping original coords")
+
+        return prepared
+
+    def run_mapping_preview(
+        self,
+        ligands_data: List[Dict[str, Any]],
+        job_id: str,
+        atom_mapper: str = 'kartograf',
+        atom_map_hydrogens: bool = True,
+        lomap_max3d: float = 1.0,
+        charge_method: str = 'am1bcc',
+    ) -> Dict[str, Any]:
+        """Run lightweight atom mapping preview (no protein, no simulation).
+
+        Prepares ligands without partial charge assignment (not needed for
+        atom mapping), computes all pairwise mappings using the selected mapper,
+        and returns per-pair mapping data with highlight SVGs.
+
+        Args:
+            ligands_data: List of ligand dicts with id, data, format keys.
+            job_id: Job identifier.
+            atom_mapper: Atom mapper type ('kartograf', 'lomap', 'lomap_relaxed').
+            atom_map_hydrogens: For Kartograf — include hydrogens in mapping.
+            lomap_max3d: For LOMAP — max 3D distance for mapping.
+            charge_method: Unused — kept for API compatibility.
+
+        Returns:
+            Dict with 'pairs', 'num_ligands', 'atom_mapper', 'status', 'success'.
+        """
+        import sys
+        import json as _json
+
+        def emit_progress(progress: int, status: str) -> None:
+            print(
+                f"MD_PROGRESS:{_json.dumps({'progress': progress, 'status': status})}",
+                file=sys.stderr,
+                flush=True,
+            )
+
+        logger.info(f"Starting mapping preview for job {job_id} "
+                    f"({len(ligands_data)} ligands, mapper={atom_mapper})")
+
+        emit_progress(10, 'Preparing ligands...')
+
+        # Use lightweight preparation (no charge assignment — not needed for mapping)
+        ligands = self._prepare_ligands_for_preview(ligands_data)
+
+        if len(ligands) < 2:
+            raise ValueError(
+                f"At least 2 ligands are required for mapping preview, "
+                f"got {len(ligands)} after preparation."
+            )
+
+        emit_progress(40, f'Computing pairwise mappings for {len(ligands)} ligands...')
+
+        planner = NetworkPlanner(
+            atom_mapper=atom_mapper,
+            atom_map_hydrogens=atom_map_hydrogens,
+            lomap_max3d=lomap_max3d,
+        )
+
+        pairs = planner.compute_all_pairwise_mappings(ligands)
+
+        emit_progress(100, 'Mapping preview complete')
+
+        logger.info(f"Mapping preview complete: {len(pairs)} pairs for job {job_id}")
+
+        return {
+            'status': 'completed',
+            'job_id': job_id,
+            'pairs': pairs,
+            'num_ligands': len(ligands),
+            'atom_mapper': atom_mapper,
+            'progress': 100,
+            'success': True,
+        }

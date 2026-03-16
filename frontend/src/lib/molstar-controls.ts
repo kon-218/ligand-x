@@ -91,14 +91,23 @@ export async function setRepresentationStyle(plugin: PluginContext, style: Visua
 
       // Only update polymer/protein representations
       if (parentLabel.includes('polymer') || parentLabel.includes('protein') || parentLabel === '') {
+        // For small molecule fallback representations (parentLabel === ''), the parent is the
+        // raw structure node rather than a named component. These are always ball-and-stick
+        // with multipleBonds for SDF bond-order rendering. Skip style updates that would
+        // change the type away from ball-and-stick and lose double-bond geometry.
+        if (parentLabel === '' && reprType !== 'ball-and-stick') {
+          console.log(`⏭️ Skipping style update for small molecule fallback (would change to ${reprType})`)
+          continue
+        }
         // Preserve colorTheme, sizeTheme, and alpha (for component visibility)
         builder.to(repr).update(old => {
           const currentAlpha = old.type?.params?.alpha
+          const params: Record<string, any> = currentAlpha !== undefined ? { alpha: currentAlpha } : {}
+          if (reprType === 'ball-and-stick') {
+            params.multipleBonds = 'symmetric'
+          }
           return {
-            type: {
-              name: reprType,
-              params: currentAlpha !== undefined ? { alpha: currentAlpha } : {}
-            },
+            type: { name: reprType, params },
             colorTheme: old.colorTheme,
             sizeTheme: old.sizeTheme
           }

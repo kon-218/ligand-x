@@ -31,7 +31,13 @@ export interface QCJob {
   basis_set: string
   created_at: string
   updated_at: string
-  progress?: number
+  progress?: {
+    percent: number
+    step: string
+    details: string
+    updated_at: string
+  }
+  completed_stages?: string[]
   error_message?: string
 }
 

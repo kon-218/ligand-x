@@ -9,6 +9,7 @@ import { useMolecularStore } from '@/store/molecular-store'
 import { useMDStore } from '@/store/md-store'
 import { useUIStore } from '@/store/ui-store'
 import { api } from '@/lib/api-client'
+import { downloadCSV } from '@/lib/csv-export'
 import { ResultsContainer, ResultMetric, ResultsTable, InfoBox, UnifiedJobList } from '../shared'
 import type { Boltz2Result, Boltz2Pose, Boltz2Job } from '@/store/boltz2-store'
 import type { MolecularStructure } from '@/types/molecular'
@@ -63,8 +64,9 @@ export function Boltz2StepResults({
 
   const filteredJobs = getFilteredJobs().filter((j: UnifiedJob) => j.service === 'boltz2')
 
-  const handleSelectJob = async (jobId: string) => {
+  const handleSelectJob = async (jobId: string | null) => {
     boltzStore.setActiveJob(jobId)
+    if (!jobId) return
     try {
       const job = await api.getBoltz2Job(jobId) as any
       console.log('[Boltz2StepResults] Job loaded:', job)
@@ -225,29 +227,27 @@ export function Boltz2StepResults({
   const handleExportResults = () => {
     if (!result?.results || result.results.length === 0) return
 
-    const headers = ['Ligand ID', 'Ligand Name', 'Status', 'Affinity (log IC50)', 'Delta G (kcal/mol)', 'Probability', 'Confidence']
-    const csvContent = [
-      headers.join(','),
-      ...result.results.map(r => [
-        r.ligand_id,
-        r.ligand_name,
-        r.success ? 'Success' : 'Failed',
-        r.affinity_pred_value ?? 'N/A',
-        r.binding_free_energy ?? 'N/A',
-        r.affinity_probability_binary ?? 'N/A',
-        r.prediction_confidence ?? 'N/A'
-      ].join(','))
-    ].join('\n')
-
-    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' })
-    const link = document.createElement('a')
-    const url = URL.createObjectURL(blob)
-    link.setAttribute('href', url)
-    link.setAttribute('download', `boltz2_batch_${result.job_id}_results.csv`)
-    link.style.visibility = 'hidden'
-    document.body.appendChild(link)
-    link.click()
-    document.body.removeChild(link)
+    downloadCSV(
+      [
+        { key: 'ligand_id', label: 'Ligand ID' },
+        { key: 'ligand_name', label: 'Ligand Name' },
+        { key: 'status', label: 'Status' },
+        { key: 'affinity', label: 'Affinity (log IC50)' },
+        { key: 'delta_g', label: 'Delta G (kcal/mol)' },
+        { key: 'probability', label: 'Probability' },
+        { key: 'confidence', label: 'Confidence' },
+      ],
+      result.results.map(r => ({
+        ligand_id: r.ligand_id,
+        ligand_name: r.ligand_name,
+        status: r.success ? 'Success' : 'Failed',
+        affinity: r.affinity_pred_value ?? 'N/A',
+        delta_g: r.binding_free_energy ?? 'N/A',
+        probability: r.affinity_probability_binary ?? 'N/A',
+        confidence: r.prediction_confidence ?? 'N/A',
+      })),
+      `boltz2_batch_${result.job_id}_results.csv`
+    )
   }
 
   const getStatusIcon = (status: string) => {

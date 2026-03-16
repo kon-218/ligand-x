@@ -198,12 +198,17 @@ export const useUnifiedResultsStore = create<UnifiedResultsStore>((set, get) => 
         const updatedJobs = [...allJobs]
         const existingJob = updatedJobs[jobIndex]
         
+        const newStage = update.stage ?? existingJob.stage
+        const newCompletedStages = newStage
+            ? newStage.split(',').map((s: string) => s.trim()).filter(Boolean)
+            : existingJob.completed_stages
         updatedJobs[jobIndex] = {
             ...existingJob,
             status: update.status as UnifiedJob['status'],
             progress: update.progress ?? existingJob.progress,
-            stage: update.stage ?? existingJob.stage,
-            error_message: update.error_message ?? existingJob.error_message,
+            stage: newStage,
+            completed_stages: newCompletedStages,
+            error: update.error_message ?? existingJob.error,
         }
         
         set({ allJobs: updatedJobs })

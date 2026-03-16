@@ -91,6 +91,7 @@ export function MoleculeEditorTool() {
   const [saveDialogOpen, setSaveDialogOpen] = useState(false)
   const [saveDialogName, setSaveDialogName] = useState('New Molecule')
   const [pendingSaveData, setPendingSaveData] = useState<{ smiles: string; molfile: string; inchi: string } | null>(null)
+  const [currentEditorMoleculeName, setCurrentEditorMoleculeName] = useState<string | null>(null)
 
   const fetchLibraryMolecules = useCallback(async () => {
     // Skip if already fetched
@@ -381,6 +382,7 @@ export function MoleculeEditorTool() {
       setError(null)
 
       let loaded = false
+      let loadedMoleculeName: string | null = null
 
       // Priority 1: Try to load ligand if available
       if (currentStructure.ligands && Object.keys(currentStructure.ligands).length > 0) {
@@ -430,6 +432,10 @@ export function MoleculeEditorTool() {
             loaded = true
           }
         }
+
+        if (loaded) {
+          loadedMoleculeName = selectedLigand.name || selectedLigand.residue_name || selectedLigandId
+        }
       }
 
       // Priority 2: If no ligands, try to load from structure's SMILES directly
@@ -438,6 +444,7 @@ export function MoleculeEditorTool() {
         await centerAndZoomMolecule(true) // true = apply layout for SMILES
         setSuccess('Loaded structure from viewer (SMILES)')
         loaded = true
+        loadedMoleculeName = currentStructure.filename || null
       }
 
       // Priority 3: If no SMILES, try to load from structure's SDF data
@@ -446,6 +453,7 @@ export function MoleculeEditorTool() {
         await centerAndZoomMolecule(false) // false = SDF has coordinates
         setSuccess('Loaded structure from viewer (SDF)')
         loaded = true
+        loadedMoleculeName = currentStructure.filename || null
       }
 
       // Priority 4: If still not loaded, try to convert PDB to SDF via backend
@@ -463,6 +471,7 @@ export function MoleculeEditorTool() {
             await centerAndZoomMolecule(false) // false = molfile has coordinates
             setSuccess('Loaded structure from viewer (converted from PDB)')
             loaded = true
+            loadedMoleculeName = currentStructure.filename || null
           }
         } catch (convertErr) {
           console.warn('Could not convert PDB to SDF:', convertErr)
@@ -473,6 +482,8 @@ export function MoleculeEditorTool() {
         setError('No importable molecule data found in viewer. Structure may be too large or in an unsupported format.')
         return
       }
+
+      setCurrentEditorMoleculeName(loadedMoleculeName)
 
       // Wait for Ketcher to stabilize after loading structure before updating molecule data
       setTimeout(() => {
@@ -698,7 +709,7 @@ export function MoleculeEditorTool() {
 
       // Open in-app dialog instead of browser prompt
       setPendingSaveData({ smiles, molfile, inchi })
-      setSaveDialogName('New Molecule')
+      setSaveDialogName(currentEditorMoleculeName || 'New Molecule')
       setSaveDialogOpen(true)
       setIsLoading(false)
     } catch (err: any) {
@@ -851,6 +862,7 @@ export function MoleculeEditorTool() {
       }
 
       setImportedLibraryName(molecule.name || null)
+      setCurrentEditorMoleculeName(molecule.name || null)
 
       // Wait for Ketcher to process the structure
       await new Promise(resolve => setTimeout(resolve, 500))

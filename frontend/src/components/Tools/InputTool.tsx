@@ -1,12 +1,15 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
+import { Loader2, Copy, Check, FlaskConical } from 'lucide-react'
 import { useMolecularStore } from '@/store/molecular-store'
 import { useUIStore } from '@/store/ui-store'
 import { api } from '@/lib/api-client'
 import { isValidPdbId, isValidSmiles } from '@/lib/utils'
 import { saveLigandsToLibrary } from '@/lib/structure-utils'
 import { FileUpload } from '@/components/ui/FileUpload'
+
+const API_BASE_URL = typeof window !== 'undefined' ? (process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000') : ''
 
 export function InputTool() {
   const [activeTab, setActiveTab] = useState<'pdb' | 'upload' | 'smiles' | 'hetid'>('pdb')
@@ -15,8 +18,38 @@ export function InputTool() {
   const [hetid, setHetid] = useState('')
   const [hetidError, setHetidError] = useState<string | null>(null)
   const [cleanAndKeepLigands, setCleanAndKeepLigands] = useState(false)
-  const { currentStructure, addStructureTab, setCurrentStructure, setIsLoading, setError } = useMolecularStore()
+  const [tautomers, setTautomers] = useState<{ smiles: string; score: number; is_canonical: boolean }[] | null>(null)
+  const [tautomerLoading, setTautomerLoading] = useState(false)
+  const [tautomerError, setTautomerError] = useState<string | null>(null)
+  const [tautomerTabIds, setTautomerTabIds] = useState<Record<string, string>>({})
+  const [copied, setCopied] = useState<string | null>(null)
+  const [using, setUsing] = useState<string | null>(null)
+  const { currentStructure, addStructureTab, setCurrentStructure, setIsLoading, setError, structureTabs, setActiveTab: setViewerActiveTab, pendingTautomerSmiles, setPendingTautomerSmiles } = useMolecularStore()
   const { addNotification, recentPdbIds, addRecentPdbId } = useUIStore()
+
+  // Consume pendingTautomerSmiles set by LibraryTool
+  useEffect(() => {
+    if (pendingTautomerSmiles) {
+      setActiveTab('smiles')
+      setSmiles(pendingTautomerSmiles)
+      setTautomers(null)
+      setTautomerError(null)
+      setTautomerTabIds({})
+      setPendingTautomerSmiles(null)
+      // Trigger enumeration after state settles
+      setTimeout(async () => {
+        setTautomerLoading(true)
+        try {
+          const data = await api.enumerateTautomers(pendingTautomerSmiles)
+          setTautomers(data.tautomers)
+        } catch (err: any) {
+          setTautomerError(err?.response?.data?.detail || err.message || 'Enumeration failed')
+        } finally {
+          setTautomerLoading(false)
+        }
+      }, 0)
+    }
+  }, [pendingTautomerSmiles])
 
   const handleFetchPDB = async (overridePdbId?: string) => {
     const targetPdbId = (overridePdbId || pdbId).toUpperCase()
@@ -183,6 +216,53 @@ export function InputTool() {
     }
   }
 
+  const handleEnumerateTautomers = async () => {
+    if (!smiles.trim()) return
+    setTautomerLoading(true)
+    setTautomers(null)
+    setTautomerError(null)
+    setTautomerTabIds({})
+    try {
+      const data = await api.enumerateTautomers(smiles.trim())
+      setTautomers(data.tautomers)
+    } catch (err: any) {
+      setTautomerError(err?.response?.data?.detail || err.message || 'Enumeration failed')
+    } finally {
+      setTautomerLoading(false)
+    }
+  }
+
+  const handleUseTautomer = async (t: { smiles: string; score: number; is_canonical: boolean }) => {
+    // Check if we already opened a viewer tab for this tautomer in the current session
+    const existingTabId = tautomerTabIds[t.smiles]
+    if (existingTabId && structureTabs.find(tab => tab.id === existingTabId)) {
+      setViewerActiveTab(existingTabId)
+      return
+    }
+    const label = t.is_canonical
+      ? 'Tautomer (canonical)'
+      : `Tautomer ${t.smiles.length > 20 ? t.smiles.slice(0, 20) + '…' : t.smiles}`
+    setUsing(t.smiles)
+    try {
+      const structure = await api.uploadSmiles(t.smiles, t.smiles)
+      addStructureTab(structure, label)
+      const newTabId = useMolecularStore.getState().activeTabId
+      if (newTabId) setTautomerTabIds(prev => ({ ...prev, [t.smiles]: newTabId }))
+      addNotification('success', 'Tautomer opened in new viewer tab')
+    } catch (err: any) {
+      addNotification('error', err?.response?.data?.detail || 'Failed to load tautomer')
+    } finally {
+      setUsing(null)
+    }
+  }
+
+  const handleCopySmiles = (s: string) => {
+    navigator.clipboard.writeText(s).then(() => {
+      setCopied(s)
+      setTimeout(() => setCopied(null), 1500)
+    })
+  }
+
   return (
     <div className="p-4 space-y-4">
       {/* Tabs */}
@@ -277,17 +357,83 @@ export function InputTool() {
             <input
               type="text"
               value={smiles}
-              onChange={(e) => setSmiles(e.target.value)}
+              onChange={(e) => { setSmiles(e.target.value); setTautomers(null); setTautomerError(null); setTautomerTabIds({}) }}
               placeholder="e.g., CC(C)Cc1ccc(cc1)[C@@H](C)C(=O)O"
               className="w-full px-3 py-2 bg-gray-800 border border-gray-700 rounded text-white"
               onKeyDown={(e) => e.key === 'Enter' && handleSMILES()}
             />
-            <button
-              onClick={handleSMILES}
-              className="w-full px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded transition-colors"
-            >
-              Generate 3D Structure
-            </button>
+            <div className="flex gap-2">
+              <button
+                onClick={handleSMILES}
+                className="flex-1 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded transition-colors"
+              >
+                Generate 3D Structure
+              </button>
+              <button
+                onClick={handleEnumerateTautomers}
+                disabled={!smiles.trim() || tautomerLoading}
+                className="flex-1 flex items-center justify-center gap-2 px-4 py-2 bg-gray-700 hover:bg-gray-600 disabled:opacity-50 text-white rounded transition-colors"
+              >
+                {tautomerLoading
+                  ? <Loader2 className="w-4 h-4 animate-spin" />
+                  : <FlaskConical className="w-4 h-4" />}
+                Enumerate Tautomers
+              </button>
+            </div>
+
+            {tautomerError && (
+              <p className="text-xs text-red-400">{tautomerError}</p>
+            )}
+
+            {tautomers && (
+              <div className="space-y-3">
+                <p className="text-xs text-gray-400">{tautomers.length} tautomer{tautomers.length !== 1 ? 's' : ''} found</p>
+                <div className="grid grid-cols-1 gap-3">
+                  {tautomers.map((t) => (
+                    <div
+                      key={t.smiles}
+                      className={`rounded-lg border p-3 space-y-2 ${t.is_canonical ? 'border-amber-500/50 bg-amber-900/10' : 'border-gray-700 bg-gray-800/50'}`}
+                    >
+                      <div className="flex items-center gap-2">
+                        {t.is_canonical && (
+                          <span className="text-xs bg-amber-600/30 text-amber-300 border border-amber-500/40 px-1.5 py-0.5 rounded">
+                            Canonical
+                          </span>
+                        )}
+                        <span className="ml-auto text-xs text-gray-400">Score: {t.score.toFixed(4)}</span>
+                      </div>
+                      <div className="flex justify-center bg-white rounded overflow-hidden" style={{ height: 100 }}>
+                        <img
+                          src={`${API_BASE_URL}/api/structure/render_smiles?smiles=${encodeURIComponent(t.smiles)}&width=200&height=100`}
+                          alt={t.smiles}
+                          className="object-contain"
+                          style={{ maxHeight: 100 }}
+                          loading="lazy"
+                        />
+                      </div>
+                      <div className="flex items-center gap-1">
+                        <p className="flex-1 text-xs font-mono text-gray-300 truncate" title={t.smiles}>{t.smiles}</p>
+                        <button
+                          onClick={() => handleCopySmiles(t.smiles)}
+                          className="p-1 text-gray-500 hover:text-white transition-colors"
+                          title="Copy SMILES"
+                        >
+                          {copied === t.smiles ? <Check className="w-3.5 h-3.5 text-green-400" /> : <Copy className="w-3.5 h-3.5" />}
+                        </button>
+                      </div>
+                      <button
+                        onClick={() => handleUseTautomer(t)}
+                        disabled={using === t.smiles}
+                        className="w-full flex items-center justify-center gap-1 px-3 py-1.5 text-xs border border-gray-600 hover:border-blue-500 hover:text-blue-300 text-gray-300 rounded transition-colors disabled:opacity-50"
+                      >
+                        {using === t.smiles && <Loader2 className="w-3 h-3 animate-spin" />}
+                        Use This Tautomer
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
           </div>
         )}
 

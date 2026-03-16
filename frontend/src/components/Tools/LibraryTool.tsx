@@ -4,7 +4,7 @@ import { useState, useEffect, useRef } from 'react'
 import { api } from '@/lib/api-client'
 import { Button } from '@/components/ui/button'
 import { Alert, AlertDescription } from '@/components/ui/alert'
-import { Loader2, AlertCircle, Library, Eye, Trash2, X, Beaker, Download, Pill, ChevronDown, Zap, PenTool, Check, Pencil } from 'lucide-react'
+import { Loader2, AlertCircle, Library, Eye, Trash2, X, Beaker, Download, Pill, ChevronDown, Zap, PenTool, Check, Pencil, GitBranch } from 'lucide-react'
 import { useMolecularStore } from '@/store/molecular-store'
 import { useUIStore } from '@/store/ui-store'
 
@@ -30,9 +30,10 @@ export function LibraryTool() {
   const [editingId, setEditingId] = useState<number | null>(null)
   const [editingName, setEditingName] = useState('')
   const [savingName, setSavingName] = useState(false)
+  const [confirmDeleteId, setConfirmDeleteId] = useState<number | null>(null)
   const editInputRef = useRef<HTMLInputElement>(null)
 
-  const { addStructureTab, setAdmetResults, setIsAdmetRunning, setCurrentStructure, setPendingEditorImport } = useMolecularStore()
+  const { addStructureTab, setAdmetResults, setIsAdmetRunning, setCurrentStructure, setPendingEditorImport, setPendingTautomerSmiles } = useMolecularStore()
   const { setActiveTool } = useUIStore()
 
   // Fetch molecules on mount
@@ -55,11 +56,8 @@ export function LibraryTool() {
   }
 
   const handleDelete = async (moleculeId: number) => {
-    if (!confirm('Are you sure you want to delete this molecule?')) {
-      return
-    }
-
     setDeletingId(moleculeId)
+    setConfirmDeleteId(null)
     try {
       await api.deleteMolecule(String(moleculeId))
       setMolecules(prev => prev.filter(m => m.id !== moleculeId))
@@ -200,6 +198,12 @@ export function LibraryTool() {
       console.error('Failed to load molecule for QC:', err)
       setError(err.response?.data?.error || err.message || 'Failed to load molecule for QC')
     }
+  }
+
+  const handleExploreTautomers = (molecule: Molecule) => {
+    setOpenDropdownId(null)
+    setPendingTautomerSmiles(molecule.canonical_smiles)
+    setActiveTool('input')
   }
 
   const handleOpenEditor = async (molecule: Molecule) => {
@@ -463,6 +467,13 @@ export function LibraryTool() {
                               <PenTool className="h-3.5 w-3.5" />
                               Edit
                             </button>
+                            <button
+                              onClick={() => handleExploreTautomers(molecule)}
+                              className="w-full px-3 py-2 text-left text-xs text-gray-300 hover:bg-teal-600/20 hover:text-white flex items-center gap-2 transition-colors whitespace-nowrap"
+                            >
+                              <GitBranch className="h-3.5 w-3.5" />
+                              Explore Tautomers
+                            </button>
                           </div>
                         </>
                       )}
@@ -477,7 +488,7 @@ export function LibraryTool() {
                       <Download className="h-3.5 w-3.5" />
                     </Button>
                     <Button
-                      onClick={() => handleDelete(molecule.id)}
+                      onClick={() => setConfirmDeleteId(molecule.id)}
                       size="sm"
                       variant="outline"
                       disabled={deletingId === molecule.id}
@@ -490,6 +501,30 @@ export function LibraryTool() {
                       )}
                     </Button>
                   </div>
+
+                  {/* Inline delete confirmation */}
+                  {confirmDeleteId === molecule.id && (
+                    <div className="mt-3 flex items-center justify-between gap-2 bg-red-950/50 border border-red-700/50 rounded-lg px-3 py-2">
+                      <p className="text-xs text-red-300">Delete this molecule?</p>
+                      <div className="flex gap-2">
+                        <Button
+                          onClick={() => setConfirmDeleteId(null)}
+                          size="sm"
+                          variant="outline"
+                          className="h-7 px-3 text-xs bg-gray-800 border-gray-600 hover:bg-gray-700 text-gray-300"
+                        >
+                          Cancel
+                        </Button>
+                        <Button
+                          onClick={() => handleDelete(molecule.id)}
+                          size="sm"
+                          className="h-7 px-3 text-xs bg-red-600 hover:bg-red-700 text-white border-0"
+                        >
+                          Delete
+                        </Button>
+                      </div>
+                    </div>
+                  )}
                 </div>
               </div>
             ))}

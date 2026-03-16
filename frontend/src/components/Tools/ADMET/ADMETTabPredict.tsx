@@ -4,7 +4,8 @@ import React from 'react'
 import { Button } from '@/components/ui/button'
 import { Label } from '@/components/ui/label'
 import { Alert, AlertDescription } from '@/components/ui/alert'
-import { Loader2, AlertCircle, Beaker, Pill, Activity, Droplets, Zap, Skull, Library as LibraryIcon } from 'lucide-react'
+import { Loader2, AlertCircle, Beaker, Pill, Activity, Droplets, Zap, Skull, Library as LibraryIcon, Download } from 'lucide-react'
+import { downloadCSV } from '@/lib/csv-export'
 import type { ADMETResult } from '@/types/molecular'
 import type { MoleculeOption } from '@/types/admet'
 import { parseValueUnit } from './utils'
@@ -123,11 +124,36 @@ export function ADMETTabPredict({
             {results && (
                 <div className="flex-1 space-y-5">
                     <div className="sticky top-0 bg-gray-900/95 backdrop-blur-sm z-10 pb-3 border-b border-gray-700/50">
-                        <div className="flex items-center gap-2">
-                            <div className="p-1.5 bg-purple-500/20 rounded">
-                                <Beaker className="h-4 w-4 text-purple-400" />
+                        <div className="flex items-center justify-between gap-2">
+                            <div className="flex items-center gap-2">
+                                <div className="p-1.5 bg-purple-500/20 rounded">
+                                    <Beaker className="h-4 w-4 text-purple-400" />
+                                </div>
+                                <h3 className="text-base font-semibold text-white">Prediction Results</h3>
                             </div>
-                            <h3 className="text-base font-semibold text-white">Prediction Results</h3>
+                            <Button
+                                size="sm"
+                                variant="outline"
+                                onClick={() => {
+                                    const rows: Array<Record<string, string>> = []
+                                    for (const [category, props] of Object.entries(results as Record<string, any>)) {
+                                        if (props && typeof props === 'object') {
+                                            for (const [prop, val] of Object.entries(props as Record<string, any>)) {
+                                                rows.push({ category, property: prop, value: String(val ?? '') })
+                                            }
+                                        }
+                                    }
+                                    downloadCSV(
+                                        [{ key: 'category', label: 'Category' }, { key: 'property', label: 'Property' }, { key: 'value', label: 'Value' }],
+                                        rows,
+                                        'admet_predictions.csv'
+                                    )
+                                }}
+                                className="bg-gray-700 border-gray-600 hover:bg-gray-600 text-gray-300"
+                            >
+                                <Download className="h-3.5 w-3.5 mr-1.5" />
+                                CSV
+                            </Button>
                         </div>
                     </div>
 

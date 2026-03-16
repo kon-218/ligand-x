@@ -60,8 +60,9 @@ export function ABFEStepResults({
     const filteredJobs = getFilteredJobs().filter((j: any) => j.service === 'abfe')
 
     // Handle job selection
-    const handleSelectJob = useCallback(async (jobId: string) => {
+    const handleSelectJob = useCallback(async (jobId: string | null) => {
         setActiveJob(jobId)
+        if (!jobId) return
         setIsLoadingResults(true)
         setParseError(null)
         setParsedResults(null)

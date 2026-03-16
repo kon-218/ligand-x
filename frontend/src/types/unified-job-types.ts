@@ -100,8 +100,9 @@ export interface JobMetadata {
     // QC
     method?: string
     basis_set?: string
-    qc_job_type?: string      // standard, ir, fukui, conformer
+    qc_job_type?: string      // standard, ir, fukui, conformer, bde
     orca_task_type?: string   // SP, OPT, OPT_FREQ, FREQ, OPTTS
+    bde_mode?: string         // reckless, rapid, careful, meticulous
 }
 
 /**
@@ -115,8 +116,18 @@ export interface UnifiedJob {
     updated_at?: string
 
     // Progress (for running jobs)
-    progress?: number
+    // Can be a simple number (0-100) or a detailed object for granular tracking
+    progress?: number | {
+        percent: number
+        step: string
+        details: string
+        updated_at: string
+    }
     message?: string
+    // Raw stage string from backend (may be comma-joined for multi-stage jobs)
+    stage?: string
+    // Parsed completed stages (derived from comma-joined stage string)
+    completed_stages?: string[]
 
     // Error (for failed jobs)
     error?: string
@@ -147,6 +158,7 @@ export function getQCJobTypeLabel(qcJobType?: string): string {
         'ir': 'IR Spectrum',
         'fukui': 'Fukui',
         'conformer': 'Conformer',
+        'bde': 'BDE',
     }
     return labelMap[qcJobType || 'standard'] || 'QC'
 }
@@ -219,7 +231,16 @@ export function getJobDisplaySummary(job: UnifiedJob): string {
             }
             break;
         case 'qc':
-            if (meta.method) {
+            if (meta.qc_job_type === 'bde' && meta.bde_mode) {
+                // Map BDE mode to QM methods used
+                const bdeMethods: Record<string, string> = {
+                    'reckless': 'GFN-FF/GFN2-xTB',
+                    'rapid': 'GFN2-xTB/r2SCAN-3c',
+                    'careful': 'r2SCAN-3c/ωB97X-3c',
+                    'meticulous': 'ωB97X-3c/ωB97M-D3(BJ)',
+                }
+                parts.push(bdeMethods[meta.bde_mode] || meta.bde_mode)
+            } else if (meta.method) {
                 parts.push(`${meta.method}${meta.basis_set ? `/${meta.basis_set}` : ''}`)
             }
             break
@@ -293,6 +314,12 @@ export function normalizeToUnifiedJob(
         status = 'docking_ready'
     }
 
+    const rawStage: string = job.stage || ''
+    // Parse comma-joined stage string into completed_stages array (used by QC and MD)
+    const completedStages = rawStage
+        ? rawStage.split(',').map((s: string) => s.trim()).filter(Boolean)
+        : undefined
+
     const baseJob: UnifiedJob = {
         job_id: job.job_id || job.id || '',
         service: isPostgresFormat ? normalizeJobType(job.job_type) : service,
@@ -301,6 +328,8 @@ export function normalizeToUnifiedJob(
         updated_at: job.updated_at || job.completed_at,
         progress: job.progress,
         message: job.message || job.stage,
+        stage: rawStage || undefined,
+        completed_stages: completedStages,
         error: job.error || job.error_message,
         metadata: {},
     }
@@ -380,6 +409,7 @@ export function normalizeToUnifiedJob(
                 basis_set: job.basis_set || inputParams.basis_set,
                 qc_job_type: job.qc_job_type || inputParams.qc_job_type || 'standard',
                 orca_task_type: job.orca_task_type || inputParams.job_type || '',
+                bde_mode: job.mode || inputParams.mode,
             }
             break
     }

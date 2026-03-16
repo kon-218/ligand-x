@@ -26,6 +26,7 @@ import {
   Beaker,
   Droplets,
   GitBranch,
+  ScanSearch,
 } from 'lucide-react'
 import { useUIStore, type ToolId } from '@/store/ui-store'
 import { api } from '@/lib/api-client'
@@ -45,6 +46,7 @@ import { ADMETTool } from '@/components/Tools/ADMETTool'
 import { LibraryTool } from '@/components/Tools/LibraryTool'
 import { QuantumChemistryTool } from '@/components/Tools/QuantumChemistryTool'
 import { ProteinCleaningTool } from '@/components/Tools/ProteinCleaningTool'
+import { PocketFinderTool } from '@/components/Tools/PocketFinderTool'
 import { ABFETool } from '@/components/Tools/ABFETool'
 import { RBFETool } from '@/components/Tools/RBFETool'
 import { ResultsTool } from '@/components/Tools/Results'
@@ -98,6 +100,15 @@ const tools: Tool[] = [
     description: 'Edit molecular structures',
     accentColor: 'blue',
     service: 'ketcher',
+  },
+  {
+    id: 'pocket-finder',
+    name: 'Pocket Finder',
+    icon: <ScanSearch className="w-5 h-5" />,
+    component: PocketFinderTool,
+    description: 'Detect druggable binding sites with fpocket',
+    accentColor: 'purple',
+    service: 'structure',
   },
   {
     id: 'docking',

@@ -69,6 +69,7 @@ function QCJobTypeBadge({ qcJobType, orcaTaskType }: QCJobTypeBadgeProps) {
         'ir':       'bg-red-700/30 text-red-200 border-red-600/50',
         'fukui':    'bg-yellow-700/30 text-yellow-200 border-yellow-600/50',
         'conformer':'bg-pink-700/30 text-pink-200 border-pink-600/50',
+        'bde':      'bg-sky-700/30 text-sky-200 border-sky-600/50',
     }
 
     // Prefer orca_task_type for standard jobs
@@ -151,7 +152,7 @@ function BatchBadge({ batchTotal, batchCompleted, service }: BatchBadgeProps) {
 interface UnifiedJobListProps {
     jobs: UnifiedJob[]
     activeJobId: string | null
-    onSelectJob: (jobId: string, service: ServiceType) => void
+    onSelectJob: (jobId: string | null, service: ServiceType | null) => void
     onCancelJob?: (jobId: string, service: ServiceType) => void
     onDeleteJob?: (jobId: string, service: ServiceType) => void
     resultsTab: ResultsTab
@@ -290,7 +291,7 @@ export function UnifiedJobList({
                             showServiceBadge={showServiceBadge}
                             showQCJobType={showQCJobType}
                             showMDJobType={showMDJobType}
-                            onClick={() => onSelectJob(job.job_id, job.service)}
+                            onClick={() => activeJobId === job.job_id ? onSelectJob(null, null) : onSelectJob(job.job_id, job.service)}
                             onCancel={() => onCancelJob?.(job.job_id, job.service)}
                             onDelete={() => onDeleteJob?.(job.job_id, job.service)}
                             accentColor={accentColor}
@@ -455,6 +456,18 @@ function JobListItem({
                     <div className="text-[10px] text-gray-400 truncate">
                         {displaySummary}
                     </div>
+
+                    {/* Progress Bar for Running Jobs */}
+                    {isRunning && (
+                        <div className="w-full h-0.5 bg-gray-700 mt-1.5 rounded-full overflow-hidden">
+                            <div 
+                                className="h-full bg-blue-500 transition-all duration-500"
+                                style={{ 
+                                    width: `${typeof job.progress === 'object' ? job.progress.percent : (job.progress || 0)}%` 
+                                }}
+                            />
+                        </div>
+                    )}
                 </div>
             </div>
 

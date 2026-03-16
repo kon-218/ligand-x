@@ -13,6 +13,7 @@ export type ToolId =
   | 'protein-cleaning'
   | 'abfe'
   | 'rbfe'
+  | 'pocket-finder'
   | 'results'
   | null
 
@@ -68,7 +69,7 @@ export const useUIStore = create<UIStore>((set) => ({
   // Side panel
   isSidePanelExpanded: false,
   activeTool: null,
-  sidePanelWidth: 480, // Default width in pixels (for non-editor tools)
+  sidePanelWidth: 640, // Default width in pixels (for non-editor tools)
   editorSidePanelWidth: 800, // Default width in pixels for editor (larger default, ~50% of typical 1920px viewport)
   sidebarIconsWidth: 80, // Default width in pixels for sidebar icons column
 

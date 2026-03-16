@@ -106,3 +106,13 @@ export interface TrajectoryInfo {
   pressure: number
 }
 
+export interface TrajectoryAnalysisResult {
+  time_ns: number[]
+  rmsd_angstrom: number[]
+  rmsf_angstrom: number[]
+  rg_angstrom: number[]
+  residue_labels: string[]
+  n_frames: number
+  n_residues: number
+}
+

@@ -149,6 +149,7 @@ async def submit_job(job_type: str, request: Request):
         boltz_batch,
         admet_predict,
     )
+    from services.rbfe.run_mapping_preview_job import rbfe_mapping_preview
     # Import CPU tasks (docking)
     from lib.tasks.cpu_tasks import (
         docking_batch,
@@ -215,6 +216,7 @@ async def submit_job(job_type: str, request: Request):
             'boltz2': boltz_predict,
             'boltz2_batch': boltz_batch,
             'admet': admet_predict,
+            'rbfe_mapping_preview': rbfe_mapping_preview,
         }
         
         if job_type not in task_map:

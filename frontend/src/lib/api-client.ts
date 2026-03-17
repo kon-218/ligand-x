@@ -1122,6 +1122,24 @@ export const api = {
     return response.data
   },
 
+  submitMappingPreview: async (config: {
+    ligands: Array<{ id: string; data: string; format: string }>
+    atom_mapper: string
+    atom_map_hydrogens: boolean
+    lomap_max3d: number
+    charge_method?: string
+  }) => {
+    console.log('[RBFE] Submitting mapping preview job')
+    const response = await apiClient.post('/api/jobs/submit/rbfe_mapping_preview', {
+      ligands: config.ligands,
+      atom_mapper: config.atom_mapper,
+      atom_map_hydrogens: config.atom_map_hydrogens,
+      lomap_max3d: config.lomap_max3d,
+      charge_method: config.charge_method || 'am1bcc',
+    })
+    return response.data
+  },
+
   listAllJobs: async (): Promise<{ jobs: UnifiedJob[] }> => {
     // Use unified PostgreSQL endpoint for all jobs
     const response = await apiClient.get('/api/jobs/list', {

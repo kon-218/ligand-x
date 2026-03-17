@@ -242,7 +242,7 @@ async def submit_job(job_type: str, request: Request):
     
     return JobSubmitResponse(
         job_id=job_id,
-        status="submitted",
+        status="pending",
         job_type=job_type,
         stream_url=f"/api/jobs/stream/{job_id}",
         message=f"Job submitted to {job_type} queue"
@@ -419,47 +419,64 @@ async def stream_job_progress(job_id: str, request: Request):
         Server-Sent Events stream
     """
     async def event_generator():
-        celery_app = get_celery_app()
         repo = await get_job_repo()
-        
+        # Resolve the correct Celery app for this job type (QC uses a separate broker)
+        job_record = await repo.get_job(job_id)
+        job_type_hint = job_record.get('job_type', '') if job_record else ''
+        celery_app = get_celery_app_for_job(job_type_hint)
+
         last_state = None
-        last_progress = -1
+        last_progress = -1      # last value sent (for change detection)
+        max_progress_seen = -1  # monotonic high-water mark — never go backward
+        last_message = ''
+        last_step = ''
         poll_count = 0
         max_polls = 86400  # Max 24 hours at 1 poll/sec
-        
+
         while poll_count < max_polls:
             # Check if client disconnected
             if await request.is_disconnected():
                 logger.debug(f"Client disconnected from job {job_id} stream")
                 break
-            
+
             # Get task state from Celery/Redis
             result = celery_app.AsyncResult(job_id)
             state = result.state
             info = result.info or {}
-            
-            # Determine current progress
-            current_progress = info.get('progress', 0) if isinstance(info, dict) else 0
-            
-            # Only send update if state or progress changed
-            if state != last_state or current_progress != last_progress:
+
+            # Determine current progress — handle both int (MD/GPU) and dict (QC) formats
+            raw_progress = info.get('progress', 0) if isinstance(info, dict) else 0
+            current_progress = raw_progress.get('percent', 0) if isinstance(raw_progress, dict) else (raw_progress or 0)
+            current_message = info.get('message', '') if isinstance(info, dict) else ''
+            # QC jobs send a rich progress dict with step/details; track step separately so
+            # "Geometry Optimization Cycle 2" fires an SSE even if percent didn't change
+            current_step = raw_progress.get('step', '') if isinstance(raw_progress, dict) else ''
+
+            # Clamp: progress must never decrease (monitor thread can produce low values early on)
+            clamped_progress = max(max_progress_seen, current_progress)
+
+            # Only send update if state, clamped progress, message, or step changed
+            if state != last_state or clamped_progress != last_progress or current_message != last_message or current_step != last_step:
                 last_state = state
-                last_progress = current_progress
-                
+                last_progress = clamped_progress
+                max_progress_seen = clamped_progress
+                last_message = current_message
+                last_step = current_step
+
                 if state == 'PENDING':
                     data = {
                         'status': 'pending',
                         'progress': 0,
                         'message': 'Job queued, waiting for worker'
                     }
-                    
+
                 elif state == 'STARTED' or state == 'RUNNING':
-                    # Update database with progress
+                    # Update database with clamped progress (never regress)
                     raw_stage = info.get('stage', '') if isinstance(info, dict) else ''
                     try:
                         await repo.update_status(
                             job_id, 'running',
-                            progress=current_progress,
+                            progress=clamped_progress,
                             stage=raw_stage
                         )
                     except Exception as e:
@@ -472,7 +489,7 @@ async def stream_job_progress(job_id: str, request: Request):
 
                     data = {
                         'status': 'running',
-                        'progress': current_progress,
+                        'progress': raw_progress,  # Full dict (QC) or int (MD/GPU) — frontend handles both
                         'stage': raw_stage,
                         'message': info.get('message', '') if isinstance(info, dict) else '',
                         'completed_stages': completed_stages,
@@ -795,7 +812,7 @@ async def list_jobs(
             created_at = job.get('created_at')
 
             # Check if this might be a stale job
-            if celery_state == 'PENDING' and db_status in ('running', 'pending', 'submitted'):
+            if celery_state == 'PENDING' and db_status in ('running', 'pending'):
                 # Parse created_at timestamp
                 try:
                     from datetime import datetime, timezone
@@ -804,11 +821,15 @@ async def list_jobs(
                     else:
                         job_created = created_at
 
-                    # If job is older than 5 minutes and Celery doesn't know about it, it's stale
+                    # If job is older than 60 minutes and Celery doesn't know about it, it's stale.
+                    # 60-minute threshold accommodates GPU queue wait times: gpu-short workers run
+                    # multiple concurrent tasks (concurrency=2), so a new job can legitimately
+                    # wait 30-60 min before being picked up. 5 min was too aggressive for Boltz2
+                    # and other long-running GPU jobs.
                     now = datetime.now(timezone.utc)
                     age_minutes = (now - job_created.replace(tzinfo=timezone.utc)).total_seconds() / 60
 
-                    if age_minutes > 5:
+                    if age_minutes > 60:
                         # This is a stale job - mark as failed
                         logger.warning(f"Detected stale {job.get('job_type', 'unknown')} job {job_id} (age: {age_minutes:.1f}min, status: {db_status})")
                         await repo.update_status(
@@ -850,9 +871,9 @@ async def list_jobs(
             
             # Update job status if Celery has newer info
             if live_status and job.get('status') != live_status:
-                # Special handling: if job is 'running' with stage 'docking_ready' in DB, 
+                # Special handling: if job is 'running' with stage 'docking_ready' in DB,
                 # and live_status is 'running' (because of above check), don't overwrite if unnecessary
-                
+
                 # Update database with live status
                 try:
                     if live_status == 'running':
@@ -870,9 +891,11 @@ async def list_jobs(
                                 result=actual_result
                             )
                         else:
+                            raw_progress = info.get('progress', 0) if isinstance(info, dict) else 0
+                            progress_int = raw_progress.get('percent', 0) if isinstance(raw_progress, dict) else (int(raw_progress) if raw_progress else 0)
                             await repo.update_status(
                                 job_id, 'running',
-                                progress=info.get('progress', 0) if isinstance(info, dict) else 0,
+                                progress=progress_int,
                                 stage=info.get('stage', '') if isinstance(info, dict) else ''
                             )
                     elif live_status == 'completed':
@@ -881,9 +904,27 @@ async def list_jobs(
                         await repo.update_status(job_id, 'failed')
                 except Exception as e:
                     logger.debug(f"Failed to update job {job_id} status in DB: {e}")
-                
+
                 # Update the returned job object with live status
                 job['status'] = live_status
+
+            elif live_status == 'running' and job.get('status') == 'running' and celery_state in ('STARTED', 'RUNNING'):
+                # Job is already running in both Celery and DB — propagate progress updates.
+                # This is the normal case for long-running jobs (QC, etc.) where the status
+                # never transitions but the progress percentage keeps increasing.
+                info = result.info or {}
+                if isinstance(info, dict):
+                    raw_progress = info.get('progress')
+                    if raw_progress is not None:
+                        progress_int = raw_progress.get('percent', 0) if isinstance(raw_progress, dict) else (int(raw_progress) if raw_progress else 0)
+                        db_progress = job.get('progress') or 0
+                        if progress_int > db_progress:
+                            stage = info.get('stage', '')
+                            try:
+                                await repo.update_status(job_id, 'running', progress=progress_int, stage=stage)
+                                job['progress'] = raw_progress
+                            except Exception as e:
+                                logger.debug(f"Failed to update progress for running job {job_id}: {e}")
         
         total = await repo.get_job_count(job_type=job_type, status=status)
         
@@ -1127,36 +1168,30 @@ async def delete_job(job_id: str):
 # ============================================================
 
 @router.post("/cleanup-stale")
-async def cleanup_stale_jobs(
-    age_minutes: int = Query(5, ge=1, description="Minimum age in minutes for a job to be considered stale")
-):
+async def cleanup_stale_jobs():
     """
     Clean up stale jobs from previous sessions.
 
     A job is considered stale if:
-    - Its status is 'running' or 'pending' in the database
-    - The Celery task no longer exists (state='PENDING')
-    - The job was created more than `age_minutes` ago
+    - Its status is 'running', 'pending', 'submitted', or 'preparing' in the database
+    - The Celery task no longer exists or is unknown (Celery returns PENDING for unknown tasks)
 
     This endpoint is useful after system restarts to clean up zombie jobs.
-
-    Args:
-        age_minutes: Minimum age in minutes (default: 5)
+    No age threshold is applied - if Celery doesn't know about the task, it's stale.
 
     Returns:
         Count of jobs cleaned up
     """
     try:
-        from datetime import datetime, timezone
-
         repo = await get_job_repo()
 
-        # Get all running/pending/submitted jobs
+        # Get all running/pending/submitted/preparing jobs
         running_jobs = await repo.list_jobs(status='running', limit=200)
         pending_jobs = await repo.list_jobs(status='pending', limit=200)
         submitted_jobs = await repo.list_jobs(status='submitted', limit=200)
+        preparing_jobs = await repo.list_jobs(status='preparing', limit=200)
 
-        all_jobs = running_jobs + pending_jobs + submitted_jobs
+        all_jobs = running_jobs + pending_jobs + submitted_jobs + preparing_jobs
         cleaned_count = 0
 
         for job in all_jobs:
@@ -1169,31 +1204,21 @@ async def cleanup_stale_jobs(
             result = job_celery_app.AsyncResult(job_id)
             celery_state = result.state
 
-            # Only clean up if Celery doesn't know about this task
-            if celery_state != 'PENDING':
+            # If Celery knows about this task and it's actively running, skip it
+            if celery_state in ('STARTED', 'RUNNING', 'SUCCESS', 'FAILURE', 'REVOKED'):
                 continue
 
-            # Check job age
-            created_at = job.get('created_at')
+            # Celery returns PENDING for unknown tasks - this means the task was lost
+            # Mark as failed immediately (no age check needed)
+            logger.info(f"Cleaning up stale {job.get('job_type', 'unknown')} job {job_id} (status: {job.get('status')}, celery_state: {celery_state})")
             try:
-                if isinstance(created_at, str):
-                    job_created = datetime.fromisoformat(created_at.replace('Z', '+00:00'))
-                else:
-                    job_created = created_at
-
-                now = datetime.now(timezone.utc)
-                age = (now - job_created.replace(tzinfo=timezone.utc)).total_seconds() / 60
-
-                if age > age_minutes:
-                    # Mark as failed
-                    logger.info(f"Cleaning up stale {job.get('job_type', 'unknown')} job {job_id} (age: {age:.1f}min, status: {job.get('status')})")
-                    await repo.update_status(
-                        job_id, 'failed',
-                        error_message='Job lost due to system restart or worker failure'
-                    )
-                    cleaned_count += 1
+                await repo.update_status(
+                    job_id, 'failed',
+                    error_message='Job lost due to system restart or worker failure'
+                )
+                cleaned_count += 1
             except Exception as e:
-                logger.warning(f"Failed to process job {job_id} during cleanup: {e}")
+                logger.warning(f"Failed to update job {job_id} during cleanup: {e}")
                 continue
 
         logger.info(f"Stale job cleanup complete: {cleaned_count} jobs marked as failed")

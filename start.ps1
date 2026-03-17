@@ -139,6 +139,14 @@ function Invoke-Help {
     Write-Host "  .\start.ps1 dev-free-energy  - Core + docking + MD + ABFE + RBFE"
     Write-Host "  .\start.ps1 dev-gpu          - All GPU services (full stack minus QC)"
     Write-Host ""
+    Write-Host "Selective Prod Startup (production mode):" -ForegroundColor Green
+    Write-Host "  .\start.ps1 prod-core        - Infrastructure + structure + frontend"
+    Write-Host "  .\start.ps1 prod-docking     - Core + editor + docking"
+    Write-Host "  .\start.ps1 prod-md          - Core + editor + MD"
+    Write-Host "  .\start.ps1 prod-qc          - Core + editor + quantum chemistry"
+    Write-Host "  .\start.ps1 prod-free-energy - Core + docking + MD + ABFE + RBFE"
+    Write-Host "  .\start.ps1 prod-gpu         - All GPU services (full stack minus QC)"
+    Write-Host ""
     Write-Host "Registry:" -ForegroundColor Green
     Write-Host "  .\start.ps1 pull             - Pull pre-built images from GHCR"
     Write-Host "  .\start.ps1 push             - Push images to GHCR"
@@ -202,6 +210,72 @@ function Invoke-DevGpu {
     Invoke-EnsureDataDirs
     Write-Header "Starting all GPU services (full stack minus QC)..."
     docker compose up -d @CORE_SERVICES ketcher docking md abfe rbfe boltz2 admet worker-cpu worker-gpu-short worker-gpu-long
+}
+
+function Invoke-ProdCore {
+    Invoke-EnsureDataDirs
+    Write-Header "Starting core services (production mode)..."
+    $envArg = Get-EnvFileArg
+    if ($envArg.Count -gt 0) {
+        docker compose @envArg -f docker-compose.yml up -d @CORE_SERVICES
+    } else {
+        docker compose -f docker-compose.yml up -d @CORE_SERVICES
+    }
+}
+
+function Invoke-ProdDocking {
+    Invoke-EnsureDataDirs
+    Write-Header "Starting core + editor + docking (production mode)..."
+    $envArg = Get-EnvFileArg
+    if ($envArg.Count -gt 0) {
+        docker compose @envArg -f docker-compose.yml up -d @CORE_SERVICES ketcher docking worker-cpu
+    } else {
+        docker compose -f docker-compose.yml up -d @CORE_SERVICES ketcher docking worker-cpu
+    }
+}
+
+function Invoke-ProdMd {
+    Invoke-EnsureDataDirs
+    Write-Header "Starting core + editor + MD (production mode)..."
+    $envArg = Get-EnvFileArg
+    if ($envArg.Count -gt 0) {
+        docker compose @envArg -f docker-compose.yml up -d @CORE_SERVICES ketcher md worker-gpu-short
+    } else {
+        docker compose -f docker-compose.yml up -d @CORE_SERVICES ketcher md worker-gpu-short
+    }
+}
+
+function Invoke-ProdQc {
+    Invoke-EnsureDataDirs
+    Write-Header "Starting core + editor + quantum chemistry (production mode)..."
+    $envArg = Get-EnvFileArg
+    if ($envArg.Count -gt 0) {
+        docker compose @envArg -f docker-compose.yml up -d @CORE_SERVICES ketcher qc worker-qc
+    } else {
+        docker compose -f docker-compose.yml up -d @CORE_SERVICES ketcher qc worker-qc
+    }
+}
+
+function Invoke-ProdFreeEnergy {
+    Invoke-EnsureDataDirs
+    Write-Header "Starting core + editor + docking + MD + ABFE + RBFE (production mode)..."
+    $envArg = Get-EnvFileArg
+    if ($envArg.Count -gt 0) {
+        docker compose @envArg -f docker-compose.yml up -d @CORE_SERVICES ketcher docking md abfe rbfe worker-cpu worker-gpu-short worker-gpu-long
+    } else {
+        docker compose -f docker-compose.yml up -d @CORE_SERVICES ketcher docking md abfe rbfe worker-cpu worker-gpu-short worker-gpu-long
+    }
+}
+
+function Invoke-ProdGpu {
+    Invoke-EnsureDataDirs
+    Write-Header "Starting all GPU services (production mode, full stack minus QC)..."
+    $envArg = Get-EnvFileArg
+    if ($envArg.Count -gt 0) {
+        docker compose @envArg -f docker-compose.yml up -d @CORE_SERVICES ketcher docking md abfe rbfe boltz2 admet worker-cpu worker-gpu-short worker-gpu-long
+    } else {
+        docker compose -f docker-compose.yml up -d @CORE_SERVICES ketcher docking md abfe rbfe boltz2 admet worker-cpu worker-gpu-short worker-gpu-long
+    }
 }
 
 function Invoke-Prod {
@@ -433,6 +507,12 @@ switch ($Command.ToLower()) {
     "dev-qc"          { Invoke-DevQc }
     "dev-free-energy" { Invoke-DevFreeEnergy }
     "dev-gpu"         { Invoke-DevGpu }
+    "prod-core"       { Invoke-ProdCore }
+    "prod-docking"    { Invoke-ProdDocking }
+    "prod-md"         { Invoke-ProdMd }
+    "prod-qc"         { Invoke-ProdQc }
+    "prod-free-energy" { Invoke-ProdFreeEnergy }
+    "prod-gpu"        { Invoke-ProdGpu }
     "prod"            { Invoke-Prod }
     "down"            { Invoke-Down }
     "build"           { Invoke-Build }

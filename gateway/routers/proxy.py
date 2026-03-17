@@ -97,7 +97,7 @@ async def _proxy_request(method: str, url: str, request: Request, params: dict):
                 try:
                     error_json = response.json()
                     error_detail = error_json.get('detail', error_json.get('error', error_body))
-                except:
+                except Exception:
                     error_detail = error_body
                 
                 logger.error(

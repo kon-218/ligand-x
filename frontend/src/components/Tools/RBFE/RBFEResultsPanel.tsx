@@ -32,7 +32,7 @@ import {
   downloadNetworkGraphSVG,
   svgToDataUrl,
 } from '@/lib/rbfe-network-export'
-import type { RBFEJob, RBFENetworkData, RBFEDdGValue, DockedPoseInfo, LigandSelection, AlignmentInfo } from '@/types/rbfe-types'
+import type { RBFEJob, RBFENetworkData, RBFEDdGValue, DockedPoseInfo, LigandSelection, AlignmentInfo, RBFETransformationResult } from '@/types/rbfe-types'
 import { AlignmentPreview } from './AlignmentPreview'
 
 // Helper to check if a job status indicates it's still running/in-progress
@@ -67,7 +67,7 @@ interface RBFEResultsPanelProps {
   progressMessage: string
   jobs: RBFEJob[]
   activeJobId: string | null
-  onSelectJob: (jobId: string) => void
+  onSelectJob: (jobId: string | null) => void
   onContinueAfterDocking?: () => void
   onJobsLoaded?: (jobs: RBFEJob[]) => void
   onClearDockingPreview?: () => void
@@ -450,6 +450,11 @@ export function RBFEResultsPanel({
                   ))}
               </div>
             </div>
+          )}
+
+          {/* Phase space overlap matrices */}
+          {result.results.transformation_results && (
+            <OverlapMatrices transformationResults={result.results.transformation_results} />
           )}
         </div>
       )
@@ -1287,6 +1292,121 @@ function StatCard({ label, value, unit, color }: StatCardProps) {
       <div className={`text-lg font-semibold ${color}`}>
         {value}
         {unit && <span className="text-xs text-gray-500 ml-1">{unit}</span>}
+      </div>
+    </div>
+  )
+}
+
+// ── Overlap matrices ──────────────────────────────────────────────────────────
+
+function OverlapHeatmap({ matrix, label }: { matrix: number[][]; label: string }) {
+  const n = matrix.length
+
+  const cellColor = (v: number): string => {
+    const t = Math.max(0, Math.min(1, v))
+    const r = Math.round(255 - t * 180)
+    const g = Math.round(255 - t * 160)
+    return `rgb(${r},${g},255)`
+  }
+
+  // Nearest-neighbour values (super-diagonal) to check sampling quality
+  const neighbors: number[] = []
+  for (let i = 0; i < n - 1; i++) neighbors.push(matrix[i][i + 1])
+  const minNeighbor = neighbors.length > 0 ? Math.min(...neighbors) : 0
+  const avgNeighbor = neighbors.length > 0 ? neighbors.reduce((a, b) => a + b, 0) / neighbors.length : 0
+  const poor = minNeighbor < 0.03
+
+  return (
+    <div className="space-y-1">
+      <div className="flex items-center gap-2">
+        <span className="text-xs text-gray-400">{label}</span>
+        <span className={`text-xs px-1.5 py-0.5 rounded ${poor ? 'bg-red-900/40 text-red-400' : 'bg-green-900/40 text-green-400'}`}>
+          {poor ? `min λ±1: ${minNeighbor.toFixed(3)}` : `avg λ±1: ${avgNeighbor.toFixed(3)}`}
+        </span>
+      </div>
+      <div
+        style={{
+          display: 'grid',
+          gridTemplateColumns: `repeat(${n}, 22px)`,
+          gap: '1px',
+        }}
+      >
+        {matrix.flatMap((row, i) =>
+          row.map((v, j) => (
+            <div
+              key={`${i}-${j}`}
+              title={`λ${i} ↔ λ${j}: ${v.toFixed(4)}`}
+              style={{
+                backgroundColor: cellColor(v),
+                width: '22px',
+                height: '22px',
+                fontSize: '6px',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                color: v > 0.5 ? 'rgba(20,40,80,0.8)' : 'rgba(100,100,100,0.6)',
+                cursor: 'default',
+              }}
+            >
+              {v >= 0.005 ? v.toFixed(2).replace('0.', '.') : '0'}
+            </div>
+          ))
+        )}
+      </div>
+      {/* Colour legend */}
+      <div className="flex items-center gap-1 pt-0.5">
+        <span className="text-xs text-gray-600">0</span>
+        <div className="flex-1 h-1.5 rounded" style={{ background: 'linear-gradient(to right, rgb(255,255,255), rgb(75,95,255))' }} />
+        <span className="text-xs text-gray-600">1</span>
+      </div>
+    </div>
+  )
+}
+
+function OverlapMatrices({ transformationResults }: { transformationResults: RBFETransformationResult[] }) {
+  const edges = useMemo(() => {
+    const map = new Map<string, { complex?: number[][] | null; solvent?: number[][] | null }>()
+    for (const tr of transformationResults) {
+      if (!tr.overlap_matrix || !tr.ligand_a || !tr.ligand_b) continue
+      const key = `${tr.ligand_a}|${tr.ligand_b}`
+      const entry = map.get(key) ?? {}
+      if (tr.leg === 'complex') entry.complex = tr.overlap_matrix
+      if (tr.leg === 'solvent') entry.solvent = tr.overlap_matrix
+      map.set(key, entry)
+    }
+    return Array.from(map.entries())
+  }, [transformationResults])
+
+  if (edges.length === 0) return null
+
+  return (
+    <div className="space-y-2">
+      <div className="flex items-center gap-2">
+        <h4 className="text-sm font-semibold text-gray-300">Phase Space Overlap Matrices</h4>
+        <div className="group relative">
+          <div className="cursor-help text-xs text-gray-500 border border-gray-600 rounded-full w-4 h-4 flex items-center justify-center">?</div>
+          <div className="absolute left-0 bottom-full mb-2 hidden group-hover:block w-72 p-2 bg-gray-900 text-xs text-gray-300 rounded border border-gray-700 shadow-lg z-20">
+            Each cell shows the phase-space overlap between λ windows i and j. Nearest-neighbour values (super-diagonal) should be ≥ 0.03 for reliable free energy estimates.
+          </div>
+        </div>
+      </div>
+      <div className="space-y-3">
+        {edges.map(([key, { complex, solvent }]) => {
+          const [ligandA, ligandB] = key.split('|')
+          return (
+            <div key={key} className="bg-gray-800/50 rounded-lg border border-gray-700 p-3 space-y-3">
+              <div className="flex items-center gap-2 text-xs text-gray-300">
+                <span className="font-medium">{ligandA}</span>
+                <ArrowRight className="w-3 h-3 text-gray-500" />
+                <span className="font-medium">{ligandB}</span>
+              </div>
+              <div className="flex flex-wrap gap-6">
+                {complex && <OverlapHeatmap matrix={complex} label="Complex" />}
+                {solvent && <OverlapHeatmap matrix={solvent} label="Solvent" />}
+              </div>
+            </div>
+          )
+        })}
       </div>
     </div>
   )

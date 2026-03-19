@@ -49,20 +49,21 @@ export default function RBFENetworkSelector({
   // Compute protein validation error internally
   const proteinValidationError = currentStructure ? getProteinValidationError(currentStructure) : null
 
+  const fetchLibraryMolecules = async () => {
+    setIsLoading(true)
+    try {
+      const molecules = await api.getMolecules()
+      setLibraryMolecules(Array.isArray(molecules) ? molecules : [])
+    } catch (err) {
+      console.error('Failed to fetch library molecules:', err)
+      setLibraryMolecules([])
+    } finally {
+      setIsLoading(false)
+    }
+  }
+
   // Fetch library molecules on mount
   useEffect(() => {
-    const fetchLibraryMolecules = async () => {
-      setIsLoading(true)
-      try {
-        const molecules = await api.getMolecules()
-        setLibraryMolecules(Array.isArray(molecules) ? molecules : [])
-      } catch (err) {
-        console.error('Failed to fetch library molecules:', err)
-        setLibraryMolecules([])
-      } finally {
-        setIsLoading(false)
-      }
-    }
     fetchLibraryMolecules()
   }, [])
 
@@ -137,7 +138,7 @@ export default function RBFENetworkSelector({
             <Button
               variant="ghost"
               size="sm"
-              onClick={() => window.location.reload()}
+              onClick={fetchLibraryMolecules}
               disabled={isLoading}
               className="h-7 px-2"
             >

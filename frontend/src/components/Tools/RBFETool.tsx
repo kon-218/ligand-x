@@ -1,7 +1,7 @@
 'use client'
 
-import { useEffect, useState } from 'react'
-import { GitBranch } from 'lucide-react'
+import { useEffect, useRef, useState } from 'react'
+import { GitBranch, Loader2 } from 'lucide-react'
 import { useRBFEStore } from '@/store/rbfe-store'
 import { useMolecularStore } from '@/store/molecular-store'
 import { useUnifiedResultsStore } from '@/store/unified-results-store'
@@ -20,8 +20,10 @@ import {
 import RBFENetworkSelector from './RBFE/RBFENetworkSelector'
 import { RBFEResultsPanel } from './RBFE/RBFEResultsPanel'
 import { AlignmentPreview } from './RBFE/AlignmentPreview'
+import { AtomMappingPreview } from './RBFE/AtomMappingPreview'
+import { NetworkPreview } from './RBFE/NetworkPreview'
 import type { WorkflowStep } from './shared'
-import type { LigandSelection, AlignmentInfo } from '@/types/rbfe-types'
+import type { LigandSelection, AlignmentInfo, MappingPreviewResult } from '@/types/rbfe-types'
 
 // Define workflow steps
 const RBFE_STEPS: WorkflowStep[] = [
@@ -180,6 +182,7 @@ export function RBFETool() {
               id,
               name: ligand.residue_name || id,
               source: 'current_structure' as const,
+              smiles: ligand.smiles || ligand.canonical_smiles,
               sdf_data: ligand.sdf_data,
               pdb_data: ligand.pdb_data,
               has_docked_pose: true, // Assume structure ligands have docked poses
@@ -410,6 +413,103 @@ export function RBFETool() {
     }
   }
 
+  // Mapping preview polling ref
+  const mappingPreviewPollRef = useRef<NodeJS.Timeout | null>(null)
+
+  const stopMappingPreviewPoll = () => {
+    if (mappingPreviewPollRef.current) {
+      clearInterval(mappingPreviewPollRef.current)
+      mappingPreviewPollRef.current = null
+    }
+  }
+
+  // Start polling for mapping preview job
+  const startMappingPreviewPoll = (jobId: string) => {
+    stopMappingPreviewPoll()
+    mappingPreviewPollRef.current = setInterval(async () => {
+      try {
+        const status = await api.getJobDetails(jobId)
+        const s = status?.status
+        if (s === 'completed') {
+          stopMappingPreviewPoll()
+          // Extract the mapping preview result from the job
+          const rawResult = status?.result
+          // Unwrap: result may be { result: { result: { pairs: [...] } } } or nested
+          const inner = rawResult?.result ?? rawResult
+          const previewData: MappingPreviewResult | null =
+            inner && Array.isArray(inner.pairs)
+              ? inner
+              : inner?.result && Array.isArray(inner.result.pairs)
+              ? inner.result
+              : null
+          if (previewData) {
+            rbfeStore.setMappingPreviewResult(previewData)
+            rbfeStore.setMappingPreviewStatus('completed')
+          } else {
+            rbfeStore.setMappingPreviewStatus('failed')
+          }
+        } else if (s === 'failed') {
+          stopMappingPreviewPoll()
+          rbfeStore.setMappingPreviewStatus('failed')
+        }
+      } catch (err) {
+        console.error('Error polling mapping preview:', err)
+      }
+    }, 5000) // poll every 5s (preview finishes in ~30-90s)
+  }
+
+  // Clean up on unmount
+  useEffect(() => () => stopMappingPreviewPoll(), [])
+
+  const handlePreviewMapping = async () => {
+    const selectedLigands = rbfeStore.availableLigands.filter((lig) =>
+      rbfeStore.selectedLigandIds.includes(lig.id)
+    )
+
+    if (selectedLigands.length < 2) return
+
+    rbfeStore.setMappingPreviewStatus('running')
+    rbfeStore.setMappingPreviewResult(null)
+
+    try {
+      const ligandData = await Promise.all(
+        selectedLigands.map(async (lig) => {
+          let data = lig.sdf_data || ''
+          let format = 'sdf'
+
+          if (!data && lig.smiles) {
+            try {
+              const result = await api.uploadSmiles(lig.smiles, lig.name)
+              data = result.sdf_data || ''
+            } catch (e) {
+              console.error(`Failed to convert SMILES for ${lig.name}:`, e)
+            }
+          }
+          if (!data && lig.pdb_data) {
+            data = lig.pdb_data
+            format = 'pdb'
+          }
+
+          return { id: lig.name || lig.id, data, format }
+        })
+      )
+
+      const response = await api.submitMappingPreview({
+        ligands: ligandData,
+        atom_mapper: rbfeStore.rbfeParameters.atom_mapper || 'kartograf',
+        atom_map_hydrogens: rbfeStore.rbfeParameters.atom_map_hydrogens !== false,
+        lomap_max3d: rbfeStore.rbfeParameters.lomap_max3d || 1.0,
+        charge_method: rbfeStore.rbfeParameters.charge_method || 'am1bcc',
+      })
+
+      rbfeStore.setMappingPreviewJobId(response.job_id)
+      startMappingPreviewPoll(response.job_id)
+    } catch (err: any) {
+      console.error('Failed to submit mapping preview:', err)
+      rbfeStore.setMappingPreviewStatus('failed')
+    }
+  }
+
   // Check if can proceed to next step
   const canProceed = (() => {
     switch (rbfeStore.currentStep) {
@@ -431,7 +531,7 @@ export function RBFETool() {
     switch (rbfeStore.currentStep) {
       case 1:
         return (
-          <div className="space-y-6 overflow-y-auto max-h-[calc(100vh-300px)]">
+          <div className="space-y-6">
             <RBFENetworkSelector
               availableLigands={rbfeStore.availableLigands}
               selectedLigandIds={rbfeStore.selectedLigandIds}
@@ -452,14 +552,24 @@ export function RBFETool() {
           </div>
         )
 
-      case 2:
+      case 2: {
+        const canPreview = rbfeStore.selectedLigandIds.length >= 2
+        const previewStatus = rbfeStore.mappingPreviewStatus
+        const previewRunning = previewStatus === 'running'
+
         return (
           <div className="space-y-6">
             <ParameterSection title="Atom Mapper (Network Creation)" collapsible defaultExpanded>
               <SelectParameter
                 label="Atom Mapper"
                 value={rbfeStore.rbfeParameters.atom_mapper || 'kartograf'}
-                onChange={(v: string) => rbfeStore.setRBFEParameters({ atom_mapper: v as any })}
+                onChange={(v: string) => {
+                  rbfeStore.setRBFEParameters({ atom_mapper: v as any })
+                  // Clear any existing preview when mapper changes
+                  if (rbfeStore.mappingPreviewStatus !== 'idle') {
+                    rbfeStore.clearMappingPreview()
+                  }
+                }}
                 options={[
                   { value: 'kartograf', label: 'Kartograf (Recommended - 3D geometry)' },
                   { value: 'lomap', label: 'LOMAP (2D MCS-based)' },
@@ -484,34 +594,74 @@ export function RBFETool() {
               )}
             </ParameterSection>
 
-            <InfoBox variant="info" title="Atom Mapper Selection (OpenFE Best Practices)">
-              <div className="space-y-2 text-sm">
-                <p>
-                  <strong>The atom mapper creates the network AND handles alignment automatically.</strong> No pre-alignment is needed.
-                </p>
-                <ul className="list-disc ml-4 space-y-1 mt-2">
-                  <li><strong>Kartograf</strong>: Geometry-based, preserves 3D binding mode from docked poses. Use for ligands with 3D coordinates (95% identical mappings in research studies).</li>
-                  <li><strong>LOMAP</strong>: 2D MCS-based, may realign structures. Use for 2D structures or when Kartograf fails.</li>
-                </ul>
-                <p className="text-green-400 mt-2">
-                  Network quality scores guide decisions - low scores indicate challenging transformations, not failures.
+            {/* Preview Mappings button */}
+            {previewStatus !== 'completed' && (
+              <div className="flex flex-col gap-2">
+                <button
+                  onClick={handlePreviewMapping}
+                  disabled={!canPreview || previewRunning}
+                  className="flex items-center justify-center gap-2 w-full px-4 py-2.5 rounded-lg bg-cyan-700 hover:bg-cyan-600 disabled:opacity-50 disabled:cursor-not-allowed text-sm font-medium text-white transition-colors"
+                >
+                  {previewRunning ? (
+                    <>
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                      Computing atom mappings...
+                    </>
+                  ) : (
+                    'Preview Atom Mappings'
+                  )}
+                </button>
+                {!canPreview && (
+                  <p className="text-xs text-gray-500 text-center">
+                    Select at least 2 ligands in step 1 to preview mappings.
+                  </p>
+                )}
+                {previewStatus === 'failed' && (
+                  <p className="text-xs text-red-400 text-center">
+                    Mapping preview failed. Check that your ligands have valid 3D structures and try again.
+                  </p>
+                )}
+                <p className="text-xs text-gray-500 text-center">
+                  Preview is optional — you can proceed to step 3 without running it.
                 </p>
               </div>
-            </InfoBox>
+            )}
 
-            {rbfeStore.rbfeParameters.atom_mapper && (
-              <InfoBox variant="success" title="Selected Mapper">
-                <p>
-                  Using <strong>{rbfeStore.rbfeParameters.atom_mapper === 'kartograf' ? 'Kartograf' : rbfeStore.rbfeParameters.atom_mapper === 'lomap' ? 'LOMAP' : 'LOMAP Relaxed'}</strong> for network creation.
-                  {rbfeStore.rbfeParameters.atom_mapper === 'kartograf' && ' This will preserve 3D binding modes from your ligand coordinates.'}
-                  {rbfeStore.rbfeParameters.atom_mapper === 'lomap' && ' This uses 2D MCS matching (may realign structures).'}
-                </p>
+            {/* Completed preview */}
+            {previewStatus === 'completed' && rbfeStore.mappingPreviewResult && (
+              <AtomMappingPreview
+                result={rbfeStore.mappingPreviewResult}
+                onClear={() => rbfeStore.clearMappingPreview()}
+              />
+            )}
+
+            {previewStatus !== 'completed' && (
+              <InfoBox variant="info" title="Atom Mapper Selection (OpenFE Best Practices)">
+                <div className="space-y-2 text-sm">
+                  <p>
+                    <strong>The atom mapper creates the network AND handles alignment automatically.</strong> No pre-alignment is needed.
+                  </p>
+                  <ul className="list-disc ml-4 space-y-1 mt-2">
+                    <li><strong>Kartograf</strong>: Geometry-based, preserves 3D binding mode from docked poses.</li>
+                    <li><strong>LOMAP</strong>: 2D MCS-based, may realign structures. Use when Kartograf fails.</li>
+                  </ul>
+                </div>
               </InfoBox>
             )}
           </div>
         )
+      }
 
-      case 3:
+      case 3: {
+        // Resolve central ligand name for NetworkPreview
+        const centralLigandName = rbfeStore.centralLigand
+          ? rbfeStore.availableLigands.find((l) => l.id === rbfeStore.centralLigand)?.name || rbfeStore.centralLigand
+          : null
+
+        const selectedLigandNames = rbfeStore.selectedLigandIds.map(
+          (id) => rbfeStore.availableLigands.find((l) => l.id === id)?.name || id,
+        )
+
         return (
           <div className="space-y-6">
             <ParameterSection title="Network Topology" collapsible defaultExpanded>
@@ -540,6 +690,19 @@ export function RBFETool() {
               )}
             </ParameterSection>
 
+            {/* Live network preview — always shown when ≥2 ligands selected */}
+            {selectedLigandNames.length >= 2 && (
+              <div>
+                <div className="text-sm font-medium text-gray-300 mb-2">Network Preview</div>
+                <NetworkPreview
+                  pairs={rbfeStore.mappingPreviewResult?.pairs ?? []}
+                  topology={rbfeStore.networkTopology}
+                  centralLigand={centralLigandName}
+                  ligandNames={selectedLigandNames}
+                />
+              </div>
+            )}
+
             <InfoBox variant="info" title="Network Topology Guide">
               <ul className="list-disc ml-4 space-y-1 text-sm">
                 <li><strong>MST:</strong> Minimizes edges, best for small-medium sets</li>
@@ -549,6 +712,7 @@ export function RBFETool() {
             </InfoBox>
           </div>
         )
+      }
 
       case 4:
         return (
@@ -688,6 +852,7 @@ export function RBFETool() {
             activeJobId={rbfeStore.activeJobId}
             onSelectJob={async (jobId) => {
               rbfeStore.setActiveJob(jobId)
+              if (!jobId) return
               // Fetch full job status for the selected job
               try {
                 const status = await api.getRBFEStatus(jobId)

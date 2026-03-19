@@ -6,6 +6,7 @@ import type {
   LigandSelection,
   NetworkTopology,
   DockingMode,
+  MappingPreviewResult,
 } from '@/types/rbfe-types'
 
 // Helper to check if a job status indicates it's still running/in-progress
@@ -51,6 +52,11 @@ interface RBFEStore {
   jobs: RBFEJob[]
   activeJobId: string | null
 
+  // Atom mapping preview (step 2)
+  mappingPreviewJobId: string | null
+  mappingPreviewStatus: 'idle' | 'running' | 'completed' | 'failed'
+  mappingPreviewResult: MappingPreviewResult | null
+
   // Results
   rbfeResult: RBFEJob | null
   isRunning: boolean
@@ -90,6 +96,12 @@ interface RBFEStore {
   addJob: (job: RBFEJob) => void
   updateJob: (jobId: string, updates: Partial<RBFEJob>) => void
   setActiveJob: (jobId: string | null) => void
+
+  // Actions - Mapping Preview
+  setMappingPreviewJobId: (jobId: string | null) => void
+  setMappingPreviewStatus: (status: 'idle' | 'running' | 'completed' | 'failed') => void
+  setMappingPreviewResult: (result: MappingPreviewResult | null) => void
+  clearMappingPreview: () => void
 
   // Actions - Execution
   setIsRunning: (running: boolean) => void
@@ -145,6 +157,10 @@ export const useRBFEStore = create<RBFEStore>((set, get) => ({
 
   jobs: [],
   activeJobId: null,
+
+  mappingPreviewJobId: null,
+  mappingPreviewStatus: 'idle',
+  mappingPreviewResult: null,
 
   rbfeResult: null,
   isRunning: false,
@@ -211,6 +227,19 @@ export const useRBFEStore = create<RBFEStore>((set, get) => ({
     })),
 
   setNetworkPreview: (preview) => set({ networkPreview: preview }),
+
+  // Mapping preview actions
+  setMappingPreviewJobId: (jobId) => set({ mappingPreviewJobId: jobId }),
+
+  setMappingPreviewStatus: (status) => set({ mappingPreviewStatus: status }),
+
+  setMappingPreviewResult: (result) => set({ mappingPreviewResult: result }),
+
+  clearMappingPreview: () => set({
+    mappingPreviewJobId: null,
+    mappingPreviewStatus: 'idle',
+    mappingPreviewResult: null,
+  }),
 
   // Parameter actions
   setRBFEParameters: (params) =>
@@ -296,6 +325,9 @@ export const useRBFEStore = create<RBFEStore>((set, get) => ({
       centralLigand: null,
       referenceLigand: null,
       networkPreview: null,
+      mappingPreviewJobId: null,
+      mappingPreviewStatus: 'idle',
+      mappingPreviewResult: null,
       rbfeParameters: initialRBFEParameters,
       rbfeResult: null,
       isRunning: false,

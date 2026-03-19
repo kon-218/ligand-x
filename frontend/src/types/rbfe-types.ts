@@ -80,10 +80,12 @@ export interface RBFETransformationResult {
   name: string
   ligand_a?: string
   ligand_b?: string
+  leg?: string
   estimate_kcal_mol?: number
   uncertainty_kcal_mol?: number
   status: 'completed' | 'failed' | 'running' | 'pending'
   error?: string
+  overlap_matrix?: number[][] | null
 }
 
 export interface RBFEDdGValue {
@@ -98,6 +100,8 @@ export interface RBFEResults {
   ddg_values: RBFEDdGValue[]
   relative_affinities: Record<string, number>  // ligand_name -> relative ddG
   reference_ligand?: string
+  // Per-transformation overlap matrices, keyed as "ligand_a|ligand_b"
+  overlap_matrices?: Record<string, { complex?: number[][] | null; solvent?: number[][] | null }>
 }
 
 export interface DockedPoseInfo {
@@ -198,6 +202,25 @@ export interface BatchDockingResult {
     best_affinity?: number
     error?: string
   }>
+}
+
+// Atom mapping preview types
+export interface MappingPairResult {
+  ligand_a: string
+  ligand_b: string
+  score: number
+  num_mapped: number
+  num_unique_a: number
+  num_unique_b: number
+  svgs: string[]  // [svg_mol_a, svg_mol_b] — raw SVG strings from RDKit
+}
+
+export interface MappingPreviewResult {
+  job_id: string
+  status: string
+  pairs: MappingPairResult[]
+  num_ligands: number
+  atom_mapper: string
 }
 
 // Store state types

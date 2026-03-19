@@ -26,6 +26,7 @@ SERVICE_ENVIRONMENTS = {
     'admet': 'biochem-admet',
     'abfe': 'biochem-md',
     'rbfe': 'biochem-md',
+    'rbfe_mapping_preview': 'biochem-md',
     'boltz2': 'biochem-boltz2',
     'docking': 'biochem-docking',
     'qc': 'biochem-qc',
@@ -394,15 +395,16 @@ def call_service(
         'admet': 'services/admet/run_admet_job.py',
         'abfe': 'services/abfe/run_abfe_job.py',
         'rbfe': 'services/rbfe/run_rbfe_job.py',
+        'rbfe_mapping_preview': 'services/rbfe/run_mapping_preview_job.py',
         'boltz2': 'services/boltz2/run_boltz2_job.py',
         'docking': 'services/docking/run_docking_job.py',
     }
-    
+
     if service not in service_scripts:
         raise ValueError(f"Unknown service: {service}. Available: {list(service_scripts.keys())}")
-    
+
     script_path = service_scripts[service]
-    
+
     # Create temporary input file
     with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False) as f:
         json.dump(input_data, f)
@@ -476,10 +478,11 @@ def call_service_with_progress(
         'admet': 'services/admet/run_admet_job.py',
         'abfe': 'services/abfe/run_abfe_job.py',
         'rbfe': 'services/rbfe/run_rbfe_job.py',
+        'rbfe_mapping_preview': 'services/rbfe/run_mapping_preview_job.py',
         'boltz2': 'services/boltz2/run_boltz2_job.py',
         'docking': 'services/docking/run_docking_job.py',
     }
-    
+
     if service not in service_scripts:
         yield {"type": "error", "data": {"error": f"Unknown service: {service}"}}
         return

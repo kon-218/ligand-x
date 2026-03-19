@@ -43,16 +43,25 @@ export function QuantumChemistryTool() {
     // Local State
     const [activeTab, setActiveTab] = useState<'setup' | 'results'>('setup')
     const [resultsSubtab, setResultsSubtab] = useState<'recent' | 'completed'>('completed')
-    const [jobTypeFilter, setJobTypeFilter] = useState<'all' | 'standard' | 'ir' | 'fukui' | 'conformer'>('all')
+    const [jobTypeFilter, setJobTypeFilter] = useState<'all' | 'standard' | 'ir' | 'fukui' | 'conformer' | 'bde'>('all')
     const [loadingResults, setLoadingResults] = useState(false)
     const [submitting, setSubmitting] = useState(false)
-    const [calculationType, setCalculationType] = useState<'standard' | 'fukui' | 'conformer'>('standard')
+    const [calculationType, setCalculationType] = useState<'standard' | 'fukui' | 'conformer' | 'bde'>('standard')
     const [fukuiMethod, setFukuiMethod] = useState<string>('B3LYP')
     const [fukuiBasisSet, setFukuiBasisSet] = useState<string>('def2-SVP')
     const [conformerCount, setConformerCount] = useState<number>(50)
     const [energyWindow, setEnergyWindow] = useState<number>(5.0)
     const [fukuiCores, setFukuiCores] = useState<number>(4)
     const [conformerCores, setConformerCores] = useState<number>(4)
+    const [bdeMode, setBdeMode] = useState<'reckless' | 'rapid' | 'careful' | 'meticulous'>('rapid')
+    const [bdeCores, setBdeCores] = useState<number>(4)
+    const [bdeParallelBonds, setBdeParallelBonds] = useState<number>(4)
+    const [selectedLigandId, setSelectedLigandId] = useState<string | null>(null)
+
+    // Reset selected ligand when structure changes
+    useEffect(() => {
+        setSelectedLigandId(null)
+    }, [currentStructure?.structure_id])
 
     // Sync isRunning state
     useEffect(() => {

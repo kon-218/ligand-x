@@ -1,11 +1,32 @@
 import { create } from 'zustand'
 import type { QCAdvancedParameters } from '@/components/Tools/QC/QCAdvancedParameters'
 
+export interface BDEResult {
+  bond_idx: number
+  bond_label: string
+  atom1_idx: number
+  atom2_idx: number
+  atom1_symbol: string
+  atom2_symbol: string
+  bond_type: string
+  frag1_energy_hartree?: number
+  frag2_energy_hartree?: number | null
+  bde_raw_kcal?: number
+  bde_corrected_kcal?: number
+  status: 'success' | 'failed'
+  is_in_ring?: boolean
+  ring_opening?: boolean
+  biradical_mult?: number
+  biradical_energy_hartree?: number
+  error?: string
+  rank?: number
+}
+
 export interface QCJob {
   id: string
   molecule_id: string
   status: 'pending' | 'running' | 'completed' | 'failed'
-  job_type?: 'standard' | 'ir' | 'fukui' | 'conformer'
+  job_type?: 'standard' | 'ir' | 'fukui' | 'conformer' | 'bde'
   method: string
   basis_set: string
   created_at: string
@@ -72,6 +93,21 @@ export interface QCResults {
     f_zero: number[]
     charges_neutral: number[]
   }
+
+  // Bond Dissociation Energies
+  bde_results?: BDEResult[]
+  bde_statistics?: {
+    min_bde_kcal: number
+    max_bde_kcal: number
+    mean_bde_kcal: number
+    weakest_bond: string
+    strongest_bond: string
+    n_successful: number
+    n_ring_bonds: number
+    n_failed: number
+  }
+  parent_energy_hartree?: number
+  regression_coeffs?: { a: number; b: number }
 
   // File URLs for visualization
   structure_url?: string

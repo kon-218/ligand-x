@@ -3,7 +3,7 @@ module ligandx-launcher
 go 1.24.0
 
 require (
-	github.com/docker/docker v25.0.8+incompatible
+	github.com/docker/docker v25.0.14+incompatible
 	github.com/wailsapp/wails/v2 v2.11.0
 )
 

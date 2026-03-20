@@ -14,12 +14,18 @@ export interface QCJob {
     id: string
     molecule_id: string
     status: 'pending' | 'running' | 'completed' | 'failed'
-    job_type?: 'standard' | 'ir' | 'fukui' | 'conformer'
+    job_type?: 'standard' | 'ir' | 'fukui' | 'conformer' | 'bde'
     method: string
     basis_set: string
     created_at: string
     updated_at: string
-    progress?: number
+    progress?: {
+        percent: number
+        step: string
+        details: string
+        updated_at: string
+    }
+    completed_stages?: string[]
     error_message?: string
 }
 

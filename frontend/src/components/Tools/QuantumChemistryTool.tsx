@@ -1,18 +1,19 @@
 'use client'
 
-import React, { useState, useEffect, useMemo, useCallback } from 'react'
+import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react'
 import { Settings, BarChart3 } from 'lucide-react'
 import { useQCStore } from '@/store/qc-store'
 import { useMolecularStore } from '@/store/molecular-store'
 import { useUIStore } from '@/store/ui-store'
 import { qcService } from '@/lib/qc-service'
+import { api } from '@/lib/api-client'
 import { QCTabSetup } from './QuantumChemistry/QCTabSetup'
 import { QCTabResults } from './QuantumChemistry/QCTabResults'
-import { normalizeStatus } from './QuantumChemistry/utils'
 import type { QCAdvancedParameters as QCAdvancedParametersType } from '@/components/Tools/QC/QCAdvancedParameters'
 import { LoadingOverlay } from '@/components/ui/LoadingOverlay'
 import { useUnifiedResultsStore } from '@/store/unified-results-store'
 import type { Ligand } from '@/types/molecular'
+import { validateMoleculeMatch } from '@/lib/structure-utils'
 
 export function QuantumChemistryTool() {
     const { addNotification } = useUIStore()
@@ -22,7 +23,6 @@ export function QuantumChemistryTool() {
         results,
         activeResults,
         advancedParameters,
-        updateJob,
         setActiveJob,
         setIsRunning,
         setResults,
@@ -43,16 +43,25 @@ export function QuantumChemistryTool() {
     // Local State
     const [activeTab, setActiveTab] = useState<'setup' | 'results'>('setup')
     const [resultsSubtab, setResultsSubtab] = useState<'recent' | 'completed'>('completed')
-    const [jobTypeFilter, setJobTypeFilter] = useState<'all' | 'standard' | 'ir' | 'fukui' | 'conformer'>('all')
+    const [jobTypeFilter, setJobTypeFilter] = useState<'all' | 'standard' | 'ir' | 'fukui' | 'conformer' | 'bde'>('all')
     const [loadingResults, setLoadingResults] = useState(false)
     const [submitting, setSubmitting] = useState(false)
-    const [calculationType, setCalculationType] = useState<'standard' | 'fukui' | 'conformer'>('standard')
+    const [calculationType, setCalculationType] = useState<'standard' | 'fukui' | 'conformer' | 'bde'>('standard')
     const [fukuiMethod, setFukuiMethod] = useState<string>('B3LYP')
     const [fukuiBasisSet, setFukuiBasisSet] = useState<string>('def2-SVP')
     const [conformerCount, setConformerCount] = useState<number>(50)
     const [energyWindow, setEnergyWindow] = useState<number>(5.0)
     const [fukuiCores, setFukuiCores] = useState<number>(4)
     const [conformerCores, setConformerCores] = useState<number>(4)
+    const [bdeMode, setBdeMode] = useState<'reckless' | 'rapid' | 'careful' | 'meticulous'>('rapid')
+    const [bdeCores, setBdeCores] = useState<number>(4)
+    const [bdeParallelBonds, setBdeParallelBonds] = useState<number>(4)
+    const [selectedLigandId, setSelectedLigandId] = useState<string | null>(null)
+
+    // Reset selected ligand when structure changes
+    useEffect(() => {
+        setSelectedLigandId(null)
+    }, [currentStructure?.structure_id])
 
     // Sync isRunning state
     useEffect(() => {
@@ -93,7 +102,9 @@ export function QuantumChemistryTool() {
                 const newStructure = {
                     ...currentStructure,
                     xyz_data: data.molecule_xyz,
-                    sdf_data: undefined,
+                    // Use H-added SDF if available (preserves bond orders + shows H atoms).
+                    // Falls back to the original sdf_data when backend couldn't produce one (XYZ input).
+                    sdf_data: data.molecule_sdf ?? currentStructure.sdf_data,
                     pdb_data: '',
                     structure_id: `${currentStructure.structure_id}_h`
                 }
@@ -109,50 +120,77 @@ export function QuantumChemistryTool() {
     }, [currentStructure?.structure_id])
 
 
-    // Poll job results
-    const pollJobResults = async (jobId: string) => {
-        try {
-            const { loadAllJobs } = useUnifiedResultsStore.getState()
-            const result = await qcService.pollJobUntilComplete(
-                jobId,
-                (status) => {
-                    updateJob(jobId, {
-                        status: normalizeStatus(status.status),
-                        progress: status.progress,
-                        updated_at: new Date().toISOString(),
-                    })
+    // Track active SSE streams so we don't double-connect and can clean up on unmount
+    const activeStreams = useRef<Map<string, EventSource>>(new Map())
+
+    // Connect to the gateway SSE stream for a QC job.
+    // This keeps PostgreSQL status up-to-date (submitted → running → completed/failed)
+    // so that on browser reload the job shows the correct status instead of "Queued".
+    const startSSEStream = useCallback((jobId: string) => {
+        if (activeStreams.current.has(jobId)) return  // already streaming
+
+        const { loadAllJobs, handleJobUpdate } = useUnifiedResultsStore.getState()
+
+        const eventSource: EventSource = api.streamJobProgress(
+            jobId,
+            (progressData: any) => {
+                // Push progress into the unified store so QCJobProgress re-renders in real time
+                handleJobUpdate({
+                    job_id: jobId,
+                    status: progressData.status ?? 'running',
+                    progress: progressData.progress,
+                    stage: progressData.stage,
+                    timestamp: new Date().toISOString(),
+                })
+            },
+            async (_result: any) => {
+                // SSE reports completion — fetch full QC results from QC service
+                activeStreams.current.delete(jobId)
+                try {
+                    const response = await qcService.getJobResults(jobId)
+                    if (response.results && Object.values(response.results).some(val => val !== null)) {
+                        setResults(jobId, response.results)
+                        addNotification('success', 'Quantum chemistry calculation completed. Click on the job to view results.')
+                    } else {
+                        addNotification('warning', 'Calculation completed but no results were returned')
+                    }
+                } catch {
+                    addNotification('warning', 'Calculation completed but results could not be loaded')
                 }
-            )
-
-            if (result.results && Object.values(result.results).some(val => val !== null)) {
-                // Store results but don't auto-display them - user must click on job
-                setResults(jobId, result.results)
-                addNotification('success', `Quantum chemistry calculation completed. Click on the job to view results.`)
-            } else {
-                addNotification('warning', `Calculation completed but no results were returned`)
+                setResultsSubtab('completed')
+                setJobTypeFilter('all')
+                loadAllJobs()
+            },
+            (error: string) => {
+                activeStreams.current.delete(jobId)
+                addNotification('error', `Quantum chemistry job failed: ${error}`)
+                loadAllJobs()
             }
+        )
 
-            updateJob(jobId, { status: 'completed', updated_at: new Date().toISOString() })
-            // Switch to completed tab so user can see and click on the finished job
-            setResultsSubtab('completed')
-            // Clear job type filter so the job is visible
-            setJobTypeFilter('all')
-            // Refresh unified results store to show job in completed section
-            loadAllJobs()
+        activeStreams.current.set(jobId, eventSource)
+    }, [addNotification, setResults, setResultsSubtab, setJobTypeFilter])
 
-        } catch (error) {
-            console.error('Job failed:', error)
-            updateJob(jobId, {
-                status: 'failed',
-                error_message: error instanceof Error ? error.message : 'Job failed',
-                updated_at: new Date().toISOString(),
-            })
-            addNotification('error', `Quantum chemistry job ${jobId} failed`)
-            // Refresh unified results store to show failed job
-            const { loadAllJobs } = useUnifiedResultsStore.getState()
-            loadAllJobs()
+    // Cleanup all streams on unmount
+    useEffect(() => {
+        return () => {
+            activeStreams.current.forEach(es => es.close())
+            activeStreams.current.clear()
         }
-    }
+    }, [])
+
+    // On mount: reconnect SSE for any QC jobs stuck in submitted/running/pending state.
+    // This handles the case where the browser was closed while a job was running.
+    // startSSEStream is stable (depends only on stable Zustand actions), so including it
+    // in the dep array satisfies the linter without causing extra re-runs.
+    useEffect(() => {
+        const qcRunning = allJobs.filter(
+            j => j.service === 'qc' &&
+                 (j.status === 'submitted' || j.status === 'running' || j.status === 'pending')
+        )
+        qcRunning.forEach(j => startSSEStream(j.job_id))
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [startSSEStream])  // allJobs intentionally omitted: only reconnect on mount, not on every job-list change
 
     // Submit Standard Job (params passed from QCTabSetup or from custom advanced editor)
     const handleSubmitJob = async (params: QCAdvancedParametersType) => {
@@ -167,9 +205,15 @@ export function QuantumChemistryTool() {
             const ligands: Ligand[] = currentStructure.ligands ? Object.values(currentStructure.ligands) : []
             const ligandKeys = currentStructure.ligands ? Object.keys(currentStructure.ligands) : []
 
+            // Get the selected ligand or fall back to first ligand
+            const selectedLigand = selectedLigandId && currentStructure.ligands 
+                ? currentStructure.ligands[selectedLigandId] 
+                : ligands[0]
+            const selectedLigandKey = selectedLigandId || ligandKeys[0]
+
             const moleculeData = currentStructure.sdf_data ||
-                               ligands[0]?.sdf_data ||
-                               ligands[0]?.pdb_data ||
+                               selectedLigand?.sdf_data ||
+                               selectedLigand?.pdb_data ||
                                currentStructure.pdb_data ||
                                currentStructure.xyz_data || ''
 
@@ -180,10 +224,9 @@ export function QuantumChemistryTool() {
 
             // Determine molecule name: use ligand residue_name (het_id) if from protein, otherwise structure_id
             let moleculeName = currentStructure.structure_id || 'unknown'
-            if (ligands.length > 0) {
-                const firstLigand = ligands[0]
+            if (selectedLigand) {
                 // Use residue_name (3-letter het_id like 'BEN', 'ATP') or ligand name as the molecule name
-                moleculeName = firstLigand.residue_name || firstLigand.name || ligandKeys[0] || moleculeName
+                moleculeName = selectedLigand.residue_name || selectedLigand.name || selectedLigandKey || moleculeName
             }
 
             let backendJobType = params.job_type
@@ -193,7 +236,6 @@ export function QuantumChemistryTool() {
             else if (params.compute_frequencies && params.job_type === 'SP') backendJobType = 'FREQ'
 
             // Use unified job submission endpoint
-            const { api } = await import('@/lib/api-client')
             const submission = await api.submitJob('qc', {
                 qc_job_type: 'standard',
                 molecule_xyz: moleculeData,
@@ -229,7 +271,7 @@ export function QuantumChemistryTool() {
             setResultsSubtab('recent')
             addNotification('success', `Job ${job_id} submitted successfully`)
             refreshJobs()
-            pollJobResults(job_id)
+            startSSEStream(job_id)
 
         } catch (error) {
             console.error('Failed to submit QC job:', error)
@@ -247,11 +289,17 @@ export function QuantumChemistryTool() {
             const ligands: Ligand[] = currentStructure.ligands ? Object.values(currentStructure.ligands) : []
             const ligandKeys = currentStructure.ligands ? Object.keys(currentStructure.ligands) : []
 
+            // Get the selected ligand or fall back to first ligand
+            const selectedLigand = selectedLigandId && currentStructure.ligands 
+                ? currentStructure.ligands[selectedLigandId] 
+                : ligands[0]
+            const selectedLigandKey = selectedLigandId || ligandKeys[0]
+
             // Prioritize ligand data (SDF/PDB) over the main structure PDB/XYZ
             // This prevents sending a full protein complex for Fukui calculations
             const moleculeData = currentStructure.sdf_data ||
-                               ligands[0]?.sdf_data ||
-                               ligands[0]?.pdb_data ||
+                               selectedLigand?.sdf_data ||
+                               selectedLigand?.pdb_data ||
                                currentStructure.pdb_data ||
                                currentStructure.xyz_data || ''
 
@@ -262,13 +310,11 @@ export function QuantumChemistryTool() {
 
             // Determine molecule name: use ligand residue_name (het_id) if from protein, otherwise structure_id
             let moleculeName = currentStructure.structure_id || 'unknown'
-            if (ligands.length > 0) {
-                const firstLigand = ligands[0]
-                moleculeName = firstLigand.residue_name || firstLigand.name || ligandKeys[0] || moleculeName
+            if (selectedLigand) {
+                moleculeName = selectedLigand.residue_name || selectedLigand.name || selectedLigandKey || moleculeName
             }
 
             // Use unified job submission endpoint
-            const { api } = await import('@/lib/api-client')
             const submission = await api.submitJob('qc', {
                 qc_job_type: 'fukui',  // Specify Fukui job type for gateway routing
                 molecule_xyz: moleculeData,
@@ -290,7 +336,7 @@ export function QuantumChemistryTool() {
             setResultsSubtab('recent')
             addNotification('success', `Fukui calculation ${job_id} submitted`)
             refreshJobs()
-            pollJobResults(job_id)
+            startSSEStream(job_id)
         } catch (error) {
             addNotification('error', error instanceof Error ? error.message : 'Failed to submit Fukui job')
         } finally {
@@ -305,13 +351,20 @@ export function QuantumChemistryTool() {
         try {
             const ligands: Ligand[] = currentStructure.ligands ? Object.values(currentStructure.ligands) : []
             const ligandKeys = currentStructure.ligands ? Object.keys(currentStructure.ligands) : []
-            const smiles = currentStructure.smiles || ligands[0]?.smiles
+
+            // Get the selected ligand or fall back to first ligand
+            const selectedLigand = selectedLigandId && currentStructure.ligands 
+                ? currentStructure.ligands[selectedLigandId] 
+                : ligands[0]
+            const selectedLigandKey = selectedLigandId || ligandKeys[0]
+
+            const smiles = currentStructure.smiles || selectedLigand?.smiles
             
             // Prioritize ligand data (SDF/PDB) over the main structure PDB/XYZ
             // This prevents sending a full protein complex for conformer search
             const moleculeData = currentStructure.sdf_data || 
-                               ligands[0]?.sdf_data || 
-                               ligands[0]?.pdb_data || 
+                               selectedLigand?.sdf_data || 
+                               selectedLigand?.pdb_data || 
                                currentStructure.pdb_data || 
                                currentStructure.xyz_data || ''
 
@@ -326,13 +379,11 @@ export function QuantumChemistryTool() {
 
             // Determine molecule name: use ligand residue_name (het_id) if from protein, otherwise structure_id
             let moleculeName = currentStructure.structure_id || 'unknown'
-            if (ligands.length > 0) {
-                const firstLigand = ligands[0]
-                moleculeName = firstLigand.residue_name || firstLigand.name || ligandKeys[0] || moleculeName
+            if (selectedLigand) {
+                moleculeName = selectedLigand.residue_name || selectedLigand.name || selectedLigandKey || moleculeName
             }
 
             // Use unified job submission endpoint
-            const { api } = await import('@/lib/api-client')
             const submission = await api.submitJob('qc', {
                 qc_job_type: 'conformer',  // Specify conformer job type for gateway routing
                 smiles: smiles,
@@ -354,7 +405,7 @@ export function QuantumChemistryTool() {
             setResultsSubtab('recent')
             addNotification('success', `Conformer search ${job_id} submitted`)
             refreshJobs()
-            pollJobResults(job_id)
+            startSSEStream(job_id)
         } catch (error) {
             addNotification('error', error instanceof Error ? error.message : 'Failed to submit Conformer job')
         } finally {
@@ -362,19 +413,86 @@ export function QuantumChemistryTool() {
         }
     }
 
+    // Submit BDE Job
+    const handleSubmitBDEJob = async () => {
+        if (!currentStructure) return
+        setSubmitting(true)
+        try {
+            const ligands: Ligand[] = currentStructure.ligands ? Object.values(currentStructure.ligands) : []
+            const ligandKeys = currentStructure.ligands ? Object.keys(currentStructure.ligands) : []
+
+            const selectedLigand = selectedLigandId && currentStructure.ligands 
+                ? currentStructure.ligands[selectedLigandId] 
+                : ligands[0]
+            const selectedLigandKey = selectedLigandId || ligandKeys[0]
+
+            const moleculeData = currentStructure.sdf_data ||
+                               selectedLigand?.sdf_data ||
+                               selectedLigand?.pdb_data ||
+                               currentStructure.pdb_data ||
+                               currentStructure.xyz_data || ''
+
+            if (!moleculeData) {
+                addNotification('error', 'No 3D molecular data available')
+                return
+            }
+
+            let moleculeName = currentStructure.structure_id || 'unknown'
+            if (selectedLigand) {
+                moleculeName = selectedLigand.residue_name || selectedLigand.name || selectedLigandKey || moleculeName
+            }
+
+            const { api } = await import('@/lib/api-client')
+            const submission = await api.submitJob('qc', {
+                qc_job_type: 'bde',
+                molecule_xyz: moleculeData,
+                molecule_name: moleculeName,
+                mode: bdeMode,
+                charge: advancedParameters?.charge || 0,
+                n_procs: bdeCores,
+                parallel_bonds: bdeParallelBonds,
+                memory_mb: advancedParameters?.memory_mb || 4000,
+            })
+
+            const job_id = submission.job_id
+
+            setUnifiedActiveJob(job_id, 'qc')
+            setActiveJob(job_id)
+            setIsRunning(true)
+            setActiveTab('results')
+            setResultsSubtab('recent')
+            addNotification('success', `BDE calculation ${job_id} submitted`)
+            refreshJobs()
+            startSSEStream(job_id)
+        } catch (error) {
+            addNotification('error', error instanceof Error ? error.message : 'Failed to submit BDE job')
+        } finally {
+            setSubmitting(false)
+        }
+    }
+
     // Handle job selection
-    const handleSelectJob = useCallback(async (jobId: string) => {
+    const handleSelectJob = useCallback(async (jobId: string | null) => {
         setUnifiedActiveJob(jobId, 'qc')
         setActiveJob(jobId)
+        if (!jobId) return
         setActiveTab('results')
+
+        const job = getJobById(jobId)
+        const jobStatus = job?.status as string
+
+        // Clear results display for running/pending jobs
+        if (jobStatus === 'running' || jobStatus === 'pending') {
+            setActiveResults(null)
+            return
+        }
 
         if (results[jobId]) {
             setActiveResults(results[jobId])
             return
         }
 
-        const job = getJobById(jobId)
-        if (job && ((job.status as string) === 'completed' || (job.status as string) === 'success')) {
+        if (job && (jobStatus === 'completed' || jobStatus === 'success')) {
             setLoadingResults(true)
             try {
                 const response = await qcService.getJobResults(jobId)
@@ -485,6 +603,13 @@ export function QuantumChemistryTool() {
     const handleVisualizeFukui = async (type: string, values: number[]) => {
         console.log('Visualizing Fukui:', type, values)
 
+        // Validate molecule match before applying visualization
+        const validation = validateMoleculeMatch(currentStructure, values.length)
+        if (!validation.isValid) {
+            addNotification('error', validation.reason || 'Cannot apply Fukui visualization to mismatched molecule')
+            return
+        }
+
         // Check if viewerRef is a MolstarViewerHandle with coloring methods
         if (viewerRef && 'coloring' in viewerRef && typeof viewerRef.coloring?.applyFukuiTheme === 'function') {
             try {
@@ -516,6 +641,13 @@ export function QuantumChemistryTool() {
     }
 
     const handleVisualizeCharges = async (values: number[], type: 'chelpg' | 'mulliken') => {
+        // Validate molecule match before applying visualization
+        const validation = validateMoleculeMatch(currentStructure, values.length)
+        if (!validation.isValid) {
+            addNotification('error', validation.reason || 'Cannot apply charge visualization to mismatched molecule')
+            return
+        }
+
         if (viewerRef && 'coloring' in viewerRef && typeof (viewerRef.coloring as any)?.applyChargesTheme === 'function') {
             try {
                 await (viewerRef.coloring as any).applyChargesTheme(values)
@@ -587,12 +719,21 @@ export function QuantumChemistryTool() {
                         onEnergyWindowChange={setEnergyWindow}
                         conformerCores={conformerCores}
                         onConformerCoresChange={setConformerCores}
+                        bdeMode={bdeMode}
+                        onBdeModeChange={setBdeMode}
+                        bdeCores={bdeCores}
+                        onBdeCoresChange={setBdeCores}
+                        bdeParallelBonds={bdeParallelBonds}
+                        onBdeParallelBondsChange={setBdeParallelBonds}
                         onSubmitStandard={handleSubmitJob}
                         onSubmitFukui={handleSubmitFukuiJob}
                         onSubmitConformer={handleSubmitConformerJob}
+                        onSubmitBDE={handleSubmitBDEJob}
                         onPreviewInput={(content) => {
                             addInputFileTab(content, 'ORCA Input Preview')
                         }}
+                        selectedLigandId={selectedLigandId}
+                        onSelectedLigandChange={setSelectedLigandId}
                     />
                 )}
 

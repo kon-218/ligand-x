@@ -176,6 +176,7 @@ async def submit_job(job_type: str, request: Request):
                 'ir': '/api/qc/jobs/ir',
                 'fukui': '/api/qc/jobs/fukui',
                 'conformer': '/api/qc/jobs/conformer',
+                'bde': '/api/qc/jobs/bde',
             }
             
             endpoint = endpoint_map.get(qc_job_type, '/api/qc/jobs')

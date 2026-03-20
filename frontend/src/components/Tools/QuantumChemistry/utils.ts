@@ -63,6 +63,8 @@ export function getJobTypeBadge(job: QCJob): { label: string; className: string 
             return { label: 'Fukui', className: 'bg-amber-600/30 text-amber-300' }
         case 'conformer':
             return { label: 'Conformer', className: 'bg-emerald-600/30 text-emerald-300' }
+        case 'bde':
+            return { label: 'BDE', className: 'bg-sky-600/30 text-sky-300' }
         case 'standard':
             return { label: 'Single Point', className: 'bg-blue-600/30 text-blue-300' }
         default:

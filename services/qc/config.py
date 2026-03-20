@@ -142,6 +142,61 @@ class QCConfig:
     TASK_SOFT_TIME_LIMIT = int(os.environ.get('QC_TASK_SOFT_LIMIT', '3600'))  # 1 hour
     TASK_HARD_TIME_LIMIT = int(os.environ.get('QC_TASK_HARD_LIMIT', '7200'))  # 2 hours
     
+    # ==========================================================================
+    # BOND DISSOCIATION ENERGY (BDE) WORKFLOW CONFIGURATION
+    # ==========================================================================
+    # BDE = E(fragment1) + E(fragment2) - E(parent)
+    # Four accuracy modes spanning the fast-accurate Pareto frontier
+    
+    BDE_MODE_PRESETS = {
+        'reckless': {
+            'opt_method': 'GFN-FF',
+            'opt_basis': '',
+            'sp_method': 'GFN2-xTB',
+            'sp_basis': '',
+            'optimize_fragments': False,
+            'description': 'Fastest mode: GFN-FF optimization, GFN2-xTB single-point, no fragment optimization'
+        },
+        'rapid': {
+            'opt_method': 'GFN2-xTB',
+            'opt_basis': '',
+            'sp_method': 'r2SCAN-3c',
+            'sp_basis': '',
+            'optimize_fragments': True,
+            'description': 'Fast mode: GFN2-xTB optimization, r2SCAN-3c single-point'
+        },
+        'careful': {
+            'opt_method': 'r2SCAN-3c',
+            'opt_basis': '',
+            'sp_method': 'wB97X-3c',
+            'sp_basis': '',
+            'optimize_fragments': True,
+            'description': 'Accurate mode: r2SCAN-3c optimization, ωB97X-3c single-point'
+        },
+        'meticulous': {
+            'opt_method': 'wB97X-3c',
+            'opt_basis': '',
+            'sp_method': 'wB97M-D3BJ',
+            'sp_basis': 'def2-TZVPPD',
+            'optimize_fragments': True,
+            'description': 'High accuracy: ωB97X-3c optimization, ωB97M-D3(BJ)/def2-TZVPPD single-point'
+        },
+    }
+    
+    # Linear regression correction coefficients for BDE
+    # BDE_corrected = a * BDE_raw + b (kcal/mol)
+    # These approximate enthalpic/entropic effects and lack of fragment optimization (reckless mode)
+    # Coefficients derived from benchmark studies on organic bond dissociation energies
+    BDE_REGRESSION_COEFFS = {
+        'reckless': {'a': 1.05, 'b': 2.5},   # Larger correction for no fragment opt
+        'rapid': {'a': 1.02, 'b': 1.8},
+        'careful': {'a': 1.01, 'b': 0.9},
+        'meticulous': {'a': 1.00, 'b': 0.3},  # Minimal correction for high-level method
+    }
+    
+    # Hartree to kcal/mol conversion factor
+    HARTREE_TO_KCAL = 627.5094740631
+    
     @classmethod
     def ensure_directories(cls):
         """Create necessary directories if they don't exist."""

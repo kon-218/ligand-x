@@ -312,3 +312,4 @@ def docking_single(self, job_data: Dict[str, Any]) -> Dict[str, Any]:
             'error': str(e),
             'completed_at': datetime.now().isoformat()
         }
+

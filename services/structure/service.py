@@ -91,19 +91,21 @@ class StructureService:
         mol = Chem.AddHs(mol)
         AllChem.EmbedMolecule(mol, AllChem.ETKDGv3())
         AllChem.MMFFOptimizeMolecule(mol)
-        
-        sdf_data = Chem.MolToMolBlock(mol, confId=0)
-        pdb_data = Chem.MolToPDBBlock(mol)
-        
+
+        # Strip H for visualization — heavy-atom SDF preserves bond orders cleanly
+        mol_vis = Chem.RemoveHs(mol)
+        sdf_data = Chem.MolToMolBlock(mol_vis, confId=0)
+        pdb_data = Chem.MolToPDBBlock(mol_vis)
+
         processed_data = structure_processor.process_structure(pdb_data)
         canonical_smiles = Chem.MolToSmiles(mol, canonical=True)
-        
-        # Save to library
+
+        # Save to library with full H coordinates for downstream use
         library_save_result = self._save_molecule_to_library(
             name=molecule_name,
             smiles=smiles,
             canonical_smiles=canonical_smiles,
-            molfile=sdf_data,
+            molfile=Chem.MolToMolBlock(mol, confId=0),
             source='smiles_upload'
         )
         

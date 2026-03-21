@@ -3,7 +3,8 @@
 import { useState, useEffect, useMemo } from 'react'
 import { Button } from '@/components/ui/button'
 import { Alert, AlertDescription } from '@/components/ui/alert'
-import { Loader2, CheckCircle2, AlertCircle, RefreshCw, Save, Activity, CheckCircle, XCircle, Clock, Layers } from 'lucide-react'
+import { Loader2, CheckCircle2, AlertCircle, RefreshCw, Save, Activity, CheckCircle, XCircle, Clock, Layers, Download } from 'lucide-react'
+import { downloadCSV } from '@/lib/csv-export'
 import type { DockingResults, DockingPose } from '@/types/docking'
 import { useDockingStore } from '@/store/batch-docking-store' // Using renamed generic store
 import { api } from '@/lib/api-client'
@@ -65,9 +66,9 @@ export function DockingStepResults({
 
     const filteredJobs = getFilteredJobs().filter(j => j.service === 'docking')
 
-    const handleSelectJob = async (jobId: string) => {
+    const handleSelectJob = async (jobId: string | null) => {
         dockingStore.setActiveJobId(jobId)
-        if (onJobSelected) {
+        if (jobId && onJobSelected) {
             onJobSelected(jobId)
         }
     }
@@ -213,6 +214,31 @@ export function DockingStepResults({
                                     <p className="text-sm text-gray-400 mt-1">Click a row to view that pose · Check multiple to compare</p>
                                 </div>
                                 <div className="flex items-center gap-2">
+                                    {dockingResults.poses && dockingResults.poses.length > 0 && (
+                                        <Button
+                                            size="sm"
+                                            variant="outline"
+                                            onClick={() => downloadCSV(
+                                                [
+                                                    { key: 'mode', label: 'Pose' },
+                                                    { key: 'affinity', label: 'Affinity (kcal/mol)' },
+                                                    { key: 'rmsd_lb', label: 'RMSD l.b.' },
+                                                    { key: 'rmsd_ub', label: 'RMSD u.b.' },
+                                                ],
+                                                dockingResults.poses.map(p => ({
+                                                    mode: p.mode,
+                                                    affinity: p.affinity.toFixed(2),
+                                                    rmsd_lb: p.rmsd_lb.toFixed(3),
+                                                    rmsd_ub: p.rmsd_ub.toFixed(3),
+                                                })),
+                                                'docking_poses.csv'
+                                            )}
+                                            className="bg-gray-700 border-gray-600 hover:bg-gray-600 text-gray-300"
+                                        >
+                                            <Download className="h-3.5 w-3.5 mr-1.5" />
+                                            CSV
+                                        </Button>
+                                    )}
                                     {multiSelectIndices.size >= 2 && onVisualizeMultiplePoses && (
                                         <Button
                                             size="sm"

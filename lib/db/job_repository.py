@@ -40,6 +40,14 @@ except ImportError:
     logger.warning("asyncpg not installed. Database operations will be disabled.")
 
 
+def _parse_job_id(job_id: str) -> uuid.UUID:
+    """Parse job_id string into UUID, raising ValueError on invalid input."""
+    try:
+        return uuid.UUID(job_id)
+    except (ValueError, AttributeError) as e:
+        raise ValueError(f"Invalid job ID '{job_id}': {e}") from e
+
+
 class JobRepository:
     """
     PostgreSQL repository for job persistence.
@@ -221,7 +229,7 @@ class JobRepository:
                 VALUES ($1, $2, $3, $4, $5, 'pending')
                 RETURNING id, job_type, status, created_at, molecule_name
                 """,
-                uuid.UUID(job_id),
+                _parse_job_id(job_id),
                 job_type,
                 json.dumps(input_params),
                 molecule_name,
@@ -271,7 +279,7 @@ class JobRepository:
                         WHERE id = $2
                         RETURNING job_type
                         """,
-                        status, uuid.UUID(job_id), progress, stage
+                        status, _parse_job_id(job_id), progress, stage
                     )
                     if row:
                         job_type = row['job_type']
@@ -286,7 +294,7 @@ class JobRepository:
                         status,
                         json.dumps(result) if result else None,
                         error_message,
-                        uuid.UUID(job_id)
+                        _parse_job_id(job_id)
                     )
                     if row:
                         job_type = row['job_type']
@@ -301,7 +309,7 @@ class JobRepository:
                         WHERE id = $1
                         RETURNING job_type
                         """,
-                        uuid.UUID(job_id), progress, stage
+                        _parse_job_id(job_id), progress, stage
                     )
                     if row:
                         job_type = row['job_type']
@@ -338,28 +346,29 @@ class JobRepository:
             message: Progress message
         """
         job_type = None
-        
+        status = 'running'
+
         if not self.pool:
             return
-        
+
         async with self.pool.acquire() as conn:
             row = await conn.fetchrow(
                 """
-                UPDATE jobs 
+                UPDATE jobs
                 SET progress = $2, stage = COALESCE($3, stage)
                 WHERE id = $1
                 RETURNING job_type, status
                 """,
-                uuid.UUID(job_id), progress, stage
+                _parse_job_id(job_id), progress, stage
             )
             if row:
                 job_type = row['job_type']
                 status = row['status']
-        
+
         # Publish progress update to Redis for WebSocket broadcast
         await self._publish_job_update(
             job_id=job_id,
-            status=status if 'status' in dir() else 'running',
+            status=status,
             progress=progress,
             stage=stage,
             job_type=job_type
@@ -382,7 +391,7 @@ class JobRepository:
         async with self.pool.acquire() as conn:
             row = await conn.fetchrow(
                 "SELECT * FROM jobs WHERE id = $1",
-                uuid.UUID(job_id)
+                _parse_job_id(job_id)
             )
             
             if row:
@@ -499,7 +508,7 @@ class JobRepository:
         async with self.pool.acquire() as conn:
             result = await conn.execute(
                 "DELETE FROM jobs WHERE id = $1",
-                uuid.UUID(job_id)
+                _parse_job_id(job_id)
             )
             return result == "DELETE 1"
     

@@ -3,6 +3,7 @@
 import { useState } from 'react'
 import { Button } from '@/components/ui/button'
 import { CheckCircle, XCircle, Download, Eye, Play, FileText, Loader2, Flame } from 'lucide-react'
+import { MDTrajectoryAnalysis } from './MDTrajectoryAnalysis'
 import { useMolecularStore } from '@/store/molecular-store'
 import { useUIStore } from '@/store/ui-store'
 import { useABFEStore } from '@/store/abfe-store'
@@ -525,6 +526,14 @@ export function MDResultsDisplay({
           </div>
 
           {renderOutputFilesSection(result.output_files)}
+
+          {/* Trajectory Analysis */}
+          {result.output_files?.trajectory && (
+            <div className="mt-4">
+              <h4 className="text-sm font-semibold text-gray-300 mb-2">Trajectory Analysis</h4>
+              <MDTrajectoryAnalysis trajectoryPath={String(result.output_files.trajectory).split(':')[0].trim()} />
+            </div>
+          )}
 
           {/* ABFE Action Button - only for equilibration jobs */}
           {isEquilibrationJob() && getEquilibratedStructurePath() && (

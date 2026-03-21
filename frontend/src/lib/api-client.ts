@@ -185,6 +185,9 @@ export const api = {
     grid_box?: any
     message?: string
     error?: string
+    crystal_pdb?: string
+    docked_pdb?: string
+    protein_pdb?: string
   }> => {
     const response = await apiClient.post('/api/docking/validate_redocking', {
       complex_pdb: complexPdb,
@@ -1305,4 +1308,13 @@ export const api = {
       return null  // null signals a failed check (transient error), not "all services down"
     }
   },
+
+  enumerateTautomers: async (smiles: string, maxTautomers = 20) =>
+    (await apiClient.post('/api/structure/enumerate-tautomers', { smiles, max_tautomers: maxTautomers })).data,
+
+  findPockets: async (pdbData: string, topN = 5) =>
+    (await apiClient.post('/api/structure/find-pockets', { pdb_data: pdbData, top_n: topN }, { timeout: 90000 })).data,
+
+  getTrajectoryAnalysis: async (trajectoryPath: string) =>
+    (await apiClient.post('/api/md/trajectory/analysis', { trajectory_path: trajectoryPath }, { timeout: 120000 })).data,
 }

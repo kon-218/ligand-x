@@ -16,7 +16,7 @@
 #   make shell   - Access service shell
 # ============================================================
 
-.PHONY: help dev prod down build push pull test clean logs shell shell-% logs-% restart restart-% status db db-backup db-purge-jobs purge-queues dev-core dev-docking dev-md dev-qc dev-free-energy dev-gpu
+.PHONY: help dev prod down build push pull test clean logs shell shell-% logs-% restart restart-% status db db-backup db-purge-jobs purge-queues dev-core dev-docking dev-md dev-qc dev-free-energy dev-gpu prod-core prod-docking prod-md prod-qc prod-free-energy prod-gpu
 
 # ============================================================
 # Configuration
@@ -81,6 +81,14 @@ help:
 	@echo "  make dev-free-energy  - Core + docking + MD + ABFE + RBFE"
 	@echo "  make dev-gpu          - All GPU services (full stack minus QC)"
 	@echo ""
+	@echo "Selective Prod Startup (production mode, partial service sets):"
+	@echo "  make prod-core        - Infrastructure + structure + frontend only"
+	@echo "  make prod-docking     - Core + editor + docking"
+	@echo "  make prod-md          - Core + editor + MD"
+	@echo "  make prod-qc          - Core + editor + quantum chemistry"
+	@echo "  make prod-free-energy - Core + docking + MD + ABFE + RBFE"
+	@echo "  make prod-gpu         - All GPU services (full stack minus QC)"
+	@echo ""
 	@echo "Registry:"
 	@echo "  make pull                      - Pull pre-built images from GHCR"
 	@echo "  VERSION=sha-abc1234 make pull  - Pull a specific version"
@@ -138,6 +146,31 @@ dev-free-energy: ensure-data-dirs
 dev-gpu: ensure-data-dirs
 	@echo "Starting all GPU services (full stack minus QC)..."
 	@UID=$$(id -u) GID=$$(id -g) docker compose up -d $(_CORE) ketcher docking md abfe rbfe boltz2 admet worker-cpu worker-gpu-short worker-gpu-long
+
+# Selective prod startup targets (production config, no hot reload)
+prod-core: ensure-data-dirs
+	@echo "Starting core services (production mode)..."
+	@docker compose $(ENV_FILE) -f docker-compose.yml up -d $(_CORE)
+
+prod-docking: ensure-data-dirs
+	@echo "Starting core + editor + docking (production mode)..."
+	@docker compose $(ENV_FILE) -f docker-compose.yml up -d $(_CORE) ketcher docking worker-cpu
+
+prod-md: ensure-data-dirs
+	@echo "Starting core + editor + MD (production mode)..."
+	@docker compose $(ENV_FILE) -f docker-compose.yml up -d $(_CORE) ketcher md worker-gpu-short
+
+prod-qc: ensure-data-dirs
+	@echo "Starting core + editor + quantum chemistry (production mode)..."
+	@docker compose $(ENV_FILE) -f docker-compose.yml up -d $(_CORE) ketcher qc worker-qc
+
+prod-free-energy: ensure-data-dirs
+	@echo "Starting core + editor + docking + MD + ABFE + RBFE (production mode)..."
+	@docker compose $(ENV_FILE) -f docker-compose.yml up -d $(_CORE) ketcher docking md abfe rbfe worker-cpu worker-gpu-short worker-gpu-long
+
+prod-gpu: ensure-data-dirs
+	@echo "Starting all GPU services (production mode, full stack minus QC)..."
+	@docker compose $(ENV_FILE) -f docker-compose.yml up -d $(_CORE) ketcher docking md abfe rbfe boltz2 admet worker-cpu worker-gpu-short worker-gpu-long
 
 # Production: Run production configuration locally for testing
 prod: ensure-data-dirs

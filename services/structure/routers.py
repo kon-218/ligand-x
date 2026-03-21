@@ -4,6 +4,10 @@ from fastapi.responses import FileResponse, StreamingResponse
 from typing import Optional, Dict, Any, List
 import os
 import traceback
+import subprocess
+import shutil
+import tempfile
+import re
 from io import StringIO
 from rdkit import Chem
 
@@ -542,6 +546,151 @@ async def get_ligands():
         return ligands
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+class TautomerRequest(BaseModel):
+    smiles: str
+    max_tautomers: int = 20
+
+
+@structure_router.post("/enumerate-tautomers")
+async def enumerate_tautomers(request: TautomerRequest):
+    """Enumerate tautomers for a given SMILES string."""
+    from rdkit.Chem.MolStandardize import rdMolStandardize
+    mol = Chem.MolFromSmiles(request.smiles)
+    if mol is None:
+        raise HTTPException(status_code=400, detail="Invalid SMILES")
+
+    enumerator = rdMolStandardize.TautomerEnumerator()
+    enumerator.SetMaxTautomers(request.max_tautomers)
+    canon = enumerator.Canonicalize(mol)
+    canonical_smiles = Chem.MolToSmiles(canon, canonical=True)
+
+    results = []
+    for t in enumerator.Enumerate(mol):
+        t_smiles = Chem.MolToSmiles(t, canonical=True)
+        results.append({
+            "smiles": t_smiles,
+            "score": round(enumerator.ScoreTautomer(t), 4),
+            "is_canonical": t_smiles == canonical_smiles
+        })
+    results.sort(key=lambda x: (-int(x["is_canonical"]), -x["score"]))
+    return {"canonical_smiles": canonical_smiles, "tautomers": results, "count": len(results)}
+
+
+class FindPocketsRequest(BaseModel):
+    pdb_data: str
+    top_n: int = 5
+
+
+def _parse_fpocket_output(out_dir: str, top_n: int) -> list:
+    """Parse fpocket output directory and return pocket data."""
+    pockets = []
+    info_file = os.path.join(out_dir, os.path.basename(out_dir).replace('_out', '_info.txt'))
+    # fpocket names the info file after the input pdb
+    # Try common naming patterns
+    for fname in os.listdir(out_dir) if os.path.exists(out_dir) else []:
+        if fname.endswith('_info.txt'):
+            info_file = os.path.join(out_dir, fname)
+            break
+
+    pocket_scores: dict = {}
+    if os.path.exists(info_file):
+        with open(info_file) as f:
+            content = f.read()
+        pocket_blocks = re.split(r'Pocket\s+(\d+)\s*:', content)
+        for i in range(1, len(pocket_blocks), 2):
+            pocket_num = int(pocket_blocks[i])
+            block = pocket_blocks[i + 1]
+            score_match = re.search(r'Score\s*:\s*([\d.]+)', block)
+            drug_match = re.search(r'Druggability Score\s*:\s*([\d.]+)', block)
+            vol_match = re.search(r'Volume\s*:\s*([\d.]+)', block)
+            pocket_scores[pocket_num] = {
+                'score': float(score_match.group(1)) if score_match else 0.0,
+                'druggability': float(drug_match.group(1)) if drug_match else 0.0,
+                'volume': float(vol_match.group(1)) if vol_match else 0.0,
+            }
+
+    pockets_dir = os.path.join(out_dir, 'pockets')
+    if not os.path.exists(pockets_dir):
+        return []
+
+    for pocket_file in sorted(os.listdir(pockets_dir)):
+        if not pocket_file.endswith('_atm.pdb'):
+            continue
+        num_match = re.search(r'pocket(\d+)_atm\.pdb', pocket_file)
+        if not num_match:
+            continue
+        pocket_num = int(num_match.group(1))
+        pdb_path = os.path.join(pockets_dir, pocket_file)
+
+        xs, ys, zs = [], [], []
+        residues = set()
+        with open(pdb_path) as f:
+            for line in f:
+                if line.startswith(('ATOM', 'HETATM')):
+                    try:
+                        xs.append(float(line[30:38]))
+                        ys.append(float(line[38:46]))
+                        zs.append(float(line[46:54]))
+                        resname = line[17:20].strip()
+                        chain = line[21].strip()
+                        resnum = line[22:26].strip()
+                        residues.add(f"{resname}_{chain}_{resnum}")
+                    except (ValueError, IndexError):
+                        pass
+
+        if not xs:
+            continue
+
+        cx = sum(xs) / len(xs)
+        cy = sum(ys) / len(ys)
+        cz = sum(zs) / len(zs)
+        scores = pocket_scores.get(pocket_num, {'score': 0.0, 'druggability': 0.0, 'volume': 100.0})
+        volume = scores['volume'] if scores['volume'] > 0 else 100.0
+        size = max(10.0, volume ** (1 / 3) * 1.5)
+
+        pockets.append({
+            'pocket_id': pocket_num,
+            'center': {'x': round(cx, 3), 'y': round(cy, 3), 'z': round(cz, 3)},
+            'size': round(size, 1),
+            'score': scores['score'],
+            'druggability': scores['druggability'],
+            'volume': scores['volume'],
+            'residues': sorted(residues),
+        })
+
+    pockets.sort(key=lambda p: -p['score'])
+    return pockets[:top_n]
+
+
+@structure_router.post("/find-pockets")
+async def find_pockets(request: FindPocketsRequest):
+    """Detect binding pockets using fpocket."""
+    work_dir = tempfile.mkdtemp()
+    try:
+        pdb_path = os.path.join(work_dir, "protein.pdb")
+        with open(pdb_path, 'w') as f:
+            f.write(request.pdb_data)
+
+        result = subprocess.run(
+            ['fpocket', '-f', pdb_path],
+            capture_output=True, text=True, timeout=60, cwd=work_dir
+        )
+        if result.returncode != 0:
+            raise HTTPException(status_code=500, detail=f"fpocket failed: {result.stderr[:500]}")
+
+        out_dir = os.path.join(work_dir, "protein_out")
+        pockets = _parse_fpocket_output(out_dir, request.top_n)
+        return {"pockets": pockets, "count": len(pockets)}
+    except HTTPException:
+        raise
+    except FileNotFoundError:
+        raise HTTPException(status_code=500, detail="fpocket binary not found. Pocket detection is not available.")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Pocket detection failed: {str(e)}")
+    finally:
+        shutil.rmtree(work_dir, ignore_errors=True)
 
 
 @structure_router.get("/render_smiles")

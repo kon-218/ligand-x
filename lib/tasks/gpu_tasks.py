@@ -79,6 +79,7 @@ celery_app.conf.update(
         'ligandx_tasks.admet_predict': {'queue': 'gpu-short'},
         'ligandx_tasks.abfe_calculate': {'queue': 'gpu-long'},
         'ligandx_tasks.rbfe_calculate': {'queue': 'gpu-long'},
+        'ligandx_tasks.rbfe_mapping_preview': {'queue': 'gpu-short'},
         'ligandx_tasks.qc_calculate': {'queue': 'qc'},
     },
 
@@ -511,6 +512,96 @@ def rbfe_calculate(self, job_data: Dict[str, Any]) -> Dict[str, Any]:
 
 
 # ============================================================
+# RBFE Atom Mapping Preview Task
+# ============================================================
+
+@celery_app.task(
+    bind=True,
+    base=LigandXTask,
+    name='ligandx_tasks.rbfe_mapping_preview',
+    soft_time_limit=600,   # 10 minutes
+    time_limit=660,
+)
+def rbfe_mapping_preview(self, job_data: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Run RBFE atom mapping preview (CPU-only, no simulation).
+
+    Computes all pairwise atom mappings for the supplied ligands using the
+    selected atom mapper and returns per-pair highlight SVGs and quality scores.
+    No protein structure or simulation is required.
+
+    Runs on gpu-short queue so the biochem-md conda environment (which includes
+    OpenFE and RDKit) is available.
+
+    Args:
+        job_data: Dictionary containing:
+            - ligands: List of ligand data dicts (id, data, format)
+            - atom_mapper: 'kartograf', 'lomap', or 'lomap_relaxed'
+            - atom_map_hydrogens: bool (Kartograf)
+            - lomap_max3d: float (LOMAP)
+            - charge_method: ignored (no charges needed for mapping)
+
+    Returns:
+        Dictionary with pairwise mapping results and SVGs.
+    """
+    job_id = self.request.id
+    logger.info(f"Starting RBFE mapping preview job {job_id}")
+
+    self.update_progress(0, 'Starting', 'Initializing atom mapping preview')
+
+    try:
+        from lib.services.runner import call_service_with_progress
+
+        job_data_with_id = {**job_data, 'job_id': job_id}
+
+        self.update_progress(10, 'Mapping', 'Running atom mapper')
+
+        result = None
+        for update in call_service_with_progress('rbfe_mapping_preview', job_data_with_id, timeout=600):
+            if update['type'] == 'progress':
+                progress_data = update['data']
+                self.update_progress(
+                    progress_data.get('progress', 10),
+                    'mapping',
+                    progress_data.get('status', 'Running'),
+                )
+            elif update['type'] == 'result':
+                result = update['data']
+            elif update['type'] == 'error':
+                raise Exception(update['data'].get('error', 'Unknown error'))
+
+        self.update_progress(100, 'Completed', 'Mapping preview finished')
+
+        return {
+            'status': 'COMPLETED',
+            'job_id': job_id,
+            'job_type': 'rbfe_mapping_preview',
+            'result': result,
+            'completed_at': datetime.now().isoformat(),
+        }
+
+    except SoftTimeLimitExceeded:
+        logger.error(f"RBFE mapping preview job {job_id} exceeded time limit")
+        return {
+            'status': 'FAILED',
+            'job_id': job_id,
+            'job_type': 'rbfe_mapping_preview',
+            'error': 'Job exceeded time limit (10 minutes)',
+            'completed_at': datetime.now().isoformat(),
+        }
+
+    except Exception as e:
+        logger.error(f"RBFE mapping preview job {job_id} failed: {e}", exc_info=True)
+        return {
+            'status': 'FAILED',
+            'job_id': job_id,
+            'job_type': 'rbfe_mapping_preview',
+            'error': str(e),
+            'completed_at': datetime.now().isoformat(),
+        }
+
+
+# ============================================================
 # Boltz2 Prediction Task
 # ============================================================
 
@@ -634,6 +725,10 @@ def boltz_batch(self, job_data: Dict[str, Any]) -> Dict[str, Any]:
 
                 # Extract result data
                 result_data = result.get('results', {})
+                # Per-pose metrics (confidence_score, ptm, etc.) live inside poses,
+                # not at the top level of result_data. Pull them from the first pose.
+                poses = result_data.get('poses', [])
+                first_pose = poses[0] if poses else {}
                 ligand_result = {
                     'ligand_id': ligand_id,
                     'ligand_name': ligand_name,
@@ -642,12 +737,12 @@ def boltz_batch(self, job_data: Dict[str, Any]) -> Dict[str, Any]:
                     'binding_free_energy': result_data.get('binding_free_energy'),
                     'affinity_probability_binary': result_data.get('affinity_probability_binary'),
                     'prediction_confidence': result_data.get('prediction_confidence'),
-                    'aggregate_score': result_data.get('aggregate_score'),
-                    'confidence_score': result_data.get('confidence_score'),
-                    'ptm': result_data.get('ptm'),
-                    'iptm': result_data.get('iptm'),
-                    'complex_plddt': result_data.get('complex_plddt'),
-                    'poses': result_data.get('poses', []),
+                    'aggregate_score': result_data.get('aggregate_score') or first_pose.get('aggregate_score'),
+                    'confidence_score': result_data.get('confidence_score') or first_pose.get('confidence_score'),
+                    'ptm': result_data.get('ptm') or first_pose.get('ptm'),
+                    'iptm': result_data.get('iptm') or first_pose.get('iptm'),
+                    'complex_plddt': result_data.get('complex_plddt') or first_pose.get('complex_plddt'),
+                    'poses': poses,
                 }
                 results.append(ligand_result)
                 logger.info(f"[Boltz2 Batch {job_id}] Ligand {ligand_name} completed successfully")

@@ -6,6 +6,19 @@ let statusInterval = null;
 const MAX_LOGS = 500;
 let logs = [];
 
+const CORE_SERVICES = ['postgres', 'redis', 'rabbitmq', 'gateway', 'frontend', 'structure'];
+
+const SERVICE_PRESETS = {
+    'full': null,
+    'core': [],
+    'docking': ['ketcher', 'docking', 'worker-cpu'],
+    'md': ['ketcher', 'md', 'worker-gpu-short'],
+    'qc': ['ketcher', 'qc', 'worker-qc'],
+    'free-energy': ['ketcher', 'docking', 'md', 'abfe', 'rbfe', 'worker-cpu', 'worker-gpu-short', 'worker-gpu-long'],
+    'gpu': ['ketcher', 'docking', 'md', 'abfe', 'rbfe', 'boltz2', 'admet', 'worker-cpu', 'worker-gpu-short', 'worker-gpu-long'],
+    'custom': null
+};
+
 // Initialize on load
 document.addEventListener('DOMContentLoaded', init);
 
@@ -115,22 +128,69 @@ function clearControlButtonLoading(activeIcon, originalIconHtml) {
 }
 
 async function startServices() {
-    const mode = document.getElementById('startMode').value;
+    const env = document.getElementById('envMode').value;
+    const preset = document.getElementById('servicePreset').value;
     const btn = document.getElementById('startBtn');
     const icon = btn.querySelector('svg');
     const originalIcon = icon.innerHTML;
     setControlButtonsLoading(icon);
 
     try {
-        await window.go.main.App.StartServices(mode);
+        const services = getSelectedServices();
+        if (services === null) {
+            await window.go.main.App.StartServices(env);
+        } else {
+            await window.go.main.App.StartServicesCustom(env, services);
+        }
         await updateStatus();
-        addLog('launcher', `Services started in ${mode} mode`);
+        const label = services === null ? 'all' : `${services.length}`;
+        addLog('launcher', `Services started in ${env} mode (${label} services)`);
     } catch (err) {
         addLog('launcher', `Error: ${err.message}`, 'error');
     } finally {
         clearControlButtonLoading(icon, originalIcon);
         await updateStatus();
     }
+}
+
+function getSelectedServices() {
+    const preset = document.getElementById('servicePreset').value;
+    
+    if (preset === 'full') {
+        return null;
+    }
+    
+    if (preset === 'custom') {
+        const checkboxes = document.querySelectorAll('#customServices input[data-service]:checked');
+        const selected = Array.from(checkboxes).map(cb => cb.value);
+        return [...CORE_SERVICES, ...selected];
+    }
+    
+    const presetServices = SERVICE_PRESETS[preset];
+    return [...CORE_SERVICES, ...presetServices];
+}
+
+function onPresetChange() {
+    const preset = document.getElementById('servicePreset').value;
+    const customDiv = document.getElementById('customServices');
+    
+    if (preset === 'custom') {
+        customDiv.classList.remove('hidden');
+    } else {
+        customDiv.classList.add('hidden');
+    }
+}
+
+function selectAllServices() {
+    document.querySelectorAll('#customServices input[data-service]').forEach(cb => {
+        cb.checked = true;
+    });
+}
+
+function selectNoServices() {
+    document.querySelectorAll('#customServices input[data-service]').forEach(cb => {
+        cb.checked = false;
+    });
 }
 
 async function stopServices() {

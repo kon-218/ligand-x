@@ -242,6 +242,37 @@ func (a *App) StartServices(mode string) error {
 	return a.runDockerCompose(args, "Starting services...")
 }
 
+func (a *App) StartServicesCustom(env string, services []string) error {
+	dockerOk, msg := a.CheckDocker()
+	if !dockerOk {
+		return fmt.Errorf(msg)
+	}
+
+	if err := a.ensureDataDirs(); err != nil {
+		wailsRuntime.EventsEmit(a.ctx, "log", LogEntry{
+			Service:   "launcher",
+			Message:   fmt.Sprintf("Warning: Could not create data directories: %v", err),
+			Timestamp: time.Now().Format("15:04:05"),
+		})
+	}
+
+	var args []string
+	if env == "prod" {
+		args = []string{"compose", "-f", "docker-compose.yml", "up", "-d"}
+	} else {
+		args = []string{"compose", "up", "-d"}
+	}
+
+	args = append(args, services...)
+
+	modeLabel := env
+	if len(services) > 0 {
+		modeLabel = fmt.Sprintf("%s (%d services)", env, len(services))
+	}
+
+	return a.runDockerCompose(args, fmt.Sprintf("Starting %s...", modeLabel))
+}
+
 func (a *App) StopServices() error {
 	return a.runDockerCompose([]string{"compose", "down"}, "Stopping services...")
 }

@@ -1,7 +1,7 @@
 'use client'
 
 import React, { useState, useEffect } from 'react'
-import { Target, Loader2, Play, Layers, Check, FlaskConical } from 'lucide-react'
+import { Target, Loader2, Play, Layers, Check, FlaskConical, X, Search } from 'lucide-react'
 import { useMolecularStore } from '@/store/molecular-store'
 import { useUIStore } from '@/store/ui-store'
 import { useMDStore } from '@/store/md-store'
@@ -23,6 +23,7 @@ import {
 import type { WorkflowStep, StructureOption } from './shared'
 import { convertPDBQTtoPDB, parsePDBQT, parseSDF, convertSDFtoPDB, calculateBindingStrength } from './Docking/utils'
 import { DockingStepResults } from './Docking/DockingStepResults'
+import { DockingPocketFinder } from './Docking/DockingPocketFinder'
 import { useBatchDockingStore } from '@/store/batch-docking-store'
 import { useUnifiedResultsStore } from '@/store/unified-results-store'
 import type { GridBox, DockingParams, DockingResults, LigandOption, BatchDockingJob } from '@/types/docking'
@@ -62,7 +63,9 @@ export function DockingTool() {
     dockingStatus,
     setDockingStatus,
     originalProteinPDB,
-    setOriginalProteinPDB
+    setOriginalProteinPDB,
+    pendingDockingGridBox,
+    setPendingDockingGridBox,
   } = useMolecularStore()
 
   const uiStore = useUIStore()
@@ -97,13 +100,21 @@ export function DockingTool() {
   const [error, setError] = useState<string | null>(null)
   const [savingPose, setSavingPose] = useState<number | null>(null)
   const [saveMessage, setSaveMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null)
+  const [showPocketFinder, setShowPocketFinder] = useState(false)
+  const [pocketGridBoxBanner, setPocketGridBoxBanner] = useState<string | null>(null)
   const [isValidatingRedock, setIsValidatingRedock] = useState(false)
+  const [redockLigandResname, setRedockLigandResname] = useState<string>('')
+  const [isRedockVisualized, setIsRedockVisualized] = useState(false)
+  const [preRedockStructure, setPreRedockStructure] = useState<{ pdb_data: string; structure_id: string } | null>(null)
   const [redockResult, setRedockResult] = useState<{
     passed?: boolean
     rmsd?: number
     best_affinity?: number
     message?: string
     error?: string
+    crystal_pdb?: string
+    docked_pdb?: string
+    protein_pdb?: string
   } | null>(null)
 
   const handleFileUpload = (file: File) => {
@@ -327,6 +338,16 @@ export function DockingTool() {
   //     setCurrentStep(4)
   //   }
   // }, [isDockingRunning, dockingResults])
+
+  // Consume a pending grid box sent from PocketFinderTool (mount-only)
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    if (pendingDockingGridBox) {
+      setGridBox(pendingDockingGridBox)
+      setPocketGridBoxBanner('Grid box pre-set from Pocket Finder')
+      setPendingDockingGridBox(null)
+    }
+  }, [])
 
   // Grid box preview
   useEffect(() => {
@@ -671,6 +692,57 @@ export function DockingTool() {
     }
   }
 
+  const handleVisualizeRedocking = () => {
+    if (!redockResult || !currentStructure) return
+    const { crystal_pdb, docked_pdb, protein_pdb } = redockResult
+
+    // Snapshot the full current structure (with co-crystallized ligands) so Clear can restore it exactly
+    setPreRedockStructure({ pdb_data: currentStructure.pdb_data, structure_id: currentStructure.structure_id || '' })
+
+    // Use overlay_poses so each ligand is a separate Mol* structure —
+    // this prevents distance-based bond inference from linking them to the protein.
+    const overlayPoses: Array<{ pdbData: string; chainId: string }> = []
+    if (crystal_pdb?.trim()) overlayPoses.push({ pdbData: crystal_pdb.trim(), chainId: 'C' })
+    if (docked_pdb?.trim()) overlayPoses.push({ pdbData: docked_pdb.trim(), chainId: 'D' })
+
+    const baseId = (currentStructure.structure_id || 'structure')
+      .replace(/_pose_[^_]+.*$/, '')
+      .replace(/_redock$/, '')
+
+    setCurrentStructure({
+      ...currentStructure,
+      structure_id: `${baseId}_redock`,
+      pdb_data: protein_pdb || currentStructure.pdb_data,
+      metadata: {
+        ...currentStructure.metadata,
+        is_docked_pose: true,
+        is_redock_view: true,
+        overlay_poses: overlayPoses,
+        pose_chain_ids: undefined,
+        redock_rmsd: redockResult.rmsd,
+      } as any,
+    })
+    setIsRedockVisualized(true)
+  }
+
+  const handleClearRedocking = () => {
+    if (!preRedockStructure || !currentStructure) return
+    setCurrentStructure({
+      ...currentStructure,
+      structure_id: preRedockStructure.structure_id,
+      pdb_data: preRedockStructure.pdb_data,
+      metadata: {
+        ...currentStructure.metadata,
+        is_docked_pose: false,
+        is_redock_view: undefined,
+        redock_rmsd: undefined,
+        overlay_poses: undefined,
+      } as any,
+    })
+    setPreRedockStructure(null)
+    setIsRedockVisualized(false)
+  }
+
   const handleVisualizeMultiplePoses = async (poseIndices: number[]) => {
     if (!dockingResults || !currentStructure || poseIndices.length === 0) return
 
@@ -957,6 +1029,20 @@ export function DockingTool() {
       case 1:
         return (
           <div className="space-y-6">
+            {/* Pocket Finder pre-set banner */}
+            {pocketGridBoxBanner && (
+              <div className="flex items-center gap-2 p-3 bg-purple-900/20 border border-purple-700/40 rounded-lg text-sm text-purple-300">
+                <Target className="w-4 h-4 shrink-0" />
+                <span>{pocketGridBoxBanner}</span>
+                <button
+                  onClick={() => setPocketGridBoxBanner(null)}
+                  className="ml-auto text-gray-500 hover:text-gray-300"
+                >
+                  <X className="w-3.5 h-3.5" />
+                </button>
+              </div>
+            )}
+
             {/* Workflow Mode Selector */}
             <div className="space-y-3">
               <label className="text-sm font-medium text-gray-300">Docking Mode</label>
@@ -1116,15 +1202,30 @@ export function DockingTool() {
                   <p className="text-xs text-gray-400">
                     Validate the docking pipeline by redocking a co-crystallized ligand. RMSD &lt; 2.0 A indicates the pipeline can reproduce the experimental binding mode.
                   </p>
+                  <div className="flex flex-col gap-1">
+                    <label className="text-xs text-gray-400">Ligand to redock</label>
+                    <select
+                      value={redockLigandResname || Object.values(currentStructure.ligands)[0]?.name?.trim() || ''}
+                      onChange={e => { setRedockLigandResname(e.target.value.trim()); setRedockResult(null) }}
+                      className="w-full bg-gray-700 border border-gray-600 text-white rounded px-2 py-1.5 text-sm"
+                    >
+                      {Object.entries(currentStructure.ligands).map(([key, lig]) => (
+                        <option key={key} value={lig.name?.trim()}>
+                          {lig.name?.trim()}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
                   <button
                     onClick={async () => {
                       if (!currentStructure?.pdb_data) return
+                      const resname = redockLigandResname || Object.values(currentStructure.ligands!)[0]?.name?.trim()
                       setIsValidatingRedock(true)
                       setRedockResult(null)
                       try {
                         const result = await api.validateRedocking(
                           currentStructure.pdb_data,
-                          undefined,
+                          resname,
                           dockingParams.exhaustiveness
                         )
                         setRedockResult(result)
@@ -1169,6 +1270,27 @@ export function DockingTool() {
                         </div>
                       )}
                     </InfoBox>
+                  )}
+                  {redockResult && !redockResult.error && (redockResult.crystal_pdb || redockResult.docked_pdb) && (
+                    <div className="flex gap-2">
+                      <button
+                        onClick={handleVisualizeRedocking}
+                        className="flex-1 py-2 px-3 bg-indigo-700 hover:bg-indigo-600 text-white rounded-lg transition-colors flex items-center justify-center gap-2 text-sm"
+                      >
+                        <Layers className="w-4 h-4" />
+                        Visualize Redocking
+                      </button>
+                      {isRedockVisualized && (
+                        <button
+                          onClick={handleClearRedocking}
+                          className="py-2 px-3 bg-gray-700 hover:bg-gray-600 text-gray-300 rounded-lg transition-colors flex items-center gap-1.5 text-sm"
+                          title="Clear redocking overlay"
+                        >
+                          <X className="w-4 h-4" />
+                          Clear
+                        </button>
+                      )}
+                    </div>
                   )}
                 </div>
               </ParameterSection>
@@ -1218,6 +1340,28 @@ export function DockingTool() {
                 Whole Protein Box
               </button>
             </div>
+
+            <button
+              onClick={() => setShowPocketFinder(v => !v)}
+              disabled={!currentStructure?.pdb_data}
+              className="w-full flex items-center justify-center gap-2 py-2 px-4 bg-gray-700 hover:bg-gray-600 disabled:bg-gray-800 disabled:text-gray-600 text-gray-200 rounded-lg transition-colors text-sm"
+            >
+              <Search className="w-4 h-4" />
+              {showPocketFinder ? 'Hide Pocket Finder' : 'Find Binding Pockets'}
+            </button>
+
+            {showPocketFinder && (
+              <DockingPocketFinder
+                proteinPdbData={currentStructure?.pdb_data ?? null}
+                onPocketSelected={(center, size) => {
+                  setGridBox({
+                    center_x: center.x, center_y: center.y, center_z: center.z,
+                    size_x: size, size_y: size, size_z: size,
+                  })
+                  setShowPocketFinder(false)
+                }}
+              />
+            )}
 
             {gridBox && (
               <div className="space-y-3">
@@ -1301,10 +1445,11 @@ export function DockingTool() {
                 }
 
                 if (originalPDB) {
-                  // Strip _pose_N and _compare_N_M suffixes from structure_id
+                  // Strip _pose_N, _compare_N_M, and _redock suffixes from structure_id
                   const cleanId = currentStructure.structure_id
-                    .replace(/_pose_\d+$/, '')
+                    .replace(/_pose_[^_]+.*$/, '')
                     .replace(/_compare_[\d_]+$/, '')
+                    .replace(/_redock$/, '')
                   setCurrentStructure({
                     ...currentStructure,
                     structure_id: cleanId,
@@ -1312,6 +1457,8 @@ export function DockingTool() {
                     metadata: {
                       ...currentStructure.metadata,
                       is_docked_pose: false,
+                      is_redock_view: undefined,
+                      redock_rmsd: undefined,
                       pose_chain_ids: undefined,
                       overlay_poses: undefined,
                     } as any

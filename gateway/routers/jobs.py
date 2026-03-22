@@ -145,11 +145,11 @@ async def submit_job(job_type: str, request: Request):
         md_optimize,
         abfe_calculate,
         rbfe_calculate,
+        rbfe_mapping_preview,
         boltz_predict,
         boltz_batch,
         admet_predict,
     )
-    from services.rbfe.run_mapping_preview_job import rbfe_mapping_preview
     # Import CPU tasks (docking)
     from lib.tasks.cpu_tasks import (
         docking_batch,
@@ -449,11 +449,26 @@ async def stream_job_progress(job_id: str, request: Request):
                 last_progress = current_progress
                 
                 if state == 'PENDING':
-                    data = {
-                        'status': 'pending',
-                        'progress': 0,
-                        'message': 'Job queued, waiting for worker'
-                    }
+                    # Celery returns PENDING when it has no record (e.g. after Redis wipe).
+                    # Always fall back to the DB to avoid showing 'queued' for completed jobs.
+                    db_job = await repo.get_job(job_id)
+                    db_status = db_job.get('status') if db_job else None
+                    if db_status in ('completed', 'failed', 'cancelled'):
+                        # Job is done — send terminal state and stop streaming
+                        data = {
+                            'status': db_status,
+                            'progress': db_job.get('progress', 100),
+                            'message': db_job.get('error_message') or 'Job completed',
+                            'result': db_job.get('result'),
+                        }
+                        yield f"data: {json.dumps(data)}\n\n"
+                        break
+                    else:
+                        data = {
+                            'status': 'pending',
+                            'progress': 0,
+                            'message': 'Job queued, waiting for worker'
+                        }
                     
                 elif state == 'STARTED' or state == 'RUNNING':
                     # Update database with progress
@@ -883,9 +898,16 @@ async def list_jobs(
                         await repo.update_status(job_id, 'failed')
                 except Exception as e:
                     logger.debug(f"Failed to update job {job_id} status in DB: {e}")
-                
-                # Update the returned job object with live status
-                job['status'] = live_status
+
+                # Don't override terminal DB status with Celery PENDING (Redis may have been cleared).
+                # Celery returns PENDING when it has no record of the task, not necessarily when the task is queued.
+                db_status = job.get('status')
+                if live_status == 'pending' and db_status in ('completed', 'failed', 'cancelled'):
+                    # Trust the DB for terminal states when Celery has no record
+                    pass
+                else:
+                    # Update the returned job object with live status
+                    job['status'] = live_status
         
         total = await repo.get_job_count(job_type=job_type, status=status)
         
@@ -1122,6 +1144,37 @@ async def delete_job(job_id: str):
     except Exception as e:
         logger.error(f"Failed to delete job {job_id}: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+# ============================================================
+# Job Log Access
+# ============================================================
+
+@router.get("/{job_id}/log")
+async def get_job_log(job_id: str):
+    """
+    Return the current log file content for a running or completed job.
+
+    Looks for job.log in rbfe_outputs or abfe_outputs directories.
+    Returns 404 if no log file exists yet.
+    """
+    from pathlib import Path
+    from fastapi.responses import PlainTextResponse
+
+    log_candidates = [
+        Path(f"data/rbfe_outputs/{job_id}/job.log"),
+        Path(f"data/abfe_outputs/{job_id}/job.log"),
+    ]
+    for path in log_candidates:
+        if path.exists():
+            try:
+                content = path.read_text(errors='replace')
+                return PlainTextResponse(content)
+            except Exception as e:
+                logger.warning(f"Failed to read log file {path}: {e}")
+                raise HTTPException(status_code=500, detail="Failed to read log file")
+
+    raise HTTPException(status_code=404, detail="Log file not found")
 
 
 # ============================================================

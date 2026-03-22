@@ -4,6 +4,7 @@ Implements relative binding free energy calculations using OpenFE ecosystem.
 """
 from __future__ import annotations
 import os
+import sys
 import json
 import traceback
 import logging
@@ -14,6 +15,15 @@ from dataclasses import dataclass, asdict
 
 # Initialize logger early
 logger = logging.getLogger(__name__)
+
+
+def emit_progress(progress: int, status: str) -> None:
+    """Emit a progress update parsed by the Celery task runner (same format as MD service)."""
+    print(
+        f"MD_PROGRESS:{json.dumps({'progress': progress, 'status': status})}",
+        file=sys.stderr,
+        flush=True,
+    )
 
 # NumPy for statistical calculations
 try:
@@ -1854,13 +1864,21 @@ class RBFEService:
             failed_transformations = []
             successful_transformations = 0
 
+            total_transformations = len(transformations)
             for i, transformation in enumerate(transformations):
-                logger.info(f"Running transformation {i+1}/{len(transformations)}: {transformation.name}")
+                logger.info(f"Running transformation {i+1}/{total_transformations}: {transformation.name}")
 
                 # Determine leg from name (suffix)
                 leg = 'complex' if transformation.name.endswith('_complex') else 'solvent'
                 ligand_a_name = transformation.mapping.componentA.name
                 ligand_b_name = transformation.mapping.componentB.name
+
+                # Emit progress before starting this transformation
+                tx_progress_start = int(i / total_transformations * 95 + 5)
+                emit_progress(
+                    tx_progress_start,
+                    f"Transformation {i+1}/{total_transformations}: {ligand_a_name} → {ligand_b_name} ({leg})"
+                )
 
                 try:
                     # Pre-execution validation
@@ -1904,15 +1922,84 @@ class RBFEService:
                     estimate = result.get_estimate()
                     uncertainty = result.get_uncertainty()
 
-                    # Extract overlap matrix (n_repeats, n_states, n_states) → average across repeats
+                    # Extract overlap matrix from result object
+                    # Multiple approaches to try since OpenFE API varies by version
                     overlap_matrix = None
                     try:
-                        raw_matrix = result.get_overlap_matrix()
-                        if hasattr(raw_matrix, 'ndim'):
-                            avg = raw_matrix.mean(axis=0) if raw_matrix.ndim == 3 else raw_matrix
-                            overlap_matrix = [[float(v) for v in row] for row in avg.tolist()]
+                        # Approach 1: Try result object attributes directly
+                        for attr_name in ['mbar_overlap_matrix', 'overlap_matrix', 'matrix']:
+                            if hasattr(result, attr_name):
+                                raw_matrix = getattr(result, attr_name)
+                                if raw_matrix is not None and hasattr(raw_matrix, 'ndim'):
+                                    avg = raw_matrix.mean(axis=0) if raw_matrix.ndim == 3 else raw_matrix
+                                    overlap_matrix = [[float(v) for v in row] for row in avg.tolist()]
+                                    logger.debug(f"Extracted overlap matrix from result.{attr_name}")
+                                    break
+
+                        # Approach 2: Try result.data dict
+                        if overlap_matrix is None and hasattr(result, 'data') and isinstance(result.data, dict):
+                            for key in ['mbar_overlap_matrix', 'overlap_matrix', 'matrix']:
+                                if key in result.data:
+                                    raw_matrix = result.data[key]
+                                    if raw_matrix is not None and hasattr(raw_matrix, 'ndim'):
+                                        avg = raw_matrix.mean(axis=0) if raw_matrix.ndim == 3 else raw_matrix
+                                        overlap_matrix = [[float(v) for v in row] for row in avg.tolist()]
+                                        logger.debug(f"Extracted overlap matrix from result.data['{key}']")
+                                        break
+
+                        # Approach 3: Try dag_result object
+                        if overlap_matrix is None and hasattr(dag_result, 'to_dict'):
+                            dag_dict = dag_result.to_dict() if callable(dag_result.to_dict) else dag_result.to_dict
+                            if isinstance(dag_dict, dict) and 'mbar_overlap_matrix' in dag_dict:
+                                raw_matrix = dag_dict['mbar_overlap_matrix']
+                                if raw_matrix is not None and hasattr(raw_matrix, 'ndim'):
+                                    avg = raw_matrix.mean(axis=0) if raw_matrix.ndim == 3 else raw_matrix
+                                    overlap_matrix = [[float(v) for v in row] for row in avg.tolist()]
+                                    logger.debug("Extracted overlap matrix from dag_result")
                     except Exception as om_err:
-                        logger.debug(f"Could not extract overlap matrix for {transformation.name}: {om_err}")
+                        logger.warning(f"Could not extract overlap matrix from result object for {transformation.name}: {om_err}")
+                        logger.debug(f"Result type: {type(result)}, dag_result type: {type(dag_result)}")
+                        # Log all attributes for debugging
+                        try:
+                            result_attrs = {k: type(getattr(result, k)).__name__ for k in dir(result) if not k.startswith('_')}
+                            logger.debug(f"Result attributes: {result_attrs}")
+                        except:
+                            pass
+
+                    # Fallback: Try to find overlap matrix in shared directory files
+                    if overlap_matrix is None:
+                        try:
+                            # Look for MBAR analysis YAML files which may contain numerical data
+                            yaml_files = list(shared_dir.glob('*analysis*.yaml')) + list(shared_dir.glob('*mbar*.yaml'))
+                            if yaml_files and NUMPY_AVAILABLE:
+                                try:
+                                    import yaml
+                                    for yaml_file in yaml_files:
+                                        with open(yaml_file, 'r') as f:
+                                            data = yaml.safe_load(f)
+                                        if isinstance(data, dict) and 'overlap_matrix' in data:
+                                            raw_matrix = np.array(data['overlap_matrix'])
+                                            overlap_matrix = [[float(v) for v in row] for row in raw_matrix.tolist()]
+                                            logger.debug(f"Extracted overlap matrix from YAML: {yaml_file.name}")
+                                            break
+                                except Exception as yaml_err:
+                                    logger.debug(f"Could not parse YAML file: {yaml_err}")
+
+                            # Try numpy binary files as last resort
+                            if overlap_matrix is None and NUMPY_AVAILABLE:
+                                npy_files = list(shared_dir.glob('*overlap*.npy')) + list(shared_dir.glob('*mbar*.npy'))
+                                for npy_file in npy_files:
+                                    try:
+                                        raw_matrix = np.load(npy_file)
+                                        if raw_matrix.ndim >= 2:
+                                            avg = raw_matrix.mean(axis=0) if raw_matrix.ndim == 3 else raw_matrix
+                                            overlap_matrix = [[float(v) for v in row] for row in avg.tolist()]
+                                            logger.debug(f"Extracted overlap matrix from numpy file: {npy_file.name}")
+                                            break
+                                    except Exception as npy_err:
+                                        logger.debug(f"Could not parse numpy file {npy_file.name}: {npy_err}")
+                        except Exception as fb_err:
+                            logger.debug(f"Fallback file search failed: {fb_err}")
 
                     results.append({
                         'name': transformation.name,
@@ -1927,10 +2014,16 @@ class RBFEService:
                     })
 
                     successful_transformations += 1
+                    ddg_val = float(estimate.m_as(unit.kilocalorie_per_mole))
+                    unc_val = float(uncertainty.m_as(unit.kilocalorie_per_mole))
                     logger.info(
                         f"✓ Transformation {transformation.name} completed: "
-                        f"ddG = {float(estimate.m_as(unit.kilocalorie_per_mole)):.2f} ± "
-                        f"{float(uncertainty.m_as(unit.kilocalorie_per_mole)):.2f} kcal/mol"
+                        f"ddG = {ddg_val:.2f} ± {unc_val:.2f} kcal/mol"
+                    )
+                    tx_progress_done = int((i + 1) / total_transformations * 95 + 5)
+                    emit_progress(
+                        tx_progress_done,
+                        f"✓ {i+1}/{total_transformations} {ligand_a_name}→{ligand_b_name}: {ddg_val:.2f} kcal/mol"
                     )
 
                 except Exception as e:
@@ -1938,6 +2031,11 @@ class RBFEService:
                     error_type = type(e).__name__
 
                     logger.error(f"✗ Transformation {transformation.name} failed: {error_type}: {error_msg}")
+                    tx_progress_fail = int((i + 1) / total_transformations * 95 + 5)
+                    emit_progress(
+                        tx_progress_fail,
+                        f"✗ {i+1}/{total_transformations} {ligand_a_name}→{ligand_b_name} failed: {error_type}"
+                    )
 
                     # Check if this is a NaN error
                     is_nan_error = 'nan' in error_msg.lower() or 'inf' in error_msg.lower()
@@ -1979,7 +2077,7 @@ class RBFEService:
 
                 # Update progress
                 self._update_job_status(job_id, {
-                    'progress': (i + 1) / len(transformations) * 100,
+                    'progress': (i + 1) / total_transformations * 100,
                     'current_transformation': i + 1,
                     'successful_transformations': successful_transformations,
                     'failed_transformations': len(failed_transformations)

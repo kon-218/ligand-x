@@ -80,12 +80,13 @@ export interface RBFETransformationResult {
   name: string
   ligand_a?: string
   ligand_b?: string
-  leg?: string
+  leg?: 'complex' | 'solvent'
   estimate_kcal_mol?: number
   uncertainty_kcal_mol?: number
   status: 'completed' | 'failed' | 'running' | 'pending'
   error?: string
   overlap_matrix?: number[][] | null
+  overlap_matrix_path?: string
 }
 
 export interface RBFEDdGValue {

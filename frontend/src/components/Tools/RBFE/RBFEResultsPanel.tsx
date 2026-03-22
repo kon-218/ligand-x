@@ -32,7 +32,7 @@ import {
   downloadNetworkGraphSVG,
   svgToDataUrl,
 } from '@/lib/rbfe-network-export'
-import type { RBFEJob, RBFENetworkData, RBFEDdGValue, DockedPoseInfo, LigandSelection, AlignmentInfo, RBFETransformationResult } from '@/types/rbfe-types'
+import type { RBFEJob, RBFENetworkData, RBFEDdGValue, RBFETransformationResult, DockedPoseInfo, LigandSelection, AlignmentInfo } from '@/types/rbfe-types'
 import { AlignmentPreview } from './AlignmentPreview'
 
 // Helper to check if a job status indicates it's still running/in-progress
@@ -58,6 +58,46 @@ const isCompletedStatus = (status: string | undefined): boolean => {
     'done',
   ])
   return completedStatuses.has((status || '').toLowerCase())
+}
+
+interface TransformationLegRow {
+  ligand_a: string
+  ligand_b: string
+  complex_dg: number | null
+  complex_unc: number | null
+  solvent_dg: number | null
+  solvent_unc: number | null
+  ddg: number | null
+  ddg_unc: number | null
+}
+
+function buildTransformationLegData(
+  transformationResults: RBFETransformationResult[],
+  ddgValues: RBFEDdGValue[]
+): TransformationLegRow[] {
+  const edgeMap = new Map<string, { complex?: RBFETransformationResult; solvent?: RBFETransformationResult }>()
+  for (const r of transformationResults) {
+    if (!r.ligand_a || !r.ligand_b || r.status !== 'completed') continue
+    const key = `${r.ligand_a}||${r.ligand_b}`
+    if (!edgeMap.has(key)) edgeMap.set(key, {})
+    const entry = edgeMap.get(key)!
+    if (r.leg === 'complex') entry.complex = r
+    else if (r.leg === 'solvent') entry.solvent = r
+  }
+  return ddgValues.map((ddg) => {
+    const key = `${ddg.ligand_a}||${ddg.ligand_b}`
+    const legs = edgeMap.get(key) ?? {}
+    return {
+      ligand_a: ddg.ligand_a,
+      ligand_b: ddg.ligand_b,
+      complex_dg: legs.complex?.estimate_kcal_mol ?? null,
+      complex_unc: legs.complex?.uncertainty_kcal_mol ?? null,
+      solvent_dg: legs.solvent?.estimate_kcal_mol ?? null,
+      solvent_unc: legs.solvent?.uncertainty_kcal_mol ?? null,
+      ddg: ddg.ddg_kcal_mol,
+      ddg_unc: ddg.uncertainty_kcal_mol,
+    }
+  })
 }
 
 interface RBFEResultsPanelProps {
@@ -420,6 +460,129 @@ export function RBFEResultsPanel({
             </div>
           )}
 
+          {/* Per-Transformation Leg Breakdown */}
+          {result.results.transformation_results && result.results.transformation_results.length > 0 && (() => {
+            const rows = buildTransformationLegData(
+              result.results.transformation_results,
+              result.results.ddg_values ?? []
+            )
+            if (rows.length === 0) return null
+            return (
+              <div className="space-y-2">
+                <div className="flex items-center gap-2">
+                  <h4 className="text-sm font-semibold text-gray-300">Thermodynamic Cycle per Transformation</h4>
+                  <div className="group relative">
+                    <div className="cursor-help text-xs text-gray-500 border border-gray-600 rounded-full w-4 h-4 flex items-center justify-center">?</div>
+                    <div className="absolute right-0 bottom-full mb-2 hidden group-hover:block w-72 p-2 bg-gray-900 text-xs text-gray-300 rounded border border-gray-700 shadow-lg z-20">
+                      Per-leg free energies for each transformation. ΔΔG = ΔG(complex) − ΔG(solvent).
+                    </div>
+                  </div>
+                </div>
+                <div className="bg-gray-800/50 rounded-lg border border-gray-700 overflow-hidden">
+                  <table className="w-full text-sm">
+                    <thead>
+                      <tr className="border-b border-gray-700 bg-gray-900/50">
+                        <th className="px-3 py-2 text-left text-gray-400">Transformation</th>
+                        <th className="px-3 py-2 text-right text-blue-400">ΔG Complex</th>
+                        <th className="px-3 py-2 text-right text-green-400">ΔG Solvent</th>
+                        <th className="px-3 py-2 text-right text-gray-300">ΔΔG</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {rows.map((row, i) => (
+                        <tr key={i} className="border-b border-gray-700/50 last:border-0">
+                          <td className="px-3 py-2 text-gray-300">
+                            <span className="flex items-center gap-1 text-xs">
+                              {row.ligand_a}
+                              <ArrowRight className="w-3 h-3 text-gray-500" />
+                              {row.ligand_b}
+                            </span>
+                          </td>
+                          <td className="px-3 py-2 text-right font-mono">
+                            {row.complex_dg !== null
+                              ? <span className="text-blue-300">{row.complex_dg.toFixed(2)} <span className="text-gray-500 text-xs">± {row.complex_unc!.toFixed(2)}</span></span>
+                              : <span className="text-gray-600">—</span>}
+                          </td>
+                          <td className="px-3 py-2 text-right font-mono">
+                            {row.solvent_dg !== null
+                              ? <span className="text-green-300">{row.solvent_dg.toFixed(2)} <span className="text-gray-500 text-xs">± {row.solvent_unc!.toFixed(2)}</span></span>
+                              : <span className="text-gray-600">—</span>}
+                          </td>
+                          <td className="px-3 py-2 text-right font-mono">
+                            {row.ddg !== null
+                              ? <span className={row.ddg < 0 ? 'text-green-400' : 'text-red-400'}>
+                                  {row.ddg.toFixed(2)} <span className="text-gray-500 text-xs">± {row.ddg_unc!.toFixed(2)}</span>
+                                </span>
+                              : <span className="text-gray-600">—</span>}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )
+          })()}
+
+          {/* Overlap Matrices */}
+          {result.results.transformation_results && result.results.transformation_results.some(r => r.overlap_matrix) && (() => {
+            // Group by edge, keeping complex and solvent matrices separately
+            const byEdge = new Map<string, {
+              ligand_a: string
+              ligand_b: string
+              complex?: number[][]
+              solvent?: number[][]
+            }>()
+            for (const r of result.results.transformation_results) {
+              if (!r.overlap_matrix || !r.ligand_a || !r.ligand_b) continue
+              const key = `${r.ligand_a}||${r.ligand_b}`
+              if (!byEdge.has(key)) byEdge.set(key, { ligand_a: r.ligand_a, ligand_b: r.ligand_b })
+              const e = byEdge.get(key)!
+              if (r.leg === 'complex') e.complex = r.overlap_matrix
+              else if (r.leg === 'solvent') e.solvent = r.overlap_matrix
+            }
+            if (byEdge.size === 0) return null
+
+            return (
+              <div className="space-y-3">
+                <div className="flex items-center gap-2">
+                  <h4 className="text-sm font-semibold text-gray-300">Overlap Matrices</h4>
+                  <div className="group relative">
+                    <div className="cursor-help text-xs text-gray-500 border border-gray-600 rounded-full w-4 h-4 flex items-center justify-center">?</div>
+                    <div className="absolute right-0 bottom-full mb-2 hidden group-hover:block w-72 p-2 bg-gray-900 text-xs text-gray-300 rounded border border-gray-700 shadow-lg z-20">
+                      MBAR overlap between adjacent lambda windows. Superdiagonal values ≥ 0.03 indicate sufficient phase-space overlap for reliable ΔΔG estimates.
+                    </div>
+                  </div>
+                </div>
+                {[...byEdge.values()].map((edge, i) => (
+                  <div key={i} className="space-y-2">
+                    <p className="text-xs text-gray-400 flex items-center gap-1">
+                      {edge.ligand_a}
+                      <ArrowRight className="w-3 h-3" />
+                      {edge.ligand_b}
+                    </p>
+                    <div className="grid grid-cols-2 gap-3">
+                      {(['complex', 'solvent'] as const).map(leg => {
+                        const matrix = edge[leg]
+                        return (
+                          <div key={leg} className="space-y-1">
+                            <span className={`text-xs font-medium px-2 py-0.5 rounded ${leg === 'complex' ? 'bg-blue-900/30 text-blue-300' : 'bg-green-900/30 text-green-300'}`}>
+                              {leg}
+                            </span>
+                            {matrix
+                              ? <OverlapMatrixHeatmap matrix={matrix} />
+                              : <div className="h-24 bg-gray-800/40 rounded border border-gray-700 flex items-center justify-center text-xs text-gray-600">Not available</div>
+                            }
+                          </div>
+                        )
+                      })}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )
+          })()}
+
           {/* Relative Affinities */}
           {result.results.relative_affinities && Object.keys(result.results.relative_affinities).length > 0 && (
             <div className="space-y-2">
@@ -539,6 +702,60 @@ function getLigandImageUrl(smiles: string | null): string | null {
   } catch {
     return null
   }
+}
+
+function OverlapMatrixHeatmap({ matrix }: { matrix: number[][] }) {
+  const n = matrix.length
+  const cellSize = Math.min(28, Math.floor(200 / Math.max(n, 1)))
+  const size = n * cellSize
+
+  // Blue color scale 0→white, 1→blue (consistent with ABFE overlap display)
+  const cellColor = (v: number) => {
+    const intensity = Math.round((1 - v) * 255)
+    return `rgb(${intensity}, ${intensity}, 255)`
+  }
+
+  return (
+    <div className="overflow-x-auto">
+      <svg width={size + 20} height={size + 20} className="block">
+        <g transform="translate(10,10)">
+          {matrix.map((row, i) =>
+            row.map((val, j) => {
+              const isAdjacentSuperDiag = Math.abs(i - j) === 1
+              const poor = isAdjacentSuperDiag && val < 0.03
+              return (
+                <g key={`${i}-${j}`}>
+                  <rect
+                    x={j * cellSize}
+                    y={i * cellSize}
+                    width={cellSize}
+                    height={cellSize}
+                    fill={cellColor(val)}
+                    stroke={poor ? '#ef4444' : '#374151'}
+                    strokeWidth={poor ? 1.5 : 0.5}
+                  />
+                  {cellSize >= 18 && (
+                    <text
+                      x={j * cellSize + cellSize / 2}
+                      y={i * cellSize + cellSize / 2 + 4}
+                      textAnchor="middle"
+                      fontSize={Math.max(8, cellSize * 0.38)}
+                      fill={val > 0.5 ? '#1e3a5f' : '#e5e7eb'}
+                    >
+                      {val.toFixed(2)}
+                    </text>
+                  )}
+                </g>
+              )
+            })
+          )}
+        </g>
+      </svg>
+      <p className="text-xs text-gray-600 mt-1">
+        {n} λ windows · red border = superdiag &lt; 0.03
+      </p>
+    </div>
+  )
 }
 
 function NetworkGraph({ network, ddgValues, availableLigands }: NetworkGraphProps) {

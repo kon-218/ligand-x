@@ -1782,30 +1782,33 @@ class RBFEService:
                 'job_dir': str(job_dir),
                 'created_at': datetime.now().isoformat()
             })
-            
+
             # Step 1: Prepare ligands with charges and 3D coordinates
             logger.info(f"Step 1: Preparing {len(ligands_data)} ligands...")
+            emit_progress(5, f'Preparing {len(ligands_data)} ligands...')
 
             # Generate 3D coordinates if not present
             # If ligands have docked poses, those coordinates are preserved
             generate_3d_flag = True
-            
+
             ligands = self.prepare_ligands_batch(
                 ligands_data,
                 charge_method=simulation_settings.get('charge_method', 'am1bcc') if simulation_settings else 'am1bcc',
                 generate_3d=generate_3d_flag
             )
-            
+
             if len(ligands) < 2:
                 raise ValueError(f"Need at least 2 ligands, only {len(ligands)} prepared successfully")
-            
+
             self._update_job_status(job_id, {
                 'status': 'preparing',
                 'message': f'Prepared {len(ligands)} ligands'
             })
-            
+            emit_progress(10, f'✓ Prepared {len(ligands)} ligands')
+
             # Step 2: Load protein
             logger.info("Step 2: Loading protein...")
+            emit_progress(12, 'Loading protein...')
             protein = self.load_protein(pdb_data=protein_pdb, protein_id=protein_id)
             
             if protein is None:
@@ -1813,6 +1816,7 @@ class RBFEService:
             
             # Step 3: Create ligand network using selected atom mapper
             logger.info(f"Step 3: Creating {network_topology} network with {atom_mapper} mapper...")
+            emit_progress(15, f'Creating {network_topology} network with {atom_mapper} mapper...')
             network, network_dict = self.create_ligand_network(
                 ligands=ligands,
                 topology=network_topology,
@@ -1821,42 +1825,47 @@ class RBFEService:
                 atom_map_hydrogens=atom_map_hydrogens,
                 lomap_max3d=lomap_max3d
             )
-            
+
             # Save network data
             network_file = job_dir / "network.json"
             with open(network_file, 'w') as f:
                 json.dump(network_dict, f, indent=2)
-            
+
             self._update_job_status(job_id, {
                 'status': 'preparing',
                 'message': f'Created network with {len(network_dict["edges"])} edges',
                 'network': network_dict
             })
-            
+            emit_progress(20, f'✓ Created network with {len(network_dict["edges"])} edges')
+
             # Step 4: Setup protocol
             logger.info("Step 4: Setting up RBFE protocol...")
+            emit_progress(25, 'Setting up RBFE protocol...')
             protocol = self.setup_rbfe_protocol(simulation_settings)
-            
+
             # Step 5: Create transformations
             logger.info("Step 5: Creating transformations...")
+            emit_progress(30, 'Creating transformations...')
             transformations = self.create_transformations(
                 protein=protein,
                 ligand_network=network,
                 protocol=protocol,
                 solvent_nacl_concentration=simulation_settings.get('ionic_strength', 0.15) if simulation_settings else 0.15
             )
-            
+
             # Create AlchemicalNetwork
             alchemical_network = openfe.AlchemicalNetwork(transformations)
-            
+
             self._update_job_status(job_id, {
                 'status': 'running',
                 'message': f'Running {len(transformations)} transformations',
                 'num_transformations': len(transformations)
             })
-            
+            emit_progress(35, f'Ready to execute {len(transformations)} transformations')
+
             # Step 6: Execute transformations with robust error handling
             logger.info(f"Step 6: Executing {len(transformations)} transformations...")
+            emit_progress(40, f'Executing {len(transformations)} transformations...')
 
             # User decision: PARTIAL RESULTS enabled
             # If some transformations fail, we still return results from successful ones

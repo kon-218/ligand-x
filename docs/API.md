@@ -344,6 +344,26 @@ Submit via the unified job system (`POST /api/jobs/submit/md`) or directly:
 | GET  | `/api/md/jobs` | List MD jobs |
 | GET  | `/api/md/jobs/{job_id}` | Get job details |
 | POST | `/api/md/jobs/{job_id}/cancel` | Cancel job |
+| POST | `/api/md/jobs/{job_id}/analytics` | Recompute post-hoc analytics (RMSD + thermodynamics) |
+
+### Analytics Recompute (Gateway)
+
+```
+POST /api/jobs/{job_id}/recompute-analytics
+```
+
+Triggers recomputation of MD analytics (RMSD trajectories and thermodynamic KPIs) for a completed job. Reads `output_files` from the stored result, calls the MD service `EquilibrationAnalytics` module, and persists the updated analytics back to PostgreSQL. Useful for backfilling analytics on jobs that completed before this feature was available.
+
+**Response:**
+```json
+{
+  "success": true,
+  "analytics": {
+    "rmsd": [...],
+    "thermodynamics": {...}
+  }
+}
+```
 
 ---
 

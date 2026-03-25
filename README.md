@@ -79,7 +79,7 @@ Eleven FastAPI microservices and four Celery workers coordinated by an API gatew
 ## Features
 
 - **Molecular Docking** - AutoDock Vina with grid box setup, batch mode, results visualization
-- **MD Simulations** - OpenMM/OpenFF with heating/NVT/NPT, preview checkpoint, trajectory analysis
+- **MD Simulations** - OpenMM/OpenFF with heating/NVT/NPT, preview checkpoint, RMSD and thermodynamic analytics
 - **Free Energy** - ABFE and RBFE via OpenFE; Kartograf and LOMAP atom mappers
 - **Quantum Chemistry** - ORCA: geometry optimization, frequency analysis, NBO charges, Fukui indices
 - **ADMET Prediction** - Drug-likeness, ADMET properties, batch SMILES screening
@@ -227,4 +227,4 @@ ligand-x/
 
 ## Acknowledgements
 
-RDKit · OpenMM · OpenFF · OpenFE · Molstar · Ketcher · AutoDock Vina · ORCA · Boltz-2 · BioPython
+RDKit · OpenMM · OpenFF · OpenFE · MDAnalysis · Molstar · Ketcher · AutoDock Vina · ORCA · Boltz-2 · BioPython

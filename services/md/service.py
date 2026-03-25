@@ -22,6 +22,7 @@ from .validation import (
 from .preparation import ProteinPreparation, LigandPreparation, ChargeAssignment, SystemBuilder
 from .simulation import EnergyMinimization, Equilibration, TrajectoryProcessor, SimulationRunner
 from .utils import PDBWriter, EnvironmentValidator, clean_results_for_json
+from .workflow.analytics import EquilibrationAnalytics
 from .workflow import (
     SolvatedSystemBuilder,
     EquilibrationRunner,
@@ -656,7 +657,28 @@ class MDOptimizationService:
         # Merge equilibration output files
         if "output_files" in equilibration_result:
             result["output_files"].update(equilibration_result["output_files"])
-        
+
+        # Post-hoc analytics: parse log + compute RMSD from NPT trajectory.
+        # Wrapped in try/except so a completed simulation result is never lost
+        # due to an analytics bug.
+        try:
+            output_files = result["output_files"]
+            # Prefer production trajectory + log when available (longer, more informative).
+            # Fall back to NPT equilibration files for runs without production phase.
+            has_production = bool(output_files.get("production_trajectory"))
+            analytics = EquilibrationAnalytics().compute(
+                output_dir=self.output_dir,
+                system_id=config.system_id,
+                topology_pdb=output_files.get("production_pdb") or output_files.get("npt_pdb"),
+                npt_traj=output_files.get("production_trajectory") or output_files.get("npt_trajectory"),
+                log_path=output_files.get("production_log") or output_files.get("equilibration_log"),
+                ligand_id=config.ligand_id if not config.is_protein_only else "",
+            )
+            result["analytics"] = analytics
+        except Exception as exc:
+            logger.warning(f"[ANALYTICS] Post-hoc analytics failed: {exc}", exc_info=True)
+            result["analytics"] = None
+
         logger.info("[COMPLETE] Complete MD optimization workflow finished successfully")
         return clean_results_for_json(result)
     

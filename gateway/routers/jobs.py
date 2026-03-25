@@ -1141,6 +1141,58 @@ async def cancel_job(job_id: str):
 # Job Deletion
 # ============================================================
 
+@router.post("/{job_id}/recompute-analytics")
+async def recompute_analytics(job_id: str):
+    """
+    Re-run post-hoc MD analytics for a completed job.
+
+    Reads output_files from the stored job result, calls the MD service to
+    recompute analytics (thermodynamics + RMSD), then persists the updated
+    result back to PostgreSQL.
+    """
+    try:
+        repo = await get_job_repo()
+        job = await repo.get_job(job_id)
+        if not job:
+            raise HTTPException(status_code=404, detail=f"Job {job_id} not found")
+
+        result = job.get("result") or {}
+        output_files = result.get("output_files") or {}
+        if not output_files:
+            raise HTTPException(status_code=422, detail="Job has no output_files — trajectory may not be on disk")
+
+        from lib.common.config import SERVICE_URLS
+        md_url = SERVICE_URLS.get("md", "http://md:8003")
+
+        payload = {
+            "output_files": output_files,
+            "ligand_id": result.get("ligand_id") or job.get("ligand_id") or "ligand",
+            "is_protein_only": result.get("minimization_only", False),
+            "system_id": job_id,
+        }
+
+        async with httpx.AsyncClient(timeout=300.0) as client:
+            resp = await client.post(f"{md_url}/api/md/jobs/{job_id}/analytics", json=payload)
+            resp.raise_for_status()
+            data = resp.json()
+
+        analytics = data.get("analytics")
+        if analytics:
+            updated_result = {**result, "analytics": analytics}
+            await repo.update_status(job_id, job.get("status", "completed"), result=updated_result)
+
+        return {"success": True, "analytics": analytics}
+
+    except HTTPException:
+        raise
+    except httpx.HTTPStatusError as e:
+        detail = e.response.text[:500] if e.response else str(e)
+        raise HTTPException(status_code=502, detail=f"MD service error: {detail}")
+    except Exception as e:
+        logger.error(f"Failed to recompute analytics for {job_id}: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @router.delete("/{job_id}")
 async def delete_job(job_id: str):
     """

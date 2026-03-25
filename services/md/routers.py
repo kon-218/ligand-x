@@ -64,6 +64,34 @@ async def get_job(job_id: str):
     return job
 
 
+class AnalyticsRequest(BaseModel):
+    output_files: Dict[str, Any]
+    ligand_id: Optional[str] = "ligand"
+    is_protein_only: bool = False
+    system_id: Optional[str] = None
+
+
+@router.post("/jobs/{job_id}/analytics")
+async def recompute_analytics(job_id: str, request: AnalyticsRequest):
+    """Re-run post-hoc analytics given output_files paths. Called by the gateway."""
+    try:
+        from .workflow.analytics import EquilibrationAnalytics
+        output_files = request.output_files
+        has_production = bool(output_files.get("production_trajectory"))
+        analytics = EquilibrationAnalytics().compute(
+            output_dir="",
+            system_id=request.system_id or job_id,
+            topology_pdb=output_files.get("production_pdb") or output_files.get("npt_pdb"),
+            npt_traj=output_files.get("production_trajectory") or output_files.get("npt_trajectory"),
+            log_path=output_files.get("production_log") or output_files.get("equilibration_log"),
+            ligand_id=request.ligand_id if not request.is_protein_only else "",
+        )
+        return {"success": True, "analytics": analytics}
+    except Exception as e:
+        logger.error(f"Analytics recompute failed for {job_id}: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Analytics computation failed: {str(e)}")
+
+
 @router.delete("/jobs/{job_id}")
 async def delete_job(job_id: str):
     """Delete MD job."""

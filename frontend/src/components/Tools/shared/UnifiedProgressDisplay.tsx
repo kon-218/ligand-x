@@ -59,6 +59,17 @@ const SERVICE_COLORS: Record<ServiceType, { gradient: string; text: string; bg: 
     },
 }
 
+/** Used when API returns a job_type not yet in ServiceType / SERVICE_COLORS */
+const DEFAULT_SERVICE_COLORS = {
+    gradient: 'from-gray-500 to-slate-500',
+    text: 'text-gray-400',
+    bg: 'bg-gray-500/20',
+} as const
+
+function getServiceColors(service: ServiceType) {
+    return SERVICE_COLORS[service] ?? DEFAULT_SERVICE_COLORS
+}
+
 /**
  * Unified progress display for running jobs across all services
  * Supports streaming progress for MD, and simple loading for others
@@ -72,7 +83,7 @@ export function UnifiedProgressDisplay({
     isRunning,
     onCancel,
 }: UnifiedProgressDisplayProps) {
-    const colors = SERVICE_COLORS[service]
+    const colors = getServiceColors(service)
     const serviceName = SERVICE_CONFIGS[service]?.name || service.toUpperCase()
 
     if (!isRunning) {

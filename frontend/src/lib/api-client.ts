@@ -1,6 +1,6 @@
 import axios from 'axios'
 import type { MolecularStructure, ADMETRequest, ADMETResult, DockingConfig, DockingResult } from '@/types/molecular'
-import type { MDResult, MDOptimizationConfig, TrajectoryFrame, TrajectoryInfo } from '@/types/md-types'
+import type { MDResult, MDOptimizationConfig, TrajectoryFrame, TrajectoryInfo, MDAnalyticsData } from '@/types/md-types'
 import type { StructureOption } from '@/components/Tools/shared/types'
 import type { Boltz2PredictionParams, Boltz2AlignmentOptions, Boltz2Result, Boltz2MSAOptions } from '@/store/boltz2-store'
 import type { UnifiedJob, ServiceType } from '@/types/unified-job-types'
@@ -609,6 +609,12 @@ export const api = {
   // Resume MD job from preview checkpoint
   resumeMDJob: async (jobId: string): Promise<{ job_id: string; status: string; message: string }> => {
     const response = await apiClient.post(`/api/jobs/resume/md/${jobId}`)
+    return response.data
+  },
+
+  // Re-run post-hoc analytics for a completed job (backfill for older jobs)
+  recomputeMDAnalytics: async (jobId: string): Promise<{ success: boolean; analytics: MDAnalyticsData }> => {
+    const response = await apiClient.post(`/api/jobs/${jobId}/recompute-analytics`)
     return response.data
   },
 

@@ -37,6 +37,7 @@ dependencies:
   - openmmforcefields
   - pdbfixer
   - mdtraj
+  - mdanalysis
   - openff-toolkit
   - openff-interchange
   

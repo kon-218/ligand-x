@@ -75,12 +75,51 @@ export interface MDAnalysis {
   density?: number[]
 }
 
+// ── Equilibration analytics (post-hoc KPI computation) ──────────────────────
+
+export interface MDThermodynamics {
+  step: number[]
+  time_ps: number[]
+  potential_energy_kjmol: number[]
+  temperature_k: number[]
+  density_gcm3: number[]
+  volume_nm3: number[]
+}
+
+export interface MDRmsd {
+  time_ps: number[]
+  backbone_rmsd_angstrom: number[]
+  ligand_rmsd_angstrom: number[]
+  warnings: string[]
+}
+
+export type MDKpiStatus = 'pass' | 'warn' | 'fail'
+
+export interface MDKpiSummary {
+  energy_stable: boolean | null
+  density_converged: boolean | null
+  backbone_rmsd_status: MDKpiStatus | null
+  ligand_rmsd_status: MDKpiStatus | null
+  overall_pass: boolean
+  warnings: string[]
+  backbone_rmsd_pass_a?: number
+  ligand_rmsd_pass_a?: number
+}
+
+export interface MDAnalyticsData {
+  thermodynamics: MDThermodynamics
+  rmsd: MDRmsd
+  kpi_summary: MDKpiSummary
+  error?: string
+}
+
 export interface MDResult {
   status: string
   success: boolean
   job_id?: string
   output_files?: MDOutputFiles
   analysis?: MDAnalysis
+  analytics?: MDAnalyticsData
   execution_time?: number
   final_energy?: number
   average_rmsd?: number
@@ -104,5 +143,15 @@ export interface TrajectoryInfo {
   timestep: number
   temperature: number
   pressure: number
+}
+
+export interface TrajectoryAnalysisResult {
+  time_ns: number[]
+  rmsd_angstrom: number[]
+  rmsf_angstrom: number[]
+  rg_angstrom: number[]
+  residue_labels: string[]
+  n_frames: number
+  n_residues: number
 }
 

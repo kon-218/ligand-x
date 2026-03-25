@@ -64,6 +64,34 @@ async def get_job(job_id: str):
     return job
 
 
+class AnalyticsRequest(BaseModel):
+    output_files: Dict[str, Any]
+    ligand_id: Optional[str] = "ligand"
+    is_protein_only: bool = False
+    system_id: Optional[str] = None
+
+
+@router.post("/jobs/{job_id}/analytics")
+async def recompute_analytics(job_id: str, request: AnalyticsRequest):
+    """Re-run post-hoc analytics given output_files paths. Called by the gateway."""
+    try:
+        from .workflow.analytics import EquilibrationAnalytics
+        output_files = request.output_files
+        has_production = bool(output_files.get("production_trajectory"))
+        analytics = EquilibrationAnalytics().compute(
+            output_dir="",
+            system_id=request.system_id or job_id,
+            topology_pdb=output_files.get("production_pdb") or output_files.get("npt_pdb"),
+            npt_traj=output_files.get("production_trajectory") or output_files.get("npt_trajectory"),
+            log_path=output_files.get("production_log") or output_files.get("equilibration_log"),
+            ligand_id=request.ligand_id if not request.is_protein_only else "",
+        )
+        return {"success": True, "analytics": analytics}
+    except Exception as e:
+        logger.error(f"Analytics recompute failed for {job_id}: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Analytics computation failed: {str(e)}")
+
+
 @router.delete("/jobs/{job_id}")
 async def delete_job(job_id: str):
     """Delete MD job."""
@@ -1010,6 +1038,63 @@ async def get_trajectory_frames(request: TrajectoryRequest):
         error_traceback = traceback.format_exc()
         logger.error(f"{error_detail}\n{error_traceback}")
         raise HTTPException(status_code=500, detail=f"{error_detail}\n{error_traceback}")
+
+
+class TrajectoryAnalysisRequest(BaseModel):
+    trajectory_path: str
+
+
+def _resolve_topology(trajectory_path: str) -> str:
+    """Resolve topology PDB path from a trajectory DCD path."""
+    traj_dir = os.path.dirname(trajectory_path)
+    traj_basename = os.path.basename(trajectory_path)
+    system_id = traj_basename.replace('_nvt_equilibration.dcd', '').replace('_npt_equilibration.dcd', '')
+    topology_path = os.path.join(traj_dir, f"{system_id}_npt_final.pdb")
+    if not os.path.exists(topology_path):
+        topology_path = os.path.join(traj_dir, f"{system_id}_system.pdb")
+    return topology_path
+
+
+@router.post("/trajectory/analysis")
+async def analyze_trajectory(request: TrajectoryAnalysisRequest):
+    """Compute RMSD, RMSF, and radius of gyration for a trajectory."""
+    try:
+        if not os.path.exists(request.trajectory_path):
+            raise HTTPException(status_code=404, detail=f"Trajectory file not found: {request.trajectory_path}")
+
+        import mdtraj as md
+        import numpy as np
+
+        topology_path = _resolve_topology(request.trajectory_path)
+        if not os.path.exists(topology_path):
+            raise HTTPException(status_code=404, detail="Topology file not found for trajectory.")
+
+        traj = md.load_dcd(request.trajectory_path, top=topology_path)
+        traj.remove_solvent(inplace=True)
+        traj.superpose(traj, 0)
+
+        rmsd = (md.rmsd(traj, traj, 0) * 10).tolist()
+        ca_idx = traj.topology.select('name CA')
+        rmsf = (md.rmsf(traj, traj, 0, atom_indices=ca_idx) * 10).tolist() if len(ca_idx) > 0 else []
+        rg = (md.compute_rg(traj) * 10).tolist()
+        time_ns = (np.arange(len(rmsd)) * traj.timestep / 1000).tolist()
+        residue_labels = [str(traj.topology.atom(i).residue) for i in ca_idx]
+
+        return {
+            "time_ns": time_ns,
+            "rmsd_angstrom": rmsd,
+            "rmsf_angstrom": rmsf,
+            "rg_angstrom": rg,
+            "residue_labels": residue_labels,
+            "n_frames": traj.n_frames,
+            "n_residues": len(ca_idx),
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        error_traceback = traceback.format_exc()
+        logger.error(f"Trajectory analysis failed: {str(e)}\n{error_traceback}")
+        raise HTTPException(status_code=500, detail=f"Trajectory analysis failed: {str(e)}")
 
 
 @router.get("/trajectory/pdb")

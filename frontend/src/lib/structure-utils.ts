@@ -6,6 +6,179 @@ import type { VisualizationStyle, MolecularStructure, Ligand } from '@/types/mol
 import { api, apiClient } from './api-client'
 
 /**
+ * Extract atom count from XYZ format string
+ */
+export function getAtomCountFromXyz(xyzData: string): number | null {
+  if (!xyzData) return null
+  const lines = xyzData.trim().split('\n')
+  if (lines.length < 1) return null
+  const firstLine = lines[0].trim()
+  const count = parseInt(firstLine, 10)
+  return isNaN(count) ? null : count
+}
+
+/**
+ * Extract atom symbols from XYZ format string
+ */
+export function getAtomSymbolsFromXyz(xyzData: string): string[] | null {
+  if (!xyzData) return null
+  const lines = xyzData.trim().split('\n')
+  if (lines.length < 3) return null
+  
+  const atomCount = parseInt(lines[0].trim(), 10)
+  if (isNaN(atomCount)) return null
+  
+  const symbols: string[] = []
+  for (let i = 2; i < Math.min(2 + atomCount, lines.length); i++) {
+    const parts = lines[i].trim().split(/\s+/)
+    if (parts.length >= 1) {
+      symbols.push(parts[0])
+    }
+  }
+  return symbols.length > 0 ? symbols : null
+}
+
+/**
+ * Extract atom count from PDB format string
+ */
+export function getAtomCountFromPdb(pdbData: string): number | null {
+  if (!pdbData) return null
+  const lines = pdbData.split('\n')
+  let count = 0
+  for (const line of lines) {
+    if (line.startsWith('ATOM  ') || line.startsWith('HETATM')) {
+      count++
+    }
+  }
+  return count > 0 ? count : null
+}
+
+/**
+ * Extract atom count from SDF/MOL format string
+ */
+export function getAtomCountFromSdf(sdfData: string): number | null {
+  if (!sdfData) return null
+  const lines = sdfData.split('\n')
+  // SDF counts line is typically line 4 (0-indexed: line 3)
+  // Format: "  N  M  0  0  0  0  0  0  0  0999 V2000" where N is atom count
+  if (lines.length < 4) return null
+  const countsLine = lines[3].trim()
+  const parts = countsLine.split(/\s+/)
+  if (parts.length >= 1) {
+    const count = parseInt(parts[0], 10)
+    return isNaN(count) ? null : count
+  }
+  return null
+}
+
+/**
+ * Get atom count from a MolecularStructure
+ */
+export function getAtomCountFromStructure(structure: MolecularStructure | null): number | null {
+  if (!structure) return null
+  
+  // Try XYZ first (most common for QC)
+  if (structure.xyz_data) {
+    const count = getAtomCountFromXyz(structure.xyz_data)
+    if (count !== null) return count
+  }
+  
+  // Try SDF
+  if (structure.sdf_data) {
+    const count = getAtomCountFromSdf(structure.sdf_data)
+    if (count !== null) return count
+  }
+  
+  // Try PDB
+  if (structure.pdb_data) {
+    const count = getAtomCountFromPdb(structure.pdb_data)
+    if (count !== null) return count
+  }
+  
+  // Try ligands
+  if (structure.ligands) {
+    const ligandValues = Object.values(structure.ligands) as Ligand[]
+    if (ligandValues.length > 0) {
+      const firstLigand = ligandValues[0]
+      if (firstLigand.sdf_data) {
+        return getAtomCountFromSdf(firstLigand.sdf_data)
+      }
+      if (firstLigand.pdb_data) {
+        return getAtomCountFromPdb(firstLigand.pdb_data)
+      }
+    }
+  }
+  
+  return null
+}
+
+export interface MoleculeValidationResult {
+  isValid: boolean
+  reason?: string
+  viewerAtomCount?: number | null
+  jobAtomCount?: number | null
+}
+
+/**
+ * Validate that QC results match the currently viewed molecule.
+ * This prevents applying orbitals, charges, or vibrational modes to the wrong structure.
+ * 
+ * @param currentStructure - The currently viewed molecular structure
+ * @param jobAtomCount - Atom count from the QC job (e.g., from charges array length or MO data)
+ * @returns Validation result with isValid flag and reason if invalid
+ */
+export function validateMoleculeMatch(
+  currentStructure: MolecularStructure | null,
+  jobAtomCount: number | null
+): MoleculeValidationResult {
+  if (!currentStructure) {
+    return { 
+      isValid: false, 
+      reason: 'No molecule is currently loaded in the viewer',
+      viewerAtomCount: null,
+      jobAtomCount
+    }
+  }
+  
+  if (jobAtomCount === null || jobAtomCount === undefined) {
+    // Can't validate without job atom count, allow it but warn
+    return { 
+      isValid: true, 
+      reason: 'Could not determine atom count from QC job',
+      viewerAtomCount: getAtomCountFromStructure(currentStructure),
+      jobAtomCount: null
+    }
+  }
+  
+  const viewerAtomCount = getAtomCountFromStructure(currentStructure)
+  
+  if (viewerAtomCount === null) {
+    // Can't validate without viewer atom count, allow it but warn
+    return { 
+      isValid: true, 
+      reason: 'Could not determine atom count from current structure',
+      viewerAtomCount: null,
+      jobAtomCount
+    }
+  }
+  
+  if (viewerAtomCount !== jobAtomCount) {
+    return {
+      isValid: false,
+      reason: `Molecule mismatch: viewer has ${viewerAtomCount} atoms, but QC job was run on ${jobAtomCount} atoms. Load the correct structure first.`,
+      viewerAtomCount,
+      jobAtomCount
+    }
+  }
+  
+  return { 
+    isValid: true,
+    viewerAtomCount,
+    jobAtomCount
+  }
+}
+
+/**
  * Detect structure type from structure data
  */
 export function detectStructureType(structureData: string): 'protein' | 'small-molecule' | 'complex' {
@@ -81,11 +254,13 @@ export async function saveLigandsToLibrary(structure: MolecularStructure): Promi
         continue
       }
 
-      // Extract the original residue name (e.g., "NAG", "ATP")
+      // Extract the original residue name (e.g., "NAG", "ATP", "BNZ")
       const originalName = ligand.residue_name || ligand.name || null
 
-      // Use ligand ID format as the display name (e.g., "Ligand (undefined:500)")
-      const moleculeName = `Ligand (${ligand.chain_id || 'undefined'}:${ligand.residue_number})`
+      // Use residue name as the display name when available (e.g., "BNZ", "P30")
+      // Fall back to chain:residue format if no residue name is known
+      const chain = ligand.chain_id || (ligand as any).chain || 'unknown'
+      const moleculeName = originalName || `Ligand (${chain}:${ligand.residue_number})`
 
       // Try to save using SMILES first (preferred), then fall back to converting from PDB/SDF
       let molfile: string | null = null

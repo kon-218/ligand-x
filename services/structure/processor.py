@@ -529,7 +529,21 @@ class StructureProcessor:
                                     mol = AllChem.AssignBondOrdersFromTemplate(template, mol)
                                     print(f"[COMPLETE] Assigned bond orders from CCD for {ligand_id}")
                             except Exception as e:
-                                print(f"⚠ CCD bond order assignment failed for {ligand_id}: {e} — using raw parse")
+                                # Retry with charge-neutral template.
+                                # PDB mols have no formal charges; CCD SMILES with [N+]/[O-] (e.g. HEPES/EPE)
+                                # cause the subgraph match to fail. Stripping charges allows topology-only
+                                # matching while still transferring correct bond orders (e.g. S=O).
+                                try:
+                                    template2 = Chem.MolFromSmiles(ccd_smiles)
+                                    if template2 is not None:
+                                        Chem.RemoveHs(template2)
+                                        rw = Chem.RWMol(template2)
+                                        for atom in rw.GetAtoms():
+                                            atom.SetFormalCharge(0)
+                                        mol = AllChem.AssignBondOrdersFromTemplate(rw.GetMol(), mol)
+                                        print(f"[COMPLETE] Assigned bond orders from neutral CCD template for {ligand_id}")
+                                except Exception as e2:
+                                    print(f"⚠ CCD bond order assignment failed for {ligand_id}: {e2} — using raw parse")
                         # Check if molecule has valid 3D coordinates
                         if mol.GetNumConformers() > 0:
                             conf = mol.GetConformer(0)
@@ -567,9 +581,9 @@ class StructureProcessor:
                                 AllChem.EmbedMolecule(mol, AllChem.ETKDGv3())
                                 AllChem.MMFFOptimizeMolecule(mol)
                                 print(f"[COMPLETE] Generated new 3D conformer for ligand {ligand_id}")
-                            except:
+                            except Exception as e:
                                 AllChem.Compute2DCoords(mol)
-                                print(f"⚠ Generated 2D coordinates for ligand {ligand_id}")
+                                print(f"⚠ Generated 2D coordinates for ligand {ligand_id} (3D embedding failed: {e})")
                         
                         # Convert to SDF format - use confId=0 to write only first conformer
                         ligand_sdf = Chem.MolToMolBlock(mol, confId=0)
@@ -689,7 +703,46 @@ class StructureProcessor:
                     combined_pdb_lines.append(line)
             
             print(f"[COMPLETE] Reinserted ligand {ligand_id} with preserved coordinates")
-        
+
+        # Add CONECT records for double/triple bonds so Mol* displays correct bond orders.
+        # PDB CONECT encodes multiplicity by repeating the pair: twice = double, three times = triple.
+        # Without these records Mol* falls back to distance-based inference and misses S=O bonds.
+        if RDKIT_AVAILABLE:
+            from rdkit import Chem as _Chem
+            for ligand_id, ligand_info in ligands.items():
+                sdf_data = ligand_info.get('sdf_data')
+                if not sdf_data:
+                    continue
+                try:
+                    sdf_mol = _Chem.MolFromMolBlock(sdf_data, removeHs=True)
+                    if sdf_mol is None:
+                        continue
+                    # Collect heavy-atom serial numbers from HETATM/ATOM lines in order
+                    heavy_serials = []
+                    for line in ligand_info['pdb_data'].strip().split('\n'):
+                        if line.startswith(('HETATM', 'ATOM')):
+                            elem = line[76:78].strip() if len(line) >= 78 else ''
+                            if elem and elem == 'H':
+                                continue
+                            try:
+                                heavy_serials.append(int(line[6:11].strip()))
+                            except (ValueError, IndexError):
+                                pass
+                    if sdf_mol.GetNumAtoms() != len(heavy_serials):
+                        print(f"⚠ Atom count mismatch for {ligand_id} ({sdf_mol.GetNumAtoms()} vs {len(heavy_serials)}), skipping CONECT records")
+                        continue
+                    for bond in sdf_mol.GetBonds():
+                        order = int(round(bond.GetBondTypeAsDouble()))
+                        if order <= 1:
+                            continue
+                        s1 = heavy_serials[bond.GetBeginAtomIdx()]
+                        s2 = heavy_serials[bond.GetEndAtomIdx()]
+                        for _ in range(order):
+                            combined_pdb_lines.append(f"CONECT{s1:5d}{s2:5d}")
+                    print(f"[COMPLETE] Generated CONECT records for {ligand_id}")
+                except Exception as e:
+                    print(f"⚠ Failed to generate CONECT records for {ligand_id}: {e}")
+
         # Add END record
         combined_pdb_lines.append('END')
         

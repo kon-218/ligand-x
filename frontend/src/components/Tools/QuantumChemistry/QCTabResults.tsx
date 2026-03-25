@@ -1,15 +1,17 @@
 'use client'
 
-import React from 'react'
+import React, { useState, useEffect, useRef } from 'react'
 import { RefreshCw, CheckCircle, XCircle, Clock } from 'lucide-react'
 import type { QCJob, QCResults } from '@/types/qc'
 import { StatusBadge } from '@/components/ui/StatusBadge'
 import { filterJobs, getJobTypeBadge } from './utils'
 import { QCResultsTable } from '@/components/QC/QCResultsTable'
+import { QCJobProgress } from '@/components/QC/QCJobProgress'
 import { IRSpectrumPlot } from '@/components/QC/IRSpectrumPlot'
 import { IRModesTable } from '@/components/QC/IRModesTable'
 import { FukuiIndicesTable } from '@/components/QC/FukuiIndicesTable'
 import { ConformerList } from '@/components/QC/ConformerList'
+import { BDEResultsTable } from '@/components/QC/BDEResultsTable'
 import { AtomicChargesTable } from '@/components/QC/AtomicChargesTable'
 import { OrbitalControls } from '@/components/QC/OrbitalControls'
 import { useUnifiedResultsStore } from '@/store/unified-results-store'
@@ -21,10 +23,10 @@ interface QCTabResultsProps {
     activeResults: QCResults | null
     loadingResults: boolean
     resultsSubtab: 'recent' | 'completed'
-    jobTypeFilter: 'all' | 'standard' | 'ir' | 'fukui' | 'conformer'
+    jobTypeFilter: 'all' | 'standard' | 'ir' | 'fukui' | 'conformer' | 'bde'
     onResultsSubtabChange: (subtab: 'recent' | 'completed') => void
-    onJobTypeFilterChange: (filter: 'all' | 'standard' | 'ir' | 'fukui' | 'conformer') => void
-    onSelectJob: (jobId: string) => void
+    onJobTypeFilterChange: (filter: 'all' | 'standard' | 'ir' | 'fukui' | 'conformer' | 'bde') => void
+    onSelectJob: (jobId: string | null) => void
     onViewLog: (jobId: string, filename?: string, title?: string) => void
     onVisualizeFukui?: (type: string, values: number[]) => Promise<void>
     onClearFukui?: () => Promise<void>
@@ -72,6 +74,63 @@ export function QCTabResults({
 
     const filteredJobs = getFilteredJobs().filter((j: any) => j.service === 'qc')
 
+    // Completion delay: keep QCJobProgress visible for 1.5s after job completes so users
+    // can see the final stages tick green before the results view takes over.
+    const [showingCompletion, setShowingCompletion] = useState(false)
+    const completionTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+    const prevStatusRef = useRef<string | null>(null)
+
+    useEffect(() => {
+        const currentStatus = activeJob?.status ?? null
+        const prevStatus = prevStatusRef.current
+        prevStatusRef.current = currentStatus
+
+        if (prevStatus !== null && prevStatus !== 'completed' && currentStatus === 'completed') {
+            setShowingCompletion(true)
+            completionTimerRef.current = setTimeout(() => {
+                setShowingCompletion(false)
+            }, 1500)
+        }
+
+        return () => {
+            if (completionTimerRef.current) clearTimeout(completionTimerRef.current)
+        }
+    }, [activeJob?.status])
+
+    // All stage keys per job type (mirrors QC_STAGES in QCJobProgress)
+    const ALL_STAGES: Record<string, string[]> = {
+        standard: ['preparation', 'scf', 'properties'],
+        ir: ['preparation', 'scf', 'optimization', 'frequencies', 'properties'],
+        fukui: ['preparation', 'neutral', 'anion', 'cation', 'analysis'],
+        conformer: ['generation', 'filtering', 'optimization', 'ranking'],
+        bde: ['preparation', 'parent_opt', 'fragments', 'analysis'],
+    }
+
+    // Helper to map UnifiedJob to QCJob for progress display
+    const isRunning = (activeJob && ['submitted', 'preparing', 'running', 'pending'].includes(activeJob.status)) || showingCompletion
+    const runningQCJob: QCJob | null = isRunning && activeJob ? {
+        id: activeJob.job_id,
+        molecule_id: activeJob.metadata.ligand_id || 'unknown',
+        status: (activeJob.status === 'submitted' ? 'pending' : (activeJob.status === 'preparing' ? 'running' : activeJob.status)) as QCJob['status'],
+        job_type: (activeJob.metadata.qc_job_type || 'standard') as any,
+        method: activeJob.metadata.method || '',
+        basis_set: activeJob.metadata.basis_set || '',
+        created_at: activeJob.created_at,
+        updated_at: activeJob.updated_at || '',
+        progress: showingCompletion
+            ? { percent: 100, step: 'Calculation Complete', details: '', updated_at: '' }
+            : typeof activeJob.progress === 'object' ? activeJob.progress : {
+                percent: typeof activeJob.progress === 'number' ? activeJob.progress : 0,
+                step: activeJob.message || (activeJob.status === 'submitted' ? 'Queued' : 'Processing...'),
+                details: '',
+                updated_at: ''
+            },
+        completed_stages: showingCompletion
+            ? (ALL_STAGES[(activeJob.metadata.qc_job_type || 'standard')] ?? ALL_STAGES.standard)
+            : (activeJob.completed_stages ?? []),
+        error_message: activeJob.error
+    } : null
+
     return (
         <div className="h-full flex flex-col">
             {/* Job List */}
@@ -93,7 +152,14 @@ export function QCTabResults({
             {/* Results Content */}
             <div className="flex-1 overflow-y-auto custom-scrollbar p-4">
                 {
-                    loadingResults ? (
+                    runningQCJob ? (
+                        <div className="flex flex-col items-center justify-center h-full">
+                            <QCJobProgress 
+                                job={runningQCJob} 
+                                onCancel={() => activeJobId && cancelJob(activeJobId, 'qc')} 
+                            />
+                        </div>
+                    ) : loadingResults ? (
                         <div className="flex items-center justify-center h-full text-gray-400" >
                             <div className="text-center">
                                 <RefreshCw className="w-12 h-12 mx-auto mb-4 animate-spin text-blue-400" />
@@ -102,19 +168,21 @@ export function QCTabResults({
                         </div>
                     ) : activeResults ? (
                         <div className="space-y-6">
-                            <div>
-                                <QCResultsTable
-                                    results={activeResults}
-                                    className="w-full"
-                                    jobId={activeJobId || undefined}
-                                    onViewLog={onViewLog}
-                                    orcaJobType={orcaJobType}
-                                    onViewStructure={activeJobId && onLoadStructure ? () => onLoadStructure(activeJobId) : undefined}
-                                />
-                            </div>
+                            {!(activeResults as any)?.bde_results && (
+                                <div>
+                                    <QCResultsTable
+                                        results={activeResults}
+                                        className="w-full"
+                                        jobId={activeJobId || undefined}
+                                        onViewLog={onViewLog}
+                                        orcaJobType={orcaJobType}
+                                        onViewStructure={activeJobId && onLoadStructure ? () => onLoadStructure(activeJobId) : undefined}
+                                    />
+                                </div>
+                            )}
 
-                            {/* Molecular Orbitals — rendered in the main Molstar viewer */}
-                            {activeJobId && viewerRef && (
+                            {/* Molecular Orbitals — rendered in the main Molstar viewer (not for conformer, BDE, or Fukui jobs) */}
+                            {activeJobId && viewerRef && !activeResults?.conformers && !(activeResults as any)?.bde_results && !activeResults?.fukui && (
                                 <OrbitalControls
                                     jobId={activeJobId}
                                     viewerRef={viewerRef}
@@ -183,6 +251,27 @@ export function QCTabResults({
                                     <h3 className="text-lg font-semibold text-white mb-3">Conformers</h3>
                                     <ConformerList
                                         conformers={activeResults.conformers}
+                                    />
+                                </div>
+                            )}
+
+                            {/* Bond Dissociation Energies */}
+                            {(activeResults as any)?.bde_results && (
+                                <div className="mt-4">
+                                    <BDEResultsTable
+                                        bdeResults={(activeResults as any).bde_results}
+                                        statistics={(activeResults as any).bde_statistics}
+                                        onVisualize={viewerRef?.coloring ? async () => {
+                                            const bdeResults = (activeResults as any).bde_results
+                                            const stats = (activeResults as any).bde_statistics
+                                            const successfulBonds = bdeResults.filter((r: any) => r.status === 'success')
+                                            const minBDE = stats?.min_bde_kcal ?? Math.min(...successfulBonds.map((r: any) => r.bde_corrected_kcal))
+                                            const maxBDE = stats?.max_bde_kcal ?? Math.max(...successfulBonds.map((r: any) => r.bde_corrected_kcal))
+                                            await viewerRef.coloring.applyBDETheme(successfulBonds, minBDE, maxBDE)
+                                        } : undefined}
+                                        onClearHighlight={viewerRef?.coloring ? async () => {
+                                            await viewerRef.coloring.applyDefault()
+                                        } : undefined}
                                     />
                                 </div>
                             )}

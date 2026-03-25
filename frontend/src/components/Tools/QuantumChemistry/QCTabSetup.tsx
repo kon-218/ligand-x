@@ -1,7 +1,7 @@
 'use client'
 
 import React, { useState, useEffect } from 'react'
-import { Play, RefreshCw, Settings, Info, Atom, Zap, Layers, Waves, ChevronDown, Check, FlaskConical } from 'lucide-react'
+import { Play, RefreshCw, Settings, Info, Atom, Zap, Layers, Waves, ChevronDown, Check, FlaskConical, Scissors } from 'lucide-react'
 import type { MolecularStructure } from '@/types/molecular'
 import { CURATED_METHODS, WORKFLOW_PRESETS, type QCCalculationWorkflow, type QCCuratedMethod } from '@/types/qc'
 import type { QCAdvancedParameters as QCAdvancedParametersType } from '@/components/Tools/QC/QCAdvancedParameters'
@@ -44,8 +44,8 @@ const DEFAULT_ADVANCED_PARAMS: QCAdvancedParametersType = {
 
 interface QCTabSetupProps {
     currentStructure: MolecularStructure | null
-    calculationType: 'standard' | 'fukui' | 'conformer'
-    onCalculationTypeChange: (type: 'standard' | 'fukui' | 'conformer') => void
+    calculationType: 'standard' | 'fukui' | 'conformer' | 'bde'
+    onCalculationTypeChange: (type: 'standard' | 'fukui' | 'conformer' | 'bde') => void
     advancedParameters: QCAdvancedParametersType | null
     onAdvancedParametersChange: (params: QCAdvancedParametersType) => void
     submitting: boolean
@@ -61,10 +61,19 @@ interface QCTabSetupProps {
     onEnergyWindowChange: (window: number) => void
     conformerCores: number
     onConformerCoresChange: (cores: number) => void
+    bdeMode: 'reckless' | 'rapid' | 'careful' | 'meticulous'
+    onBdeModeChange: (mode: 'reckless' | 'rapid' | 'careful' | 'meticulous') => void
+    bdeCores: number
+    onBdeCoresChange: (cores: number) => void
+    bdeParallelBonds: number
+    onBdeParallelBondsChange: (n: number) => void
     onSubmitStandard: (params: QCAdvancedParametersType) => void
     onSubmitFukui: () => void
     onSubmitConformer: () => void
+    onSubmitBDE: () => void
     onPreviewInput: (inputFile: string) => void
+    selectedLigandId?: string | null
+    onSelectedLigandChange?: (ligandId: string | null) => void
 }
 
 function buildParamsFromWorkflow(
@@ -149,12 +158,30 @@ export function QCTabSetup({
     onEnergyWindowChange,
     conformerCores,
     onConformerCoresChange,
+    bdeMode,
+    onBdeModeChange,
+    bdeCores,
+    onBdeCoresChange,
+    bdeParallelBonds,
+    onBdeParallelBondsChange,
     onSubmitStandard,
     onSubmitFukui,
     onSubmitConformer,
+    onSubmitBDE,
     onPreviewInput,
+    selectedLigandId: controlledSelectedLigandId,
+    onSelectedLigandChange,
 }: QCTabSetupProps) {
-    const [selectedLigandId, setSelectedLigandId] = useState<string | null>(null)
+    // Use controlled state if provided, otherwise use local state
+    const [localSelectedLigandId, setLocalSelectedLigandId] = useState<string | null>(null)
+    const selectedLigandId = controlledSelectedLigandId !== undefined ? controlledSelectedLigandId : localSelectedLigandId
+    const setSelectedLigandId = (id: string | null) => {
+        if (onSelectedLigandChange) {
+            onSelectedLigandChange(id)
+        } else {
+            setLocalSelectedLigandId(id)
+        }
+    }
     const [maxCpuCores, setMaxCpuCores] = useState<number>(64)
 
     // Standard QC workflow state
@@ -298,11 +325,12 @@ export function QCTabSetup({
                 </div>
 
                 {/* Calculation type tabs */}
-                <div className="grid grid-cols-3 gap-2">
+                <div className="grid grid-cols-4 gap-2">
                     {([
                         { id: 'standard' as const, icon: Atom, label: 'QC Calculation', activeClass: 'border-blue-500 bg-blue-500/10', iconClass: 'text-blue-400' },
                         { id: 'fukui' as const, icon: Zap, label: 'Fukui Indices', activeClass: 'border-amber-500 bg-amber-500/10', iconClass: 'text-amber-400' },
                         { id: 'conformer' as const, icon: Layers, label: 'Conformers', activeClass: 'border-emerald-500 bg-emerald-500/10', iconClass: 'text-emerald-400' },
+                        { id: 'bde' as const, icon: Scissors, label: 'BDE', activeClass: 'border-rose-500 bg-rose-500/10', iconClass: 'text-rose-400' },
                     ] as const).map(({ id, icon: Icon, label, activeClass, iconClass }) => (
                         <button
                             key={id}
@@ -661,6 +689,89 @@ export function QCTabSetup({
                                 <><RefreshCw className="w-4 h-4 animate-spin" /> Submitting...</>
                             ) : (
                                 <><Play className="w-4 h-4" /> Start Conformer Search</>
+                            )}
+                        </button>
+                    </div>
+                )}
+
+                {/* ─────────────── Bond Dissociation Energy ─────────────── */}
+                {calculationType === 'bde' && (
+                    <div className="bg-gray-800 rounded-lg p-4 space-y-4">
+                        <div>
+                            <h3 className="text-sm font-semibold text-white mb-1">Bond Dissociation Energy</h3>
+                            <p className="text-xs text-gray-400">
+                                Calculates BDE for all bonds via homolytic cleavage. 
+                                BDE = E(fragment₁) + E(fragment₂) − E(parent)
+                            </p>
+                        </div>
+
+                        <div className="space-y-3">
+                            <div>
+                                <label className="block text-xs font-medium text-gray-300 mb-1.5">Accuracy Level</label>
+                                <select
+                                    value={bdeMode}
+                                    onChange={(e) => onBdeModeChange(e.target.value as any)}
+                                    className="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded-lg text-sm text-white focus:outline-none focus:ring-2 focus:ring-rose-500"
+                                >
+                                    <option value="reckless">GFN-FF → GFN2-xTB (fastest)</option>
+                                    <option value="rapid">GFN2-xTB → r2SCAN-3c (recommended)</option>
+                                    <option value="careful">r2SCAN-3c → ωB97X-3c (accurate)</option>
+                                    <option value="meticulous">ωB97X-3c → ωB97M-D3(BJ)/def2-TZVPPD (highest)</option>
+                                </select>
+                            </div>
+                            <div className="grid grid-cols-2 gap-3">
+                                <div>
+                                    <label className="block text-xs font-medium text-gray-300 mb-1.5">
+                                        Parallel Bonds <span className="text-gray-500">(threads)</span>
+                                    </label>
+                                    <input
+                                        type="number"
+                                        value={bdeParallelBonds}
+                                        onChange={(e) => onBdeParallelBondsChange(Math.max(1, parseInt(e.target.value) || 1))}
+                                        min={1}
+                                        className="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded-lg text-sm text-white focus:outline-none focus:ring-2 focus:ring-rose-500"
+                                    />
+                                </div>
+                                <div>
+                                    <label className="block text-xs font-medium text-gray-300 mb-1.5">
+                                        CPU Cores per Thread <span className="text-gray-500">(max {maxCpuCores})</span>
+                                    </label>
+                                    <input
+                                        type="number"
+                                        value={bdeCores}
+                                        onChange={(e) => onBdeCoresChange(Math.min(parseInt(e.target.value) || 1, maxCpuCores))}
+                                        min={1}
+                                        max={maxCpuCores}
+                                        className="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded-lg text-sm text-white focus:outline-none focus:ring-2 focus:ring-rose-500"
+                                    />
+                                </div>
+                            </div>
+                        </div>
+
+                        <div className="p-2.5 bg-rose-900/20 border border-rose-700/40 rounded-lg space-y-1">
+                            <p className="text-xs text-rose-300 font-medium">
+                                {bdeMode === 'reckless' && 'Optimization → Single-point. No fragment optimization.'}
+                                {bdeMode === 'rapid' && 'Optimization → Single-point. With fragment optimization.'}
+                                {bdeMode === 'careful' && 'DFT Optimization → DFT Single-point. With fragment optimization.'}
+                                {bdeMode === 'meticulous' && 'DFT Optimization → High-level Single-point. With fragment optimization.'}
+                            </p>
+                            <p className="text-xs text-rose-200/70">
+                                Results include linear regression correction for thermochemical effects.
+                            </p>
+                        </div>
+
+                        <button
+                            onClick={onSubmitBDE}
+                            disabled={isQCDisabled || submitting}
+                            className={`w-full flex items-center justify-center gap-2 px-4 py-3 rounded-lg font-medium transition-colors text-white ${isQCDisabled || submitting
+                                ? 'bg-gray-700 text-gray-400 cursor-not-allowed'
+                                : 'bg-rose-600 hover:bg-rose-700'
+                                }`}
+                        >
+                            {submitting ? (
+                                <><RefreshCw className="w-4 h-4 animate-spin" /> Submitting...</>
+                            ) : (
+                                <><Play className="w-4 h-4" /> Calculate BDE</>
                             )}
                         </button>
                     </div>

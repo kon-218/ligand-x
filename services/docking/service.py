@@ -1866,6 +1866,7 @@ class DockingService:
 
             ligand_residues = components.get('ligands', [])
             if ligand_resname:
+                ligand_resname = ligand_resname.strip()
                 ligand_residues = [r for r in ligand_residues if r.get_resname().strip() == ligand_resname]
 
             if not ligand_residues:
@@ -1990,6 +1991,22 @@ class DockingService:
             )
             logger.debug(f"[DockingService] {message}")
 
+            # Convert best docked pose PDBQT → PDB for frontend visualisation
+            docked_pdb = ''
+            if OPENBABEL_AVAILABLE and poses:
+                try:
+                    with tempfile.NamedTemporaryFile(mode='w', suffix='.pdbqt', delete=False) as f:
+                        f.write(poses[0])
+                        tmp_pdbqt = f.name
+                    try:
+                        ob_mol = next(pybel.readfile('pdbqt', tmp_pdbqt))
+                        docked_pdb = ob_mol.write('pdb')
+                    finally:
+                        if os.path.exists(tmp_pdbqt):
+                            os.unlink(tmp_pdbqt)
+                except Exception as e:
+                    logger.warning(f"[DockingService] Could not convert docked pose to PDB for visualisation: {e}")
+
             return {
                 'success': True,
                 'passed': passed,
@@ -1999,6 +2016,9 @@ class DockingService:
                 'ligand_resname': target_resname,
                 'grid_box': grid_box,
                 'message': message,
+                'crystal_pdb': ligand_pdb,
+                'docked_pdb': docked_pdb,
+                'protein_pdb': protein_pdb,
             }
 
         except Exception as e:

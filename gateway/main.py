@@ -60,9 +60,19 @@ async def init_redis():
 
 # Cleanup stale jobs from previous sessions
 async def cleanup_stale_jobs():
-    """Clean up stale jobs that were orphaned from previous sessions."""
+    """
+    Clean up stale jobs that were orphaned from previous sessions.
+    
+    On startup, ALL jobs with pending/running/submitted status that Celery
+    doesn't know about are marked as failed. This handles the case where
+    containers restart and the RabbitMQ queue is cleared but PostgreSQL
+    still has old job records.
+    
+    Celery returns PENDING for both "task waiting in queue" and "unknown task ID",
+    so on startup we assume any PENDING task that's in our DB but not actively
+    running is orphaned from a previous session.
+    """
     try:
-        from datetime import datetime, timezone
         from lib.db import get_job_repository
         from lib.tasks.gpu_tasks import celery_app as gpu_celery_app
 
@@ -87,12 +97,11 @@ async def cleanup_stale_jobs():
             logger.warning("Could not connect to database for stale job cleanup")
             return
 
-        # Get all running/pending/submitted jobs
+        # Get all running/pending jobs
         running_jobs = await repo.list_jobs(status='running', limit=200)
         pending_jobs = await repo.list_jobs(status='pending', limit=200)
-        submitted_jobs = await repo.list_jobs(status='submitted', limit=200)
 
-        all_jobs = running_jobs + pending_jobs + submitted_jobs
+        all_jobs = running_jobs + pending_jobs
         cleaned_count = 0
 
         for job in all_jobs:
@@ -105,31 +114,23 @@ async def cleanup_stale_jobs():
             result = app.AsyncResult(job_id)
             celery_state = result.state
 
-            # Only clean up if Celery doesn't know about this task
-            if celery_state != 'PENDING':
+            # If Celery knows about this task and it's actively running, skip it
+            if celery_state in ('STARTED', 'RUNNING', 'SUCCESS', 'FAILURE', 'REVOKED'):
                 continue
 
-            # Check job age (older than 5 minutes = definitely stale)
-            created_at = job.get('created_at')
+            # Celery returns PENDING for unknown tasks - on startup, this means
+            # the task was lost when containers restarted. Mark as failed.
+            # No age check needed on startup - if Celery doesn't know about it,
+            # it's definitely orphaned from a previous session.
+            logger.info(f"Cleaning up stale {job.get('job_type', 'unknown')} job {job_id} (status: {job.get('status')}, celery_state: {celery_state})")
             try:
-                if isinstance(created_at, str):
-                    job_created = datetime.fromisoformat(created_at.replace('Z', '+00:00'))
-                else:
-                    job_created = created_at
-
-                now = datetime.now(timezone.utc)
-                age_minutes = (now - job_created.replace(tzinfo=timezone.utc)).total_seconds() / 60
-
-                if age_minutes > 5:
-                    # Mark as failed
-                    logger.info(f"Cleaning up stale {job.get('job_type', 'unknown')} job {job_id} (age: {age_minutes:.1f}min, status: {job.get('status')})")
-                    await repo.update_status(
-                        job_id, 'failed',
-                        error_message='Job lost due to system restart or worker failure'
-                    )
-                    cleaned_count += 1
+                await repo.update_status(
+                    job_id, 'failed',
+                    error_message='Job lost due to system restart or worker failure'
+                )
+                cleaned_count += 1
             except Exception as e:
-                logger.warning(f"Failed to process job {job_id} during cleanup: {e}")
+                logger.warning(f"Failed to update job {job_id} during cleanup: {e}")
                 continue
 
         if cleaned_count > 0:

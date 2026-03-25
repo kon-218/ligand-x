@@ -22,7 +22,7 @@
     "ketcher-standalone": "^3.8.0",
     "lucide-react": "^0.546.0",
     "molstar": "^5.0.0",
-    "next": "15.5.10",
+    "next": "15.5.14",
     "next-themes": "^0.4.6",
     "plotly.js": "^3.2.0",
     "react": "19.1.0",
@@ -49,5 +49,19 @@
   },
   "patchedDependencies": {
     "jsdom@27.4.0": "patches/jsdom@27.4.0.patch"
+  },
+  "overrides": {
+    "flatted": "3.4.2",
+    "immutable": "5.1.5",
+    "draft-js": {
+      "immutable": "3.8.3"
+    },
+    "draft-js-custom-styles": {
+      "immutable": "3.8.3"
+    },
+    "minimatch": "3.1.5",
+    "@typescript-eslint/typescript-estree": {
+      "minimatch": "9.0.9"
+    }
   }
 }

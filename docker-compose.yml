@@ -504,7 +504,7 @@ services:
     expose:
       - "8006"
     environment:
-      - CELERY_BROKER_URL=${CELERY_BROKER_URL:-amqp://ligandx:${RABBITMQ_PASSWORD:-ligandx}@rabbitmq:5672/}
+      - CELERY_BROKER_URL=${CELERY_BROKER_URL:-amqp://ligandx:${RABBITMQ_PASSWORD:?Must set RABBITMQ_PASSWORD}@rabbitmq:5672/}
       - CELERY_RESULT_BACKEND=${CELERY_RESULT_BACKEND:-redis://redis:6379/0}
       - DATABASE_URL=${DATABASE_URL:?DATABASE_URL must be set (e.g. postgresql://ligandx:password@postgres:5432/ligandx)}
       - ORCA_PATH=/opt/orca/orca
@@ -556,7 +556,7 @@ services:
     networks:
       - backend
     environment:
-      - CELERY_BROKER_URL=${CELERY_BROKER_URL:-amqp://ligandx:${RABBITMQ_PASSWORD:-ligandx}@rabbitmq:5672/}
+      - CELERY_BROKER_URL=${CELERY_BROKER_URL:-amqp://ligandx:${RABBITMQ_PASSWORD:?Must set RABBITMQ_PASSWORD}@rabbitmq:5672/}
       - CELERY_RESULT_BACKEND=${CELERY_RESULT_BACKEND:-redis://redis:6379/0}
       - DATABASE_URL=${DATABASE_URL:?DATABASE_URL must be set (e.g. postgresql://ligandx:password@postgres:5432/ligandx)}
       - ORCA_PATH=/opt/orca/orca
@@ -610,7 +610,7 @@ services:
     networks:
       - backend
     environment:
-      - CELERY_BROKER_URL=${CELERY_BROKER_URL:-amqp://ligandx:${RABBITMQ_PASSWORD:-ligandx}@rabbitmq:5672/}
+      - CELERY_BROKER_URL=${CELERY_BROKER_URL:-amqp://ligandx:${RABBITMQ_PASSWORD:?Must set RABBITMQ_PASSWORD}@rabbitmq:5672/}
       - CELERY_RESULT_BACKEND=${CELERY_RESULT_BACKEND:-redis://redis:6379/0}
       - DATABASE_URL=${DATABASE_URL:?DATABASE_URL must be set (e.g. postgresql://ligandx:password@postgres:5432/ligandx)}
       - CELERY_CONCURRENCY=${GPU_SHORT_CONCURRENCY:-2}
@@ -659,7 +659,7 @@ services:
     networks:
       - backend
     environment:
-      - CELERY_BROKER_URL=${CELERY_BROKER_URL:-amqp://ligandx:${RABBITMQ_PASSWORD:-ligandx}@rabbitmq:5672/}
+      - CELERY_BROKER_URL=${CELERY_BROKER_URL:-amqp://ligandx:${RABBITMQ_PASSWORD:?Must set RABBITMQ_PASSWORD}@rabbitmq:5672/}
       - CELERY_RESULT_BACKEND=${CELERY_RESULT_BACKEND:-redis://redis:6379/0}
       - DATABASE_URL=${DATABASE_URL:?DATABASE_URL must be set (e.g. postgresql://ligandx:password@postgres:5432/ligandx)}
       - CELERY_CONCURRENCY=${GPU_LONG_CONCURRENCY:-1}
@@ -711,7 +711,7 @@ services:
     networks:
       - backend
     environment:
-      - CELERY_BROKER_URL=${CELERY_BROKER_URL:-amqp://ligandx:${RABBITMQ_PASSWORD:-ligandx}@rabbitmq:5672/}
+      - CELERY_BROKER_URL=${CELERY_BROKER_URL:-amqp://ligandx:${RABBITMQ_PASSWORD:?Must set RABBITMQ_PASSWORD}@rabbitmq:5672/}
       - CELERY_RESULT_BACKEND=${CELERY_RESULT_BACKEND:-redis://redis:6379/0}
       - DATABASE_URL=${DATABASE_URL:?DATABASE_URL must be set (e.g. postgresql://ligandx:password@postgres:5432/ligandx)}
       - CELERY_CONCURRENCY=${CPU_WORKER_CONCURRENCY:-4}
@@ -849,14 +849,15 @@ services:
   flower:
     image: mher/flower:2.0
     container_name: ligandx-flower
-    command: celery --broker=amqp://ligandx:${RABBITMQ_PASSWORD:-ligandx}@rabbitmq:5672/ flower --port=5555 --url_prefix=flower --broker_api=http://ligandx:${RABBITMQ_PASSWORD:-ligandx}@rabbitmq:15672/api/
+    command: celery flower --port=5555 --url_prefix=flower
     networks:
       - backend
       - frontend
     ports:
       - "127.0.0.1:${FLOWER_PORT:-5555}:5555"
     environment:
-      - CELERY_BROKER_URL=amqp://ligandx:${RABBITMQ_PASSWORD:-ligandx}@rabbitmq:5672/
+      - CELERY_BROKER_URL=amqp://ligandx:${RABBITMQ_PASSWORD:?Must set RABBITMQ_PASSWORD}@rabbitmq:5672/
+      - FLOWER_BROKER_API=http://ligandx:${RABBITMQ_PASSWORD:?Must set RABBITMQ_PASSWORD}@rabbitmq:15672/api/
       - CELERY_RESULT_BACKEND=redis://redis:6379/0
       - FLOWER_BASIC_AUTH=${FLOWER_USER:-admin}:${FLOWER_PASSWORD:?Set FLOWER_PASSWORD in .env or .env.production}
       - FLOWER_PERSISTENT=true

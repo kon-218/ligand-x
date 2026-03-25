@@ -47,15 +47,121 @@
             <section class="panel controls-panel">
                 <h2>Controls</h2>
                 
-                <div class="control-group">
-                    <label for="startMode">Start Mode</label>
-                    <select id="startMode" class="select">
-                        <option value="dev">Development (Hot Reload)</option>
-                        <option value="prod">Production</option>
-                        <option value="core">Core Only (Minimal)</option>
-                        <option value="docking">Core + Docking</option>
-                        <option value="md">Core + MD</option>
-                    </select>
+                <div class="control-row">
+                    <div class="control-group">
+                        <label for="envMode">Environment</label>
+                        <select id="envMode" class="select">
+                            <option value="dev">Development</option>
+                            <option value="prod">Production</option>
+                        </select>
+                    </div>
+                    <div class="control-group">
+                        <label for="servicePreset">Services</label>
+                        <select id="servicePreset" class="select" onchange="onPresetChange()">
+                            <option value="full">Full (All Services)</option>
+                            <option value="core">Core Only</option>
+                            <option value="docking">Core + Docking</option>
+                            <option value="md">Core + MD</option>
+                            <option value="qc">Core + QC</option>
+                            <option value="free-energy">Free Energy</option>
+                            <option value="gpu">GPU Stack</option>
+                            <option value="custom">Custom...</option>
+                        </select>
+                    </div>
+                </div>
+
+                <div id="customServices" class="custom-services hidden">
+                    <div class="custom-services-header">
+                        <span>Select Services</span>
+                        <button class="btn btn-xs btn-ghost" onclick="selectAllServices()">All</button>
+                        <button class="btn btn-xs btn-ghost" onclick="selectNoServices()">None</button>
+                    </div>
+                    <div class="services-checkbox-grid">
+                        <label class="service-checkbox core-service">
+                            <input type="checkbox" value="postgres" checked disabled>
+                            <span>PostgreSQL</span>
+                        </label>
+                        <label class="service-checkbox core-service">
+                            <input type="checkbox" value="redis" checked disabled>
+                            <span>Redis</span>
+                        </label>
+                        <label class="service-checkbox core-service">
+                            <input type="checkbox" value="rabbitmq" checked disabled>
+                            <span>RabbitMQ</span>
+                        </label>
+                        <label class="service-checkbox core-service">
+                            <input type="checkbox" value="gateway" checked disabled>
+                            <span>Gateway</span>
+                        </label>
+                        <label class="service-checkbox core-service">
+                            <input type="checkbox" value="frontend" checked disabled>
+                            <span>Frontend</span>
+                        </label>
+                        <label class="service-checkbox core-service">
+                            <input type="checkbox" value="structure" checked disabled>
+                            <span>Structure</span>
+                        </label>
+                        <label class="service-checkbox">
+                            <input type="checkbox" value="ketcher" data-service>
+                            <span>Ketcher</span>
+                        </label>
+                        <label class="service-checkbox">
+                            <input type="checkbox" value="alignment" data-service>
+                            <span>Alignment</span>
+                        </label>
+                        <label class="service-checkbox">
+                            <input type="checkbox" value="msa" data-service>
+                            <span>MSA</span>
+                        </label>
+                        <label class="service-checkbox">
+                            <input type="checkbox" value="docking" data-service>
+                            <span>Docking</span>
+                        </label>
+                        <label class="service-checkbox">
+                            <input type="checkbox" value="md" data-service>
+                            <span>MD</span>
+                        </label>
+                        <label class="service-checkbox">
+                            <input type="checkbox" value="admet" data-service>
+                            <span>ADMET</span>
+                        </label>
+                        <label class="service-checkbox">
+                            <input type="checkbox" value="boltz2" data-service>
+                            <span>Boltz2</span>
+                        </label>
+                        <label class="service-checkbox">
+                            <input type="checkbox" value="qc" data-service>
+                            <span>QC</span>
+                        </label>
+                        <label class="service-checkbox">
+                            <input type="checkbox" value="abfe" data-service>
+                            <span>ABFE</span>
+                        </label>
+                        <label class="service-checkbox">
+                            <input type="checkbox" value="rbfe" data-service>
+                            <span>RBFE</span>
+                        </label>
+                        <label class="service-checkbox">
+                            <input type="checkbox" value="worker-cpu" data-service>
+                            <span>Worker CPU</span>
+                        </label>
+                        <label class="service-checkbox">
+                            <input type="checkbox" value="worker-gpu-short" data-service>
+                            <span>Worker GPU Short</span>
+                        </label>
+                        <label class="service-checkbox">
+                            <input type="checkbox" value="worker-gpu-long" data-service>
+                            <span>Worker GPU Long</span>
+                        </label>
+                        <label class="service-checkbox">
+                            <input type="checkbox" value="worker-qc" data-service>
+                            <span>Worker QC</span>
+                        </label>
+                        <label class="service-checkbox">
+                            <input type="checkbox" value="flower" data-service>
+                            <span>Flower</span>
+                        </label>
+                    </div>
                 </div>
 
                 <div class="button-grid">

@@ -246,8 +246,10 @@ services:
     user: "${UID:-1000}:${GID:-1000}"
     volumes:
       - ./services/md:/app/services/md
+      - ./services/rbfe:/app/services/rbfe
       - ./lib:/app/lib
       - ./data/md_outputs:/app/data/md_outputs
+      - ./data/rbfe_outputs:/app/data/rbfe_outputs
     deploy:
       resources:
         limits:

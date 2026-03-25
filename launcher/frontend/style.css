@@ -303,10 +303,18 @@ body {
    ============================================================ */
 .controls-panel {
     grid-area: controls;
+    overflow: auto;
+}
+
+.control-row {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 10px;
+    margin-bottom: 12px;
 }
 
 .control-group {
-    margin-bottom: 12px;
+    margin-bottom: 0;
 }
 
 .control-group label {
@@ -348,6 +356,86 @@ body {
     padding: 5px 8px;
     font-size: 11px;
     padding-right: 28px;
+}
+
+.custom-services {
+    margin-bottom: 12px;
+    padding: 10px;
+    background: var(--bg-primary);
+    border-radius: var(--radius-md);
+    border: 1px solid var(--border-color);
+    max-height: 150px;
+    overflow-y: auto;
+}
+
+.custom-services.hidden {
+    display: none;
+}
+
+.custom-services-header {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 10px;
+    font-size: 11px;
+    color: var(--text-muted);
+}
+
+.custom-services-header span {
+    flex: 1;
+    font-weight: 500;
+}
+
+.services-checkbox-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 4px;
+}
+
+@media (max-width: 550px) {
+    .services-checkbox-grid {
+        grid-template-columns: repeat(2, 1fr);
+    }
+}
+
+.service-checkbox {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 5px 8px;
+    background: var(--bg-tertiary);
+    border-radius: var(--radius-sm);
+    font-size: 10px;
+    color: var(--text-secondary);
+    cursor: pointer;
+    transition: all var(--transition-fast);
+    border: 1px solid transparent;
+}
+
+.service-checkbox:hover {
+    border-color: var(--border-light);
+}
+
+.service-checkbox input {
+    width: 12px;
+    height: 12px;
+    accent-color: var(--accent-primary);
+    cursor: pointer;
+}
+
+.service-checkbox.core-service {
+    background: var(--bg-secondary);
+    color: var(--text-dim);
+    cursor: default;
+}
+
+.service-checkbox.core-service input {
+    cursor: default;
+}
+
+.btn-xs {
+    padding: 3px 6px;
+    font-size: 10px;
 }
 
 .button-grid {

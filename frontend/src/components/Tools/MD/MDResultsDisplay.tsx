@@ -2,12 +2,14 @@
 
 import { useState } from 'react'
 import { Button } from '@/components/ui/button'
-import { CheckCircle, XCircle, Download, Eye, Play, FileText, Loader2, Flame } from 'lucide-react'
+import { CheckCircle, XCircle, Download, Eye, Play, FileText, Loader2, Flame, BarChart2 } from 'lucide-react'
+import { MDTrajectoryAnalysis } from './MDTrajectoryAnalysis'
+import { MDAnalyticsPanel } from './MDAnalyticsPanel'
 import { useMolecularStore } from '@/store/molecular-store'
 import { useUIStore } from '@/store/ui-store'
 import { useABFEStore } from '@/store/abfe-store'
 import { api } from '@/lib/api-client'
-import type { MDResult } from '@/types/md-types'
+import type { MDResult, MDAnalyticsData } from '@/types/md-types'
 
 interface MDResultsDisplayProps {
   result: MDResult
@@ -33,6 +35,21 @@ export function MDResultsDisplay({
   const abfeStore = useABFEStore()
   const [viewingFile, setViewingFile] = useState<string | null>(null)
   const [settingUpABFE, setSettingUpABFE] = useState(false)
+  const [recomputedAnalytics, setRecomputedAnalytics] = useState<MDAnalyticsData | null>(null)
+  const [isRecomputing, setIsRecomputing] = useState(false)
+
+  const handleRecomputeAnalytics = async () => {
+    setIsRecomputing(true)
+    try {
+      const { analytics } = await api.recomputeMDAnalytics(jobId)
+      setRecomputedAnalytics(analytics)
+      addNotification('success', 'Analytics recomputed successfully')
+    } catch (e) {
+      addNotification('error', 'Failed to recompute analytics')
+    } finally {
+      setIsRecomputing(false)
+    }
+  }
 
   const handleDownload = (filepath: string, filename: string) => {
     // Ensure filepath is a clean string (remove any unexpected suffixes like :1, :2, etc.)
@@ -355,7 +372,8 @@ export function MDResultsDisplay({
             const canView = isPDBFile(key)
             const isViewing = viewingFile === key
             const isTrajectory = isTrajectoryFile(key)
-            const canViewTrajectory = isTrajectory
+            const isProductionTrajectory = key.toLowerCase().includes('production') && isTrajectory
+            const canViewTrajectory = isTrajectory && !isProductionTrajectory
             const isLog = isLogFile(key)
             const canViewLog = isLog
 
@@ -524,7 +542,43 @@ export function MDResultsDisplay({
             )}
           </div>
 
+          {/* Analytics — shown when post-hoc KPI data is available */}
+          {(() => {
+            const analytics = recomputedAnalytics ?? result.analytics
+            const missing = !analytics || analytics.error
+            return (
+              <div className="space-y-3">
+                <h4 className="text-sm font-semibold text-gray-300 flex items-center gap-2">
+                  <BarChart2 className="w-4 h-4 text-blue-400" />
+                  Equilibration Diagnostics
+                  <button
+                    onClick={handleRecomputeAnalytics}
+                    disabled={isRecomputing}
+                    className="ml-auto flex items-center gap-1 text-xs text-gray-400 hover:text-blue-400 disabled:opacity-50 transition-colors"
+                  >
+                    {isRecomputing ? <Loader2 className="w-3 h-3 animate-spin" /> : <BarChart2 className="w-3 h-3" />}
+                    {isRecomputing ? 'Computing…' : missing ? 'Compute Analytics' : 'Recompute'}
+                  </button>
+                </h4>
+                {analytics && <MDAnalyticsPanel analytics={analytics} />}
+                {!analytics && !isRecomputing && (
+                  <p className="text-xs text-gray-500">
+                    Analytics not available for this run. Click "Compute Analytics" to generate them (requires trajectory files on disk).
+                  </p>
+                )}
+              </div>
+            )
+          })()}
+
           {renderOutputFilesSection(result.output_files)}
+
+          {/* Trajectory Analysis — only for equilibration (not production) */}
+          {result.output_files?.trajectory && !result.output_files?.production_trajectory && (
+            <div className="mt-4">
+              <h4 className="text-sm font-semibold text-gray-300 mb-2">Trajectory Analysis</h4>
+              <MDTrajectoryAnalysis trajectoryPath={String(result.output_files.trajectory).split(':')[0].trim()} />
+            </div>
+          )}
 
           {/* ABFE Action Button - only for equilibration jobs */}
           {isEquilibrationJob() && getEquilibratedStructurePath() && (

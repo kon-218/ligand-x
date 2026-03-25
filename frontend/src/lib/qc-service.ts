@@ -556,6 +556,38 @@ class QCService {
       throw error
     }
   }
+
+  /**
+   * Submit Bond Dissociation Energy (BDE) calculation
+   */
+  async submitBDEJob(request: {
+    molecule_xyz: string
+    molecule_name?: string
+    mode?: 'reckless' | 'rapid' | 'careful' | 'meticulous'
+    charge?: number
+    n_procs?: number
+    memory_mb?: number
+  }): Promise<{ job_id: string }> {
+    try {
+      const response = await fetch(`${API_BASE}/api/qc/jobs/bde`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(request),
+      })
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}))
+        throw new Error(errorData.error || `HTTP error! status: ${response.status}`)
+      }
+
+      return await response.json()
+    } catch (error) {
+      console.error('Failed to submit BDE job:', error)
+      throw error
+    }
+  }
 }
 
 export const qcService = new QCService()

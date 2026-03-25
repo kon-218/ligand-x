@@ -38,8 +38,9 @@ export function MDStepResults({ result, isRunning, progress, progressMessage, co
 
   const filteredJobs = getFilteredJobs().filter(j => j.service === 'md')
 
-  const handleSelectJob = async (jobId: string) => {
+  const handleSelectJob = async (jobId: string | null) => {
     mdStore.setActiveJob(jobId)
+    if (!jobId) return
     try {
       const job = await api.getMDJob(jobId)
       console.log('📋 Fetched MD job:', { jobId, status: job.status, hasResult: !!job.result, result: job.result })

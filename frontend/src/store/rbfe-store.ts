@@ -8,6 +8,7 @@ import type {
   DockingMode,
   MappingPreviewResult,
 } from '@/types/rbfe-types'
+import { mergeJobs } from '@/lib/job-utils'
 
 // Helper to check if a job status indicates it's still running/in-progress
 // Note: 'docking_ready' is NOT considered running since it's waiting for user action
@@ -57,6 +58,12 @@ interface RBFEStore {
   mappingPreviewStatus: 'idle' | 'running' | 'completed' | 'failed'
   mappingPreviewResult: MappingPreviewResult | null
 
+  // Reference ligand and docking (step 2)
+  referenceLigandId: string | null
+  referencePoseSource: 'cocrystal' | 'vina' | 'prior_job' | null
+  referencePosePdb: string | null
+  vinaExhaustiveness: number
+
   // Results
   rbfeResult: RBFEJob | null
   isRunning: boolean
@@ -103,6 +110,12 @@ interface RBFEStore {
   setMappingPreviewResult: (result: MappingPreviewResult | null) => void
   clearMappingPreview: () => void
 
+  // Actions - Reference ligand and docking
+  setReferenceLigandId: (ligandId: string | null) => void
+  setReferencePoseSource: (source: 'cocrystal' | 'vina' | 'prior_job' | null) => void
+  setReferencePosePdb: (pdb: string | null) => void
+  setVinaExhaustiveness: (exhaustiveness: number) => void
+
   // Actions - Execution
   setIsRunning: (running: boolean) => void
   setProgress: (progress: number, message?: string) => void
@@ -116,28 +129,32 @@ interface RBFEStore {
 
 const initialRBFEParameters: RBFEParameters = {
   network_topology: 'mst',
-  atom_mapper: 'kartograf',  // NEW: Default to Kartograf (OpenFE best practice)
-  atom_map_hydrogens: true,  // NEW: Include hydrogens in Kartograf mapping
-  lomap_max3d: 1.0,  // NEW: LOMAP max 3D distance
+  atom_mapper: 'kartograf',
+  atom_map_hydrogens: true,
+  lomap_max3d: 1.0,
   lambda_windows: 11,
   equilibration_length_ns: 0.1,
   production_length_ns: 0.5,
   protocol_repeats: 1,
   fast_mode: true,
-  temperature: 300,
+  temperature: 298.15,
   pressure: 1.0,
   ionic_strength: 0.15,
+  solvent_model: 'tip3p',
+  box_shape: 'dodecahedron',
+  solvent_padding_nm: 1.5,
   charge_method: 'am1bcc',
-  ligand_forcefield: 'openff-2.0.0',
+  ligand_forcefield: 'openff-2.2.1',
   robust: false,
   hydrogen_mass: 3.0,
   timestep_fs: 4.0,
+  minimization_steps: 10000,
 }
 
 export const useRBFEStore = create<RBFEStore>((set, get) => ({
   // Initial state
   currentStep: 1,
-  maxStep: 5,
+  maxStep: 6,
 
   selectedProtein: null,
 
@@ -161,6 +178,11 @@ export const useRBFEStore = create<RBFEStore>((set, get) => ({
   mappingPreviewJobId: null,
   mappingPreviewStatus: 'idle',
   mappingPreviewResult: null,
+
+  referenceLigandId: null,
+  referencePoseSource: null,
+  referencePosePdb: null,
+  vinaExhaustiveness: 8,
 
   rbfeResult: null,
   isRunning: false,
@@ -241,6 +263,15 @@ export const useRBFEStore = create<RBFEStore>((set, get) => ({
     mappingPreviewResult: null,
   }),
 
+  // Reference ligand and docking actions
+  setReferenceLigandId: (ligandId) => set({ referenceLigandId: ligandId }),
+
+  setReferencePoseSource: (source) => set({ referencePoseSource: source }),
+
+  setReferencePosePdb: (pdb) => set({ referencePosePdb: pdb }),
+
+  setVinaExhaustiveness: (exhaustiveness) => set({ vinaExhaustiveness: exhaustiveness }),
+
   // Parameter actions
   setRBFEParameters: (params) =>
     set((state) => ({
@@ -253,15 +284,8 @@ export const useRBFEStore = create<RBFEStore>((set, get) => ({
       const incomingJobs = Array.isArray(jobs) ? jobs : []
       const currentJobs = Array.isArray(state.jobs) ? state.jobs : []
 
-      // Merge logic similar to ABFE
-      const incomingJobsMap = new Map(incomingJobs.map((job) => [job.job_id, job]))
-
-      const localOnlyJobs = currentJobs.filter((job) => {
-        const isLocalOnly = !incomingJobsMap.has(job.job_id)
-        return isLocalOnly && isRunningStatus(job.status)
-      })
-
-      const mergedJobs = [...incomingJobs, ...localOnlyJobs]
+      // Use shared merge utility to preserve local pending/running jobs
+      const mergedJobs = mergeJobs(currentJobs, incomingJobs, isRunningStatus)
 
       const hasRunningJobs = mergedJobs.some((job) => isRunningStatus(job.status))
       return { jobs: mergedJobs, isRunning: hasRunningJobs }
@@ -299,7 +323,7 @@ export const useRBFEStore = create<RBFEStore>((set, get) => ({
     set((state) => ({
       rbfeResult: result,
       isRunning: isRunningStatus(result?.status),
-      currentStep: state.currentStep === 4 ? 5 : state.currentStep,
+      currentStep: state.currentStep === 5 ? 6 : state.currentStep,
     })),
 
   // Reset actions
@@ -323,11 +347,14 @@ export const useRBFEStore = create<RBFEStore>((set, get) => ({
       dockingStatus: '',
       networkTopology: 'mst',
       centralLigand: null,
-      referenceLigand: null,
       networkPreview: null,
       mappingPreviewJobId: null,
       mappingPreviewStatus: 'idle',
       mappingPreviewResult: null,
+      referenceLigandId: null,
+      referencePoseSource: null,
+      referencePosePdb: null,
+      vinaExhaustiveness: 8,
       rbfeParameters: initialRBFEParameters,
       rbfeResult: null,
       isRunning: false,

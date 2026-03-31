@@ -2447,16 +2447,6 @@ class RBFEService:
         Returns:
             Dict with 'pairs', 'num_ligands', 'atom_mapper', 'status', 'success'.
         """
-        import sys
-        import json as _json
-
-        def emit_progress(progress: int, status: str) -> None:
-            print(
-                f"MD_PROGRESS:{_json.dumps({'progress': progress, 'status': status})}",
-                file=sys.stderr,
-                flush=True,
-            )
-
         logger.info(f"Starting mapping preview for job {job_id} "
                     f"({len(ligands_data)} ligands, mapper={atom_mapper})")
 

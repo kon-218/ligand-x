@@ -432,16 +432,9 @@ export function RBFETool() {
         const s = status?.status
         if (s === 'completed') {
           stopMappingPreviewPoll()
-          // Extract the mapping preview result from the job
-          const rawResult = status?.result
-          // Unwrap: result may be { result: { result: { pairs: [...] } } } or nested
-          const inner = rawResult?.result ?? rawResult
+          // Unwrap task envelope: status.result = { status, result: { pairs, ... }, ... }
           const previewData: MappingPreviewResult | null =
-            inner && Array.isArray(inner.pairs)
-              ? inner
-              : inner?.result && Array.isArray(inner.result.pairs)
-              ? inner.result
-              : null
+            status?.result?.result ?? null
           if (previewData) {
             rbfeStore.setMappingPreviewResult(previewData)
             rbfeStore.setMappingPreviewStatus('completed')

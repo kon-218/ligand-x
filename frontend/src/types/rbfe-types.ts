@@ -38,14 +38,26 @@ export interface RBFEParameters {
   timestep_fs?: number
   hydrogen_mass?: number
 
-  // System settings
+  // Environment settings
   temperature?: number
   pressure?: number
   ionic_strength?: number
+  solvent_model?: string
+  box_shape?: string
+  solvent_padding_nm?: number
+
+  // Advanced simulation settings
+  minimization_steps?: number
 
   // Charge settings
   charge_method?: 'am1bcc' | 'am1bccelf10' | 'nagl' | 'espaloma'
   ligand_forcefield?: string  // Forcefield for ligand (e.g., 'openff-2.0.0')
+
+  // Reference ligand and docking settings (Optional Docking Workflow)
+  reference_ligand_id?: string
+  reference_pose_source?: 'cocrystal' | 'vina' | 'prior_job'
+  reference_pose_pdb?: string | null
+  vina_exhaustiveness?: number
 
   // Compute settings
   compute_platform?: 'CUDA' | 'OpenCL' | 'CPU'
@@ -154,6 +166,7 @@ export interface RBFEJob {
   created_at?: string
   updated_at?: string
   error?: string
+  ligand_smiles?: Record<string, string>
 }
 
 export interface RBFECalculationConfig {

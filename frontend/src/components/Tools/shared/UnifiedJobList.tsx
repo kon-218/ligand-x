@@ -255,6 +255,10 @@ export function UnifiedJobList({
         document.body.style.userSelect = 'none'
     }
 
+    // Compute both counts from raw jobs (not filtered by active tab)
+    const recentCount = jobs.filter(j => j.status !== 'completed' && j.status !== 'failed').length
+    const completedCount = jobs.filter(j => j.status === 'completed' || j.status === 'failed').length
+
     // Collapsed / minimized render — slim header bar only
     if (isMinimized) {
         return (
@@ -266,7 +270,7 @@ export function UnifiedJobList({
                     <div className="flex items-center gap-2">
                         <h3 className="text-sm font-medium text-white">{title}</h3>
                         <span className="text-xs text-gray-500 bg-gray-700 px-1.5 py-0.5 rounded-full">
-                            {filteredJobs.length}
+                            {recentCount} · {completedCount}
                         </span>
                     </div>
                     <ChevronDown className="w-4 h-4 text-gray-400 transition-colors" />

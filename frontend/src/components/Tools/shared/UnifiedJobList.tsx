@@ -279,7 +279,14 @@ export function UnifiedJobList({
         <div className="p-4 border-b border-gray-700 relative group/list">
             {/* Header with title and tabs */}
             <div className="flex items-center justify-between mb-3">
-                <h3 className="text-sm font-medium text-white">{title}</h3>
+                <div
+                  className="flex items-center gap-1.5 cursor-pointer group/title"
+                  onClick={() => setIsMinimized(true)}
+                  title="Minimize job list"
+                >
+                  <h3 className="text-sm font-medium text-white">{title}</h3>
+                  <ChevronUp className="w-3.5 h-3.5 text-gray-500 group-hover/title:text-gray-300 transition-colors" />
+                </div>
                 <div className="inline-flex rounded-md overflow-hidden border border-gray-600">
                     <button
                         className="px-3 py-1 text-xs transition-colors"

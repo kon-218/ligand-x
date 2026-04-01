@@ -258,7 +258,7 @@ export function UnifiedJobList({
     // Collapsed / minimized render — slim header bar only
     if (isMinimized) {
         return (
-            <div className="p-3 border-b border-gray-700">
+            <div className="p-4 border-b border-gray-700">
                 <div
                     className="flex items-center justify-between cursor-pointer"
                     onClick={() => setIsMinimized(false)}
@@ -269,7 +269,7 @@ export function UnifiedJobList({
                             {filteredJobs.length}
                         </span>
                     </div>
-                    <ChevronDown className="w-4 h-4 text-gray-400 hover:text-white transition-colors" />
+                    <ChevronDown className="w-4 h-4 text-gray-400 transition-colors" />
                 </div>
             </div>
         )

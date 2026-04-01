@@ -255,6 +255,26 @@ export function UnifiedJobList({
         document.body.style.userSelect = 'none'
     }
 
+    // Collapsed / minimized render — slim header bar only
+    if (isMinimized) {
+        return (
+            <div className="p-3 border-b border-gray-700">
+                <div
+                    className="flex items-center justify-between cursor-pointer"
+                    onClick={() => setIsMinimized(false)}
+                >
+                    <div className="flex items-center gap-2">
+                        <h3 className="text-sm font-medium text-white">{title}</h3>
+                        <span className="text-xs text-gray-500 bg-gray-700 px-1.5 py-0.5 rounded-full">
+                            {filteredJobs.length}
+                        </span>
+                    </div>
+                    <ChevronDown className="w-4 h-4 text-gray-400 hover:text-white transition-colors" />
+                </div>
+            </div>
+        )
+    }
+
     return (
         <div className="p-4 border-b border-gray-700 relative group/list">
             {/* Header with title and tabs */}

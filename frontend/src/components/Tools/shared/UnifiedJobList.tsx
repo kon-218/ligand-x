@@ -2,6 +2,7 @@ import { useState, useMemo, useRef, useEffect } from 'react'
 import { StatusIcon, getStatusLabel } from './StatusIcon'
 import type { UnifiedJob, ServiceType, SERVICE_CONFIGS } from '@/types/unified-job-types'
 import { getJobDisplaySummary, getQCJobTypeLabel, getMDJobTypeLabel } from '@/types/unified-job-types'
+import { ChevronDown, ChevronUp } from 'lucide-react'
 
 type ResultsTab = 'recent' | 'completed'
 
@@ -213,6 +214,7 @@ export function UnifiedJobList({
     }, []) // Only on mount
 
     const [height, setHeight] = useState(initialHeight)
+    const [isMinimized, setIsMinimized] = useState(false)
     const isResizing = useRef(false)
     const startY = useRef(0)
     const startHeight = useRef(0)
@@ -238,6 +240,11 @@ export function UnifiedJobList({
             }
         }
     }, [resizable])
+
+    // Auto-expand list when job is deselected so user isn't left with a collapsed empty panel
+    useEffect(() => {
+        if (!activeJobId) setIsMinimized(false)
+    }, [activeJobId])
 
     const handleMouseDown = (e: React.MouseEvent) => {
         if (!resizable) return

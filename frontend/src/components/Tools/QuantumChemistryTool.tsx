@@ -2,6 +2,7 @@
 
 import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react'
 import { Settings, BarChart3 } from 'lucide-react'
+import type { QCCalculationWorkflow } from '@/types/qc'
 import { useQCStore } from '@/store/qc-store'
 import { useMolecularStore } from '@/store/molecular-store'
 import { useUIStore } from '@/store/ui-store'
@@ -47,6 +48,7 @@ export function QuantumChemistryTool() {
     const [loadingResults, setLoadingResults] = useState(false)
     const [submitting, setSubmitting] = useState(false)
     const [calculationType, setCalculationType] = useState<'standard' | 'fukui' | 'conformer' | 'bde'>('standard')
+    const [selectedWorkflow, setSelectedWorkflow] = useState<QCCalculationWorkflow>('optimize')
     const [fukuiMethod, setFukuiMethod] = useState<string>('B3LYP')
     const [fukuiBasisSet, setFukuiBasisSet] = useState<string>('def2-SVP')
     const [conformerCount, setConformerCount] = useState<number>(50)
@@ -471,8 +473,10 @@ export function QuantumChemistryTool() {
         }
     }
 
-    // Handle job selection
+    const qcFetchControllerRef = useRef<AbortController | null>(null)
+
     const handleSelectJob = useCallback(async (jobId: string | null) => {
+        qcFetchControllerRef.current?.abort()
         setUnifiedActiveJob(jobId, 'qc')
         setActiveJob(jobId)
         if (!jobId) return
@@ -481,7 +485,6 @@ export function QuantumChemistryTool() {
         const job = getJobById(jobId)
         const jobStatus = job?.status as string
 
-        // Clear results display for running/pending jobs
         if (jobStatus === 'running' || jobStatus === 'pending') {
             setActiveResults(null)
             return
@@ -493,20 +496,25 @@ export function QuantumChemistryTool() {
         }
 
         if (job && (jobStatus === 'completed' || jobStatus === 'success')) {
+            const controller = new AbortController()
+            qcFetchControllerRef.current = controller
+
             setLoadingResults(true)
             try {
-                const response = await qcService.getJobResults(jobId)
+                const response = await qcService.getJobResults(jobId, { signal: controller.signal })
+                if (controller.signal.aborted) return
                 if (response.results) {
                     setResults(jobId, response.results)
                     setActiveResults(response.results)
                 } else {
                     addNotification('warning', 'Job completed but no results found')
                 }
-            } catch (error) {
+            } catch (error: any) {
+                if (controller.signal.aborted) return
                 console.error('Failed to fetch job results:', error)
                 addNotification('error', 'Failed to load job results')
             } finally {
-                setLoadingResults(false)
+                if (!controller.signal.aborted) setLoadingResults(false)
             }
         }
     }, [setActiveJob, setUnifiedActiveJob, results, getJobById, setResults, setActiveResults, addNotification])
@@ -734,6 +742,8 @@ export function QuantumChemistryTool() {
                         }}
                         selectedLigandId={selectedLigandId}
                         onSelectedLigandChange={setSelectedLigandId}
+                        selectedWorkflow={selectedWorkflow}
+                        onSelectedWorkflowChange={setSelectedWorkflow}
                     />
                 )}
 

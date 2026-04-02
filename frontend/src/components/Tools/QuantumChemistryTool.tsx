@@ -29,6 +29,7 @@ export function QuantumChemistryTool() {
         setResults,
         setActiveResults,
         setAdvancedParameters,
+        clearPendingInitialState,
     } = useQCStore()
 
     const {
@@ -59,6 +60,17 @@ export function QuantumChemistryTool() {
     const [bdeCores, setBdeCores] = useState<number>(4)
     const [bdeParallelBonds, setBdeParallelBonds] = useState<number>(4)
     const [selectedLigandId, setSelectedLigandId] = useState<string | null>(null)
+
+    // Apply pre-selected workflow from New Experiment overlay navigation
+    useEffect(() => {
+        const pending = useQCStore.getState().pendingInitialState
+        if (pending) {
+            setCalculationType(pending.calculationType)
+            if (pending.workflow) setSelectedWorkflow(pending.workflow)
+            clearPendingInitialState()
+        }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [])
 
     // Reset selected ligand when structure changes
     useEffect(() => {

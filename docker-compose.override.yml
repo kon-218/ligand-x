@@ -306,6 +306,7 @@ services:
       - ./frontend:/app
       - /app/node_modules  # Prevent overwriting node_modules
     environment:
+      - NEXT_PUBLIC_API_URL=http://localhost:8000
       - NODE_ENV=development
       - WATCHPACK_POLLING=true
     deploy:

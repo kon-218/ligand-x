@@ -41,7 +41,6 @@ export const toolsConfig: ToolConfig[] = [
     name: 'Editor',
     iconName: 'PenTool',
     description: 'Edit molecular structures',
-    service: 'ketcher',
     isDefault: true,
   },
   {

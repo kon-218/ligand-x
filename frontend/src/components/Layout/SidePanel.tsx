@@ -231,8 +231,14 @@ export function SidePanel() {
           Object.entries(status).forEach(([svc, up]) => { if (up) next.add(svc) })
           return next
         })
-      } else if (!healthCheckComplete) {
-        setHealthCheckComplete(true)
+      } else {
+        // Keep the previous health state if the probe fails.
+        // This prevents temporary network glitches from hiding service-backed tools.
+        if (!healthCheckComplete) {
+          // Do not mark the initial health check complete on failure;
+          // instead keep showing all tools until the first successful probe.
+          return
+        }
       }
     }
 

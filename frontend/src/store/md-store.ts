@@ -125,21 +125,35 @@ interface MDStore {
 
 const initialMDParameters: MDParameters = {
   simulation_length: 'medium',
+  nvt_steps: 25000,
+  npt_steps: 250000,
   temperature: 300,
   pressure: 1.0,
   ionic_strength: 0.15,
   preview_before_equilibration: false,
   charge_method: 'am1bcc',
-  forcefield_method: 'openff-2.2.0',
+  forcefield_method: 'openff-2.2.1',
   box_shape: 'dodecahedron',
-  production_steps: 0,
+  production_steps: 2500000,
   padding_nm: 1.0,
+  heating_steps_per_stage: 2500,
 }
 
 const initialLigandInput: LigandInput = {
   method: 'existing',
   generate_conformer: true,
   preserve_pose: true,
+}
+
+const simulationLengthSteps: Record<Exclude<SimulationLength, 'custom'>, {
+  nvt_steps: number
+  npt_steps: number
+  production_steps: number
+  heating_steps_per_stage: number
+}> = {
+  short: { nvt_steps: 25000, npt_steps: 175000, production_steps: 0, heating_steps_per_stage: 2500 },
+  medium: { nvt_steps: 25000, npt_steps: 250000, production_steps: 2500000, heating_steps_per_stage: 2500 },
+  long: { nvt_steps: 50000, npt_steps: 500000, production_steps: 6250000, heating_steps_per_stage: 2500 },
 }
 
 export const useMDStore = create<MDStore>((set) => ({
@@ -205,10 +219,27 @@ export const useMDStore = create<MDStore>((set) => ({
   
   // Parameter actions
   setSimulationLength: (length) =>
-    set((state) => ({
-      mdParameters: { ...state.mdParameters, simulation_length: length },
-      hasProduction: ['medium', 'long'].includes(length),
-    })),
+    set((state) => {
+      const nextParameters: MDParameters = {
+        ...state.mdParameters,
+        simulation_length: length,
+      }
+
+      if (length !== 'custom') {
+        const preset = simulationLengthSteps[length]
+        nextParameters.nvt_steps = preset.nvt_steps
+        nextParameters.npt_steps = preset.npt_steps
+        nextParameters.production_steps = preset.production_steps
+        nextParameters.heating_steps_per_stage = preset.heating_steps_per_stage
+      }
+
+      return {
+        mdParameters: nextParameters,
+        hasProduction: length === 'custom'
+          ? (nextParameters.production_steps ?? 0) > 0
+          : ['medium', 'long'].includes(length),
+      }
+    }),
   
   setCustomSteps: (nvt, npt) =>
     set((state) => ({

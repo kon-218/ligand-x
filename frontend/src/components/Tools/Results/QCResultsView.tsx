@@ -25,17 +25,17 @@ export function QCResultsView({ jobId }: QCResultsViewProps) {
     const [job, setJob] = useState<any>(null)
 
     useEffect(() => {
+        const controller = new AbortController()
+
         const fetchResults = async () => {
             try {
                 setLoading(true)
-                // Fetch QC results first (QC service has its own file-based storage,
-                // not PostgreSQL, so this is the authoritative source for metadata too)
-                const response = await qcService.getJobResults(jobId)
+                const response = await qcService.getJobResults(jobId, { signal: controller.signal })
+                if (controller.signal.aborted) return
+
                 if (response.results) {
                     setResults(response.results)
                     setError(null)
-                    // Build a pseudo-job object from the QC response fields so that
-                    // input_params.job_type and qc_job_type are available for headers
                     setJob((prev: any) => ({
                         ...prev,
                         input_params: {
@@ -48,17 +48,15 @@ export function QCResultsView({ jobId }: QCResultsViewProps) {
                     setError('No results found for this job')
                 }
 
-                // Also try to fetch PostgreSQL details for extra metadata
-                // (may 404 for QC jobs that predate DB tracking — that's fine)
                 try {
-                    const jobData = await api.getJobDetails(jobId)
+                    const jobData = await api.getJobDetails(jobId, { signal: controller.signal })
+                    if (controller.signal.aborted) return
                     setJob((prev: any) => ({
                         ...prev,
                         ...jobData,
                         input_params: {
                             ...(prev?.input_params ?? {}),
                             ...(jobData?.input_params ?? {}),
-                            // Prefer the QC-service value since it reads the actual ORCA file
                             job_type: (response as any).orca_task_type || jobData?.input_params?.job_type || prev?.input_params?.job_type,
                         },
                     }))
@@ -66,14 +64,16 @@ export function QCResultsView({ jobId }: QCResultsViewProps) {
                     // PostgreSQL job not found — QC-service fields already set above
                 }
             } catch (err: any) {
+                if (controller.signal.aborted) return
                 console.error('Failed to fetch QC results:', err)
                 setError(err.message || 'Failed to load QC results')
             } finally {
-                setLoading(false)
+                if (!controller.signal.aborted) setLoading(false)
             }
         }
 
         fetchResults()
+        return () => controller.abort()
     }, [jobId])
 
     const handleViewLog = async (id: string) => {

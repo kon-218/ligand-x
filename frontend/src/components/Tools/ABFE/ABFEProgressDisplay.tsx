@@ -51,10 +51,10 @@ const ABFE_PHASES = [
     },
 ]
 
-// ABFE legs
+// ABFE legs (Solvent runs first in OpenFE, then Complex)
 const ABFE_LEGS = [
-    { key: 'complex', name: 'Complex', description: 'Protein-ligand complex' },
     { key: 'solvent', name: 'Solvent', description: 'Ligand in solvent' },
+    { key: 'complex', name: 'Complex', description: 'Protein-ligand complex' },
 ]
 
 /**
@@ -80,14 +80,14 @@ function parseProgressMessage(message: string): {
     const timeMatch = message.match(/eta\s+(\d+:\d+:\d+)/i)
     const estimatedTime = timeMatch ? timeMatch[1] : undefined
     
-    // Detect leg from message
+    // Detect leg from message (Solvent runs first, then Complex)
     let leg: 'complex' | 'solvent' | undefined = undefined
     let legNum: number | undefined = undefined
-    if (lowerMessage.includes('complex')) {
-        leg = 'complex'
-        legNum = 1
-    } else if (lowerMessage.includes('solvent')) {
+    if (lowerMessage.includes('solvent')) {
         leg = 'solvent'
+        legNum = 1
+    } else if (lowerMessage.includes('complex')) {
+        leg = 'complex'
         legNum = 2
     }
     
@@ -219,7 +219,7 @@ export function ABFEProgressDisplay({
                     <div className="h-2 bg-blue-900 rounded-full overflow-hidden">
                         <div
                             className="h-full bg-gradient-to-r from-blue-600 to-blue-400 transition-all duration-300"
-                            style={{ width: `${activeLegNum === 1 ? Math.min(progress, 50) : Math.max(0, progress - 50)}%` }}
+                            style={{ width: `${Math.min(100, (activeLegNum === 1 ? Math.min(progress, 50) : Math.max(0, progress - 50)) * 2)}%` }}
                         />
                     </div>
                 </div>

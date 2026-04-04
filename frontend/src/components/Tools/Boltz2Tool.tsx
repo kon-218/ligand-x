@@ -18,7 +18,7 @@ import {
   ExecutionPanel,
   InfoBox,
 } from './shared'
-import type { WorkflowStep, StructureOption } from './shared'
+import type { WorkflowStep, StructureOption, ConfigGroup } from './shared'
 
 // Define workflow steps
 const BOLTZ2_STEPS: WorkflowStep[] = [
@@ -38,6 +38,21 @@ interface UploadedLigand {
   fileName: string
   fileData: string
   format: 'pdb' | 'sdf'
+}
+
+const SINGLE_LIGAND_MIN_MINUTES = 2
+const SINGLE_LIGAND_MAX_MINUTES = 10
+
+function formatDurationRange(minMinutes: number, maxMinutes: number): string {
+  const formatMinutes = (minutes: number): string => {
+    if (minutes >= 60) {
+      const hours = minutes / 60
+      return `${hours % 1 === 0 ? hours.toFixed(0) : hours.toFixed(1)} hour${hours === 1 ? '' : 's'}`
+    }
+    return `${minutes} minute${minutes === 1 ? '' : 's'}`
+  }
+
+  return `~${formatMinutes(minMinutes)} - ${formatMinutes(maxMinutes)}`
 }
 
 export function Boltz2Tool() {
@@ -702,10 +717,84 @@ export function Boltz2Tool() {
           </div>
         )
 
-      case 3:
+      case 3: {
         const selectedLigandName = boltzStore.isBatchMode
           ? `${boltzStore.batchLigands.length} selected`
           : getAvailableLigands().find(l => l.id === boltzStore.selectedLigand)?.name || boltzStore.selectedLigand || boltzStore.ligandSmiles?.substring(0, 20) || 'None'
+        const selectedLigandCount = boltzStore.isBatchMode
+          ? Math.max(1, boltzStore.batchLigands.length)
+          : 1
+        const estimatedMinMinutes = SINGLE_LIGAND_MIN_MINUTES * selectedLigandCount
+        const estimatedMaxMinutes = SINGLE_LIGAND_MAX_MINUTES * selectedLigandCount
+        const runtimeEstimateValue = formatDurationRange(estimatedMinMinutes, estimatedMaxMinutes)
+        const runtimeEstimateDetail = boltzStore.isBatchMode
+          ? `${selectedLigandCount} ligand(s) · ~${SINGLE_LIGAND_MIN_MINUTES}-${SINGLE_LIGAND_MAX_MINUTES} min per ligand · ${(boltzStore.predictionParams.accelerator || 'gpu').toUpperCase()} accelerated`
+          : `${boltzStore.predictionParams.num_poses || 5} pose(s) · ${(boltzStore.predictionParams.accelerator || 'gpu').toUpperCase()} accelerated`
+
+        const boltzConfigGroups: ConfigGroup[] = [
+          {
+            title: 'Structures',
+            items: [
+              { label: 'Protein', value: currentStructure?.structure_id || 'Current' },
+              { label: 'Mode', value: boltzStore.isBatchMode ? 'Batch Prediction' : 'Single Prediction' },
+              { label: 'Ligand', value: selectedLigandName },
+            ],
+          },
+          {
+            title: 'Prediction',
+            items: [
+              { label: 'Poses', value: String(boltzStore.predictionParams.num_poses || 5) },
+              { label: 'Accelerator', value: (boltzStore.predictionParams.accelerator || 'gpu').toUpperCase() },
+              { label: 'Confidence Threshold', value: `${boltzStore.predictionParams.confidence_threshold ?? 0.7}` },
+            ],
+          },
+          {
+            title: 'Alignment',
+            items: [
+              { label: 'Use Alignment', value: boltzStore.alignmentOptions.use_alignment ? 'Enabled' : 'Disabled' },
+              {
+                label: 'Method',
+                value:
+                  boltzStore.alignmentOptions.alignment_method === 'binding_site'
+                    ? 'Binding Site'
+                    : boltzStore.alignmentOptions.alignment_method === 'full_structure'
+                      ? 'Full Structure'
+                      : 'None',
+              },
+              { label: 'Use SVD', value: boltzStore.alignmentOptions.use_svd ? 'Yes' : 'No' },
+              {
+                label: 'Binding Site Radius',
+                value:
+                  !boltzStore.alignmentOptions.use_alignment ||
+                  boltzStore.alignmentOptions.alignment_method !== 'binding_site'
+                    ? 'N/A'
+                    : `${boltzStore.alignmentOptions.binding_site_radius} Å`,
+              },
+              {
+                label: 'Iterative to Target RMSD',
+                value: boltzStore.alignmentOptions.iterative_until_threshold ? 'Yes' : 'No',
+              },
+              { label: 'Target RMSD', value: `${boltzStore.alignmentOptions.target_rmsd}` },
+            ],
+          },
+          {
+            title: 'MSA',
+            items: [
+              { label: 'Generate MSA', value: boltzStore.msaOptions.generateMsa ? 'Enabled' : 'Disabled' },
+              {
+                label: 'MSA Method',
+                value:
+                  !boltzStore.msaOptions.generateMsa
+                    ? 'N/A'
+                    : boltzStore.msaOptions.msaMethod === 'ncbi_blast'
+                    ? 'NCBI BLAST'
+                    : boltzStore.msaOptions.msaMethod === 'mmseqs2_server'
+                      ? 'MMseqs2 Server'
+                      : 'MMseqs2 Local',
+              },
+            ],
+          },
+        ]
 
         return (
           <ExecutionPanel
@@ -714,14 +803,14 @@ export function Boltz2Tool() {
             progressMessage={boltzStore.progressMessage}
             error={error}
             accentColor="purple"
-            configSummary={[
-              { label: 'Protein', value: currentStructure?.structure_id || 'Current' },
-              { label: 'Ligand', value: selectedLigandName },
-              { label: 'Poses', value: String(boltzStore.predictionParams.num_poses || 5) },
-              { label: 'Accelerator', value: boltzStore.predictionParams.accelerator || 'GPU' },
-            ]}
+            configGroups={boltzConfigGroups}
+            runtimeEstimate={{
+              value: runtimeEstimateValue,
+              detail: runtimeEstimateDetail,
+            }}
           />
         )
+      }
 
       case 4:
         // Both single and batch jobs now use the same results component

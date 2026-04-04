@@ -1,5 +1,6 @@
 import { create } from 'zustand'
 import type { MolecularStructure, VisualizationState, VisualizationStyle, SurfaceType, ColorTheme, ADMETResult } from '@/types/molecular'
+import type { GridBox } from '@/types/docking'
 import type { PluginContext } from 'molstar/lib/mol-plugin/context'
 import type { MolstarViewerHandle } from '@/components/MolecularViewer/MolecularViewer'
 import { BlobRegistry, generateBlobId } from '@/lib/blob-registry'
@@ -64,7 +65,15 @@ function storeStructureData(structure: MolecularStructure, name?: string): Struc
     librarySave: structure.library_save,
     name: name || structure.structure_id || 'Unnamed',
     createdAt: Date.now(),
-    visualizationState: { ...initialVisualizationState },
+    visualizationState: {
+      ...initialVisualizationState,
+      // Small molecules (SDF format, not docked poses) should default to ball-and-stick,
+      // not cartoon — cartoon has no secondary structure to render for non-polymers and
+      // will internally fall back to ball-and-stick without multipleBonds, hiding double bonds.
+      style: (sdfBlobId && !structure.metadata?.is_docked_pose && !structure.metadata?.is_boltz2_pose)
+        ? 'stick'
+        : initialVisualizationState.style,
+    },
   }
 }
 
@@ -119,6 +128,8 @@ interface ImageFileTab {
   name: string
   imageUrl: string
   createdAt: number
+  /** When set, library 2D viewer reuses this tab instead of opening duplicates */
+  libraryMoleculeId?: number
 }
 
 // Docking results interface
@@ -150,6 +161,14 @@ interface MolecularStore {
   removeStructureTab: (tabId: string) => void
   setActiveTab: (tabId: string) => void
 
+  // Animation tab (reusable tab for vibrational mode animations)
+  animationTabId: string | null
+  openAnimationTab: (structure: MolecularStructure, name?: string) => string // Creates or updates animation tab, returns tab ID
+
+  // Conformer tab (reusable tab for conformer browsing)
+  conformerTabId: string | null
+  openConformerTab: (structure: MolecularStructure, name?: string) => string // Creates or updates conformer tab, returns tab ID
+
   // Input file preview tabs
   inputFileTabs: InputFileTab[]
   addInputFileTab: (content: string, name?: string) => string // Returns tab ID
@@ -158,7 +177,11 @@ interface MolecularStore {
 
   // Image file preview tabs
   imageFileTabs: ImageFileTab[]
-  addImageFileTab: (imageUrl: string, name?: string) => string // Returns tab ID
+  addImageFileTab: (
+    imageUrl: string,
+    name?: string,
+    options?: { libraryMoleculeId?: number }
+  ) => string // Returns tab ID
   removeImageFileTab: (tabId: string) => void
 
   // Structure data (legacy - for backward compatibility)
@@ -214,6 +237,18 @@ interface MolecularStore {
   pendingEditorImport: boolean
   setPendingEditorImport: (pending: boolean) => void
 
+  // Tautomer exploration trigger (set by LibraryTool to pre-load SMILES in InputTool)
+  pendingTautomerSmiles: string | null
+  setPendingTautomerSmiles: (smiles: string | null) => void
+
+  // Pending docking grid box (set by PocketFinderTool when sending a pocket to Docking)
+  pendingDockingGridBox: GridBox | null
+  setPendingDockingGridBox: (gridBox: GridBox | null) => void
+
+  // Library sync state
+  libraryLastUpdated: number
+  refreshLibrary: () => void
+
   // Reset function
   reset: () => void
 }
@@ -235,6 +270,8 @@ export const useMolecularStore = create<MolecularStore>((set, get) => ({
   // Initial state
   structureTabs: [],
   activeTabId: null,
+  animationTabId: null,
+  conformerTabId: null,
   inputFileTabs: [],
   imageFileTabs: [],
   currentStructure: null,
@@ -252,6 +289,9 @@ export const useMolecularStore = create<MolecularStore>((set, get) => ({
   admetResults: null,
   isAdmetRunning: false,
   pendingEditorImport: false,
+  pendingTautomerSmiles: null,
+  pendingDockingGridBox: null,
+  libraryLastUpdated: 0,
 
   // Tab Actions
   addStructureTab: (structure, name) => {
@@ -264,6 +304,118 @@ export const useMolecularStore = create<MolecularStore>((set, get) => ({
       visualizationState: newTab.visualizationState,
       error: null,
     }))
+  },
+
+  openAnimationTab: (structure, name) => {
+    const state = get()
+    const existingTabId = state.animationTabId
+    const existingTab = existingTabId ? state.structureTabs.find(t => t.id === existingTabId) : null
+
+    if (existingTab) {
+      // Update existing animation tab with new structure data
+      // Clean up old blob data
+      if (existingTab.pdbBlobId) BlobRegistry.delete(existingTab.pdbBlobId)
+      if (existingTab.sdfBlobId) BlobRegistry.delete(existingTab.sdfBlobId)
+      if (existingTab.xyzBlobId) BlobRegistry.delete(existingTab.xyzBlobId)
+
+      // Store new data
+      let pdbBlobId: string | null = null
+      let xyzBlobId: string | null = null
+      if (structure.pdb_data) {
+        pdbBlobId = generateBlobId('pdb')
+        BlobRegistry.set(pdbBlobId, structure.pdb_data, 'pdb')
+      }
+      if (structure.xyz_data) {
+        xyzBlobId = generateBlobId('xyz')
+        BlobRegistry.set(xyzBlobId, structure.xyz_data, 'xyz')
+      }
+
+      const updatedTab: StructureTab = {
+        ...existingTab,
+        structureId: structure.structure_id,
+        pdbBlobId,
+        sdfBlobId: null,
+        xyzBlobId,
+        metadata: structure.metadata,
+        name: name || existingTab.name,
+      }
+
+      set((state) => ({
+        structureTabs: state.structureTabs.map(t => t.id === existingTabId ? updatedTab : t),
+        activeTabId: existingTabId,
+        currentStructure: structure,
+        error: null,
+      }))
+      return existingTabId!
+    } else {
+      // Create new animation tab
+      const newTab = storeStructureData(structure, name || 'Animation')
+      set((state) => ({
+        structureTabs: [...state.structureTabs, newTab],
+        activeTabId: newTab.id,
+        animationTabId: newTab.id,
+        currentStructure: structure,
+        visualizationState: newTab.visualizationState,
+        error: null,
+      }))
+      return newTab.id
+    }
+  },
+
+  openConformerTab: (structure, name) => {
+    const state = get()
+    const existingTabId = state.conformerTabId
+    const existingTab = existingTabId ? state.structureTabs.find(t => t.id === existingTabId) : null
+
+    if (existingTab) {
+      // Update existing conformer tab with new structure data
+      // Clean up old blob data
+      if (existingTab.pdbBlobId) BlobRegistry.delete(existingTab.pdbBlobId)
+      if (existingTab.sdfBlobId) BlobRegistry.delete(existingTab.sdfBlobId)
+      if (existingTab.xyzBlobId) BlobRegistry.delete(existingTab.xyzBlobId)
+
+      // Store new data
+      let pdbBlobId: string | null = null
+      let xyzBlobId: string | null = null
+      if (structure.pdb_data) {
+        pdbBlobId = generateBlobId('pdb')
+        BlobRegistry.set(pdbBlobId, structure.pdb_data, 'pdb')
+      }
+      if (structure.xyz_data) {
+        xyzBlobId = generateBlobId('xyz')
+        BlobRegistry.set(xyzBlobId, structure.xyz_data, 'xyz')
+      }
+
+      const updatedTab: StructureTab = {
+        ...existingTab,
+        structureId: structure.structure_id,
+        pdbBlobId,
+        sdfBlobId: null,
+        xyzBlobId,
+        metadata: structure.metadata,
+        name: name || existingTab.name,
+      }
+
+      set((state) => ({
+        structureTabs: state.structureTabs.map(t => t.id === existingTabId ? updatedTab : t),
+        activeTabId: existingTabId,
+        currentStructure: structure,
+        error: null,
+      }))
+      return existingTabId!
+    } else {
+      // Create new conformer tab
+      const newTab = storeStructureData(structure, name || 'Conformers')
+      set((state) => ({
+        structureTabs: [...state.structureTabs, newTab],
+        activeTabId: newTab.id,
+        conformerTabId: newTab.id,
+        currentStructure: structure,
+        visualizationState: newTab.visualizationState,
+        error: null,
+      }))
+      return newTab.id
+    }
   },
 
   addInputFileTab: (content, name) => {
@@ -328,16 +480,34 @@ export const useMolecularStore = create<MolecularStore>((set, get) => ({
     }
   },
 
-  addImageFileTab: (imageUrl, name) => {
+  addImageFileTab: (imageUrl, name, options) => {
+    const state = get()
+    const libId = options?.libraryMoleculeId
+    if (libId != null) {
+      const existing = state.imageFileTabs.find((t) => t.libraryMoleculeId === libId)
+      if (existing) {
+        const tabName = name || existing.name
+        set({
+          imageFileTabs: state.imageFileTabs.map((t) =>
+            t.id === existing.id ? { ...t, imageUrl, name: tabName } : t
+          ),
+          activeTabId: existing.id,
+          error: null,
+        })
+        return existing.id
+      }
+    }
+
     const tabId = `image-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`
     const newTab: ImageFileTab = {
       id: tabId,
       name: name || 'Image',
       imageUrl,
       createdAt: Date.now(),
+      ...(libId != null ? { libraryMoleculeId: libId } : {}),
     }
-    set((state) => ({
-      imageFileTabs: [...state.imageFileTabs, newTab],
+    set((s) => ({
+      imageFileTabs: [...s.imageFileTabs, newTab],
       activeTabId: tabId,
       error: null,
     }))
@@ -752,6 +922,12 @@ export const useMolecularStore = create<MolecularStore>((set, get) => ({
 
   setPendingEditorImport: (pendingEditorImport) => set({ pendingEditorImport }),
 
+  setPendingTautomerSmiles: (pendingTautomerSmiles) => set({ pendingTautomerSmiles }),
+
+  setPendingDockingGridBox: (gridBox) => set({ pendingDockingGridBox: gridBox }),
+
+  refreshLibrary: () => set({ libraryLastUpdated: Date.now() }),
+
   reset: () => {
     // Clean up all blob data before resetting
     const state = get()
@@ -777,6 +953,8 @@ export const useMolecularStore = create<MolecularStore>((set, get) => ({
       admetResults: null,
       isAdmetRunning: false,
       pendingEditorImport: false,
+      pendingTautomerSmiles: null,
+      pendingDockingGridBox: null,
     })
   },
 }))

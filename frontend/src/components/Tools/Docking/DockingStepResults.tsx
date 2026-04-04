@@ -3,12 +3,12 @@
 import { useState, useEffect, useMemo } from 'react'
 import { Button } from '@/components/ui/button'
 import { Alert, AlertDescription } from '@/components/ui/alert'
-import { Loader2, CheckCircle2, AlertCircle, RefreshCw, Save, Activity, CheckCircle, XCircle, Clock, Layers, Download } from 'lucide-react'
+import { Loader2, CheckCircle2, AlertCircle, RefreshCw, Save, Activity, CheckCircle, XCircle, Clock, Layers, Download, Target } from 'lucide-react'
 import { downloadCSV } from '@/lib/csv-export'
 import type { DockingResults, DockingPose } from '@/types/docking'
 import { useDockingStore } from '@/store/batch-docking-store' // Using renamed generic store
 import { api } from '@/lib/api-client'
-import { UnifiedJobList, ResultsContainer, ResultsTable } from '../shared'
+import { UnifiedJobList, ResultsContainer, ResultsTable, NoJobSelectedState } from '../shared'
 import { useUnifiedResultsStore } from '@/store/unified-results-store'
 
 // Colors matching POSE_SURFACE_COLORS in MolecularViewer (hex strings for CSS)
@@ -22,13 +22,12 @@ interface DockingStepResultsProps {
     selectedPoseIndex: number | null
     savingPose: number | null
     saveMessage: { type: 'success' | 'error'; text: string } | null
-    onRunDocking: () => void
     onVisualizePose: (poseIndex: number) => void
     onVisualizeMultiplePoses?: (poseIndices: number[]) => void
     onSavePose: (poseIndex: number) => void
     onOptimizeWithMD: (poseIndex: number) => void
     onClearPoses: () => void
-    onJobSelected?: (jobId: string) => void // Optional callback for parent to handle if needed
+    onJobSelected?: (jobId: string | null) => void // Optional callback for parent to handle if needed
 }
 
 export function DockingStepResults({
@@ -39,7 +38,6 @@ export function DockingStepResults({
     selectedPoseIndex,
     savingPose,
     saveMessage,
-    onRunDocking,
     onVisualizePose,
     onVisualizeMultiplePoses,
     onSavePose,
@@ -68,7 +66,7 @@ export function DockingStepResults({
 
     const handleSelectJob = async (jobId: string | null) => {
         dockingStore.setActiveJobId(jobId)
-        if (jobId && onJobSelected) {
+        if (onJobSelected) {
             onJobSelected(jobId)
         }
     }
@@ -93,12 +91,6 @@ export function DockingStepResults({
                  We will render the sidebar inside this component. */}
 
             <div className="flex-1 flex flex-col space-y-4">
-                {/* Header */}
-                <div className="flex justify-between items-center">
-                    <h3 className="text-lg font-semibold text-indigo-400">Docking Results</h3>
-                    {/* Job History Toggle / List */}
-                </div>
-
                 {/* Job List */}
                 <UnifiedJobList
                     jobs={filteredJobs}
@@ -130,16 +122,18 @@ export function DockingStepResults({
                     </div>
                 )}
 
-                {/* Run Docking Button */}
-                {!dockingResults && !isDockingRunning && (
-                    <Button
-                        onClick={onRunDocking}
-                        disabled={isDockingRunning}
-                        className="w-full"
-                        size="lg"
-                    >
-                        Run Docking
-                    </Button>
+                {/* Empty state */}
+                {!dockingStore.activeJobId && !dockingResults && !isDockingRunning && (
+                    <NoJobSelectedState
+                        icon={Target}
+                        description="Select a job from the list or run a new docking job"
+                    />
+                )}
+
+                {dockingStore.activeJobId && !dockingResults && !isDockingRunning && (
+                    <div className="flex items-center justify-center h-64 text-gray-400">
+                        <p>No results available for selected job</p>
+                    </div>
                 )}
 
                 {/* Results Summary */}

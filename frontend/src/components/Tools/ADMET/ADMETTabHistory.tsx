@@ -221,10 +221,10 @@ export function ADMETTabHistory({
                                         {resultData.Excretion && Object.keys(resultData.Excretion).length > 0 && (
                                             <div className="space-y-2">
                                                 <div className="flex items-center gap-2">
-                                                    <div className="p-1 bg-cyan-500/20 rounded">
-                                                        <Zap className="h-3.5 w-3.5 text-cyan-400" />
+                                                    <div className="p-1 bg-pink-500/20 rounded">
+                                                        <Zap className="h-3.5 w-3.5 text-pink-400" />
                                                     </div>
-                                                    <h5 className="text-xs font-semibold text-cyan-400">Excretion</h5>
+                                                    <h5 className="text-xs font-semibold text-pink-400">Excretion</h5>
                                                 </div>
                                                 <div className="bg-gray-800/50 rounded-lg p-3 space-y-2">
                                                     {Object.entries(resultData.Excretion).map(([key, value]) => {

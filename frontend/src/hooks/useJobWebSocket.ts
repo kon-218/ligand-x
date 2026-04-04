@@ -25,7 +25,12 @@ import { useEffect, useRef, useCallback, useState } from 'react'
 export interface JobUpdate {
   job_id: string
   status: string
-  progress?: number
+  progress?: number | {
+    percent: number
+    step: string
+    details: string
+    updated_at: string
+  }
   stage?: string
   job_type?: string
   error_message?: string
@@ -40,7 +45,12 @@ interface ServerMessage {
   type?: 'connected' | 'pong' | 'subscribed' | 'unsubscribed' | 'error' | 'ping' | 'stats'
   job_id?: string
   status?: string
-  progress?: number
+  progress?: number | {
+    percent: number
+    step: string
+    details: string
+    updated_at: string
+  }
   stage?: string
   job_type?: string
   error_message?: string
@@ -115,24 +125,25 @@ export function useJobWebSocket({
   const reconnectTimeout = useRef<NodeJS.Timeout | null>(null)
   const heartbeatInterval = useRef<NodeJS.Timeout | null>(null)
   const reconnectAttempts = useRef(0)
-  
+
   const [isConnected, setIsConnected] = useState(false)
   const [attemptCount, setAttemptCount] = useState(0)
-  
+
   // Track if component is mounted
   const mountedRef = useRef(true)
-  
+
+  // Stable refs for options that shouldn't trigger reconnects when changed
+  const reconnectIntervalRef = useRef(reconnectInterval)
+  const maxReconnectAttemptsRef = useRef(maxReconnectAttempts)
+
   // Stable callback refs
   const onJobUpdateRef = useRef(onJobUpdate)
   const onConnectionChangeRef = useRef(onConnectionChange)
   
-  useEffect(() => {
-    onJobUpdateRef.current = onJobUpdate
-  }, [onJobUpdate])
-  
-  useEffect(() => {
-    onConnectionChangeRef.current = onConnectionChange
-  }, [onConnectionChange])
+  useEffect(() => { onJobUpdateRef.current = onJobUpdate }, [onJobUpdate])
+  useEffect(() => { onConnectionChangeRef.current = onConnectionChange }, [onConnectionChange])
+  useEffect(() => { reconnectIntervalRef.current = reconnectInterval }, [reconnectInterval])
+  useEffect(() => { maxReconnectAttemptsRef.current = maxReconnectAttempts }, [maxReconnectAttempts])
   
   /**
    * Update connection state
@@ -284,34 +295,35 @@ export function useJobWebSocket({
         clearTimers()
         
         // Attempt reconnection with exponential backoff
-        if (enabled && reconnectAttempts.current < maxReconnectAttempts) {
+        const maxAttempts = maxReconnectAttemptsRef.current
+        if (enabled && reconnectAttempts.current < maxAttempts) {
           const delay = Math.min(
-            reconnectInterval * Math.pow(2, reconnectAttempts.current),
+            reconnectIntervalRef.current * Math.pow(2, reconnectAttempts.current),
             30000 // Max 30 seconds
           )
-          
+
           reconnectAttempts.current++
           setAttemptCount(reconnectAttempts.current)
-          
+
           console.log(
-            `[WebSocket] Reconnecting in ${delay}ms (attempt ${reconnectAttempts.current}/${maxReconnectAttempts})`
+            `[WebSocket] Reconnecting in ${delay}ms (attempt ${reconnectAttempts.current}/${maxAttempts})`
           )
-          
+
           reconnectTimeout.current = setTimeout(() => {
             if (mountedRef.current && enabled) {
               connect()
             }
           }, delay)
-        } else if (reconnectAttempts.current >= maxReconnectAttempts) {
+        } else if (reconnectAttempts.current >= maxAttempts) {
           console.warn('[WebSocket] Max reconnection attempts reached')
         }
       }
-      
+
     } catch (err) {
       console.error('[WebSocket] Failed to create connection:', err)
       updateConnectionState(false)
     }
-  }, [enabled, reconnectInterval, maxReconnectAttempts, clearTimers, updateConnectionState])
+  }, [enabled, clearTimers, updateConnectionState])
   
   /**
    * Manual reconnect
@@ -350,16 +362,16 @@ export function useJobWebSocket({
   // Connect on mount, disconnect on unmount
   useEffect(() => {
     mountedRef.current = true
-    
+
     if (enabled) {
       connect()
     }
-    
+
     return () => {
       mountedRef.current = false
       disconnect()
     }
-  }, [enabled]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [enabled, connect, disconnect])
   
   return {
     subscribe,

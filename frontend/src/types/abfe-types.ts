@@ -1,36 +1,68 @@
 // ABFE Calculation Types
 
 export interface ABFEParameters {
-    simulation_time_ns?: number
-    lambda_windows?: number
-    equilibration_steps?: number
-    production_steps?: number
-    n_iterations?: number  // Number of simulation iterations (deprecated, use production_length_ns)
-    steps_per_iteration?: number  // Steps per iteration (deprecated)
+    // Preset / mode
     fast_mode?: boolean  // Fast mode: fewer iterations for faster results (default: true)
 
-    // New parameters for fine-grained control
+    // Core simulation settings
     equilibration_length_ns?: number  // Equilibration time in nanoseconds
     production_length_ns?: number  // Production time in nanoseconds
-    n_checkpoints?: number  // Number of checkpoints during production (deprecated, use production_n_checkpoints)
     protocol_repeats?: number  // Number of independent repetitions (default: 3)
     time_per_iteration_ps?: number  // Time per iteration in picoseconds (default: 2.5 ps)
 
-    // Production checkpoint settings
+    // Checkpoint settings
     production_n_checkpoints?: number  // Number of checkpoints for production phase (default: 10)
     production_checkpoint_interval_ns?: number  // Direct checkpoint interval for production phase in nanoseconds
-    production_checkpoint_mode?: 'number' | 'interval'  // Which mode is active: 'number' or 'interval'
-
-    // Equilibration checkpoint settings
+    production_checkpoint_mode?: 'number' | 'interval'
     equilibration_n_checkpoints?: number  // Number of checkpoints for equilibration phase (default: 5)
     equilibration_checkpoint_interval_ns?: number  // Direct checkpoint interval for equilibration phase in nanoseconds
-    equilibration_checkpoint_mode?: 'number' | 'interval'  // Which mode is active: 'number' or 'interval'
+    equilibration_checkpoint_mode?: 'number' | 'interval'
 
-    temperature?: number
-    pressure?: number
-    ionic_strength?: number
+    // Ligand preparation
     charge_method?: 'am1bcc' | 'am1bccelf10' | 'nagl' | 'espaloma'
     ligand_forcefield?: string
+
+    // Environment settings
+    temperature?: number  // Temperature in Kelvin (default: 298.15)
+    pressure?: number  // Pressure in bar (default: 1.0)
+    solvent_model?: 'tip3p' | 'tip4pew' | 'spce'  // Water model (default: tip3p)
+    solvent_padding_nm?: number  // Solvent padding in nm (default: 1.0 complex, 1.5 solvent)
+    box_shape?: 'cube' | 'dodecahedron'  // Simulation box shape (default: dodecahedron)
+    ionic_strength?: number  // NaCl concentration in M (default: 0.15)
+
+    // Advanced simulation settings
+    n_replicas_complex?: number  // Number of lambda replicas for complex (default: 30)
+    n_replicas_solvent?: number  // Number of lambda replicas for solvent (default: 14)
+    minimization_steps?: number  // Minimization steps (default: 5000)
+    timestep_fs?: number  // Integrator timestep in femtoseconds (default: 4.0)
+
+    // Restraint settings (Boresch)
+    restraint_settings?: ABFERestraintSettings
+
+    // Deprecated (kept for backward compatibility)
+    /** @deprecated Use n_replicas_complex and n_replicas_solvent instead */
+    simulation_time_ns?: number
+    /** @deprecated Use n_replicas_complex and n_replicas_solvent instead */
+    lambda_windows?: number
+    /** @deprecated Use production_length_ns instead */
+    n_iterations?: number
+    /** @deprecated Use production_length_ns instead */
+    n_checkpoints?: number
+    /** @deprecated Use production_length_ns instead */
+    steps_per_iteration?: number
+    /** @deprecated Use production_length_ns instead */
+    equilibration_steps?: number
+    /** @deprecated Use production_length_ns instead */
+    production_steps?: number
+}
+
+export interface ABFERestraintSettings {
+    host_selection?: string  // MDAnalysis selection string (default: 'backbone')
+    host_min_distance_nm?: number  // Min distance for host atoms in nm (default: 0.5)
+    host_max_distance_nm?: number  // Max distance for host atoms in nm (default: 1.5)
+    rmsf_cutoff_nm?: number  // RMSF cutoff in nm (default: 0.1)
+    dssp_filter?: boolean  // Filter by secondary structure (default: true)
+    anchor_finding_strategy?: 'bonded' | 'multi-residue'  // Strategy for finding anchor atoms (default: 'bonded')
 }
 
 export interface ABFECalculationConfig {

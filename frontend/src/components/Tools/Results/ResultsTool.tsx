@@ -3,12 +3,24 @@
 import React, { useEffect, useState } from 'react'
 import { BarChart3, Target, Activity, Brain, FlaskConical, GitBranch, Trash2 } from 'lucide-react'
 import { useUnifiedResultsStore } from '@/store/unified-results-store'
+import { useBaseColor } from '@/hooks/use-base-color'
 import { UnifiedJobList, UnifiedProgressDisplay } from '../shared'
 import { ServiceResultsRenderer } from './ServiceResultsRenderer'
 import type { ServiceType } from '@/types/unified-job-types'
+import { cn } from '@/lib/utils'
+
+/** Full Tailwind class strings so JIT includes them (dynamic `bg-${color}-600` is never generated). */
+const SERVICE_FILTER_ACTIVE_CLASS: Record<string, string> = {
+    cyan: 'bg-cyan-600 text-white',
+    indigo: 'bg-indigo-600 text-white',
+    green: 'bg-green-600 text-white',
+    purple: 'bg-purple-600 text-white',
+    blue: 'bg-blue-600 text-white',
+}
+
 // Service filter configuration
 const SERVICE_FILTERS: Array<{ id: ServiceType | 'all'; label: string; icon: React.ReactNode; color: string }> = [
-    { id: 'all', label: 'All', icon: <BarChart3 className="w-4 h-4" />, color: 'gray' },
+    { id: 'all', label: 'All', icon: <BarChart3 className="w-4 h-4" />, color: 'cyan' },
     { id: 'docking', label: 'Docking', icon: <Target className="w-4 h-4" />, color: 'indigo' },
     { id: 'md', label: 'MD', icon: <Activity className="w-4 h-4" />, color: 'green' },
     { id: 'boltz2', label: 'Boltz-2', icon: <Brain className="w-4 h-4" />, color: 'purple' },
@@ -41,12 +53,14 @@ export function ResultsTool() {
         deleteJob,
     } = useUnifiedResultsStore()
 
+    const bc_active = useBaseColor()
+
     const [isCleaningUp, setIsCleaningUp] = useState(false)
     const [cleanupResult, setCleanupResult] = useState<string | null>(null)
 
     // WebSocket state from store – use WS for updates when connected, avoid polling
     const wsConnected = useUnifiedResultsStore(state => state.wsConnected)
-    
+
     // Load jobs on mount and when opening tab. Use WebSocket when connected; poll only when disconnected.
     useEffect(() => {
         stopPolling()
@@ -85,7 +99,7 @@ export function ResultsTool() {
     const activeJob = activeJobId ? getJobById(activeJobId) : null
     const isActiveJobRunning = activeJob &&
         ['submitted', 'preparing', 'running', 'pending'].includes(activeJob.status)
-    
+
 
 
     return (
@@ -108,19 +122,32 @@ export function ResultsTool() {
                     <p className="text-xs text-gray-400 mb-2">{cleanupResult}</p>
                 )}
                 <div className="flex flex-wrap gap-2">
-                    {SERVICE_FILTERS.map((filter) => (
-                        <button
-                            key={filter.id}
-                            onClick={() => setActiveServiceFilter(filter.id)}
-                            className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm font-medium transition-all ${activeServiceFilter === filter.id
-                                ? `bg-${filter.color}-600 text-white`
-                                : 'bg-gray-700 text-gray-300 hover:bg-gray-600'
-                                }`}
-                        >
-                            {filter.icon}
-                            {filter.label}
-                        </button>
-                    ))}
+                    {SERVICE_FILTERS.map((filter) => {
+                        const isActive = activeServiceFilter === filter.id
+                        const isAllFilter = filter.id === 'all'
+                        const allActiveCustom = isActive && isAllFilter && bc_active.isCustom
+                        const allActivePreset = isActive && isAllFilter && !bc_active.isCustom
+
+                        return (
+                            <button
+                                key={filter.id}
+                                onClick={() => setActiveServiceFilter(filter.id)}
+                                className={cn(
+                                    'flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm font-medium transition-all',
+                                    !isActive && 'bg-gray-700 text-gray-300 hover:bg-gray-600',
+                                    allActivePreset && cn(bc_active.buttonBg, 'text-white'),
+                                    isActive && !isAllFilter && SERVICE_FILTER_ACTIVE_CLASS[filter.color],
+                                )}
+                                style={allActiveCustom ? {
+                                    backgroundColor: bc_active.hexValue,
+                                    color: 'white',
+                                } : undefined}
+                            >
+                                {filter.icon}
+                                {filter.label}
+                            </button>
+                        )
+                    })}
                 </div>
             </div>
 
@@ -137,6 +164,8 @@ export function ResultsTool() {
                 showQCJobType={activeServiceFilter === 'qc'}
                 showMDJobType={activeServiceFilter === 'md'}
                 accentColor={getServiceColor(activeServiceFilter)}
+                customColorHex={activeServiceFilter === 'all' ? bc_active.hexValue : undefined}
+                customColorRgb={activeServiceFilter === 'all' ? bc_active.rgbString : undefined}
                 title={activeServiceFilter === 'all' ? 'All Jobs' : `${getServiceLabel(activeServiceFilter)} Jobs`}
             />
 
@@ -191,7 +220,7 @@ function NoJobSelectedState() {
  */
 const getServiceColor = (service: ServiceType | 'all'): string => {
     const colors: Record<ServiceType | 'all', string> = {
-        all: 'blue',
+        all: 'cyan',
         docking: 'indigo',
         md: 'green',
         boltz2: 'purple',
@@ -244,8 +273,8 @@ const getCompletedStages = (job: any) => {
     const inferredStages: string[] = []
     const progress = job.progress || 0
 
-    if (progress > 5)  inferredStages.push('Preparation')
-    if (progress > 9)  inferredStages.push('Minimization')
+    if (progress > 5) inferredStages.push('Preparation')
+    if (progress > 9) inferredStages.push('Minimization')
     if (progress > 15) inferredStages.push('NVT Equilibration')
     if (progress > 28) inferredStages.push('NPT Equilibration')
     if (progress > 28 && job.message?.toLowerCase().includes('production')) inferredStages.push('Production')

@@ -89,7 +89,7 @@ export function StructureSelector({
 
   onRefresh,
 
-  accentColor = 'blue',
+  accentColor = 'cyan',
 }: StructureSelectorProps) {
   const colors = accentColorClasses[accentColor]
 
@@ -103,9 +103,8 @@ export function StructureSelector({
   return (
     <div className="space-y-6">
       {/* Header with refresh */}
-      <div className="flex items-center justify-between">
-        <h3 className="text-lg font-semibold text-white">Structure Selection</h3>
-        {onRefresh && (
+      {onRefresh && (
+        <div className="flex items-center justify-end">
           <Button
             onClick={onRefresh}
             size="sm"
@@ -115,8 +114,8 @@ export function StructureSelector({
             <RefreshCw className="w-4 h-4" />
             Refresh
           </Button>
-        )}
-      </div>
+        </div>
+      )}
 
       {/* Protein Selection - Only show if enabled */}
       {showProteinStatus && (

@@ -17,6 +17,7 @@ import { StripedResidues } from './themes/StripedResidues'
 import { CustomColorThemeProvider } from './themes/CustomColorTheme'
 import { FukuiColorThemeProvider } from './themes/FukuiColorTheme'
 import { ChargesColorThemeProvider } from './themes/ChargesColorTheme'
+import { BDEColorThemeProvider, type BDEBondData } from './themes/BDEColorTheme'
 import { StructureTabBar } from './StructureTabBar'
 import { TextFileViewer } from './TextFileViewer'
 import { ImageFileViewer } from './ImageFileViewer'
@@ -83,6 +84,7 @@ export interface MolstarViewerHandle {
     applyDefault: () => Promise<void>
     applyFukuiTheme: (values: number[], type: string) => Promise<void>
     applyChargesTheme: (values: number[]) => Promise<void>
+    applyBDETheme: (bonds: BDEBondData[], minBDE: number, maxBDE: number) => Promise<void>
   }
   interactivity: {
     highlightResidue: (seqId: number) => void
@@ -139,7 +141,7 @@ export const MolecularViewer: React.FC<MolecularViewerProps> = ({
 
   // Animation controls
   const animateModelIndexTargetFps = () => {
-    return 8 // Default FPS for model animations
+    return 25 // Default FPS for vibrational mode animations
   }
 
   const animate = {
@@ -409,6 +411,53 @@ export const MolecularViewer: React.FC<MolecularViewerProps> = ({
         }
       } catch (error) {
         console.error('ERROR: Failed to apply charges theme:', error);
+        throw error;
+      }
+    },
+    applyBDETheme: async (bonds: BDEBondData[], minBDE: number, maxBDE: number) => {
+      if (!pluginRef.current) return;
+
+      try {
+        const registry = pluginRef.current.representation.structure.themes.colorThemeRegistry;
+        if (!registry.has(BDEColorThemeProvider.name)) {
+          registry.add(BDEColorThemeProvider);
+        }
+      } catch { /* non-fatal */ }
+
+      const themeParams = { bonds: [...bonds], minBDE, maxBDE };
+
+      try {
+        await pluginRef.current.dataTransaction(async () => {
+          const structures = pluginRef.current!.managers.structure.hierarchy.current.structures;
+          for (const s of structures) {
+            await pluginRef.current!.managers.structure.component.updateRepresentationsTheme(
+              s.components,
+              { color: BDEColorThemeProvider.name as any, colorParams: themeParams }
+            );
+          }
+        });
+
+        // State-builder pass for robustness
+        const state = pluginRef.current.state.data;
+        const representations = state.selectQ(q =>
+          q.ofTransformer(StateTransforms.Representation.StructureRepresentation3D)
+        );
+        if (representations.length > 0) {
+          const builder = state.build();
+          for (const repr of representations) {
+            builder.to(repr).update(old => ({
+              ...old,
+              colorTheme: { name: BDEColorThemeProvider.name as any, params: themeParams }
+            }));
+          }
+          await pluginRef.current.runTask(state.updateTree(builder));
+        }
+
+        if (pluginRef.current.canvas3d) {
+          pluginRef.current.canvas3d.requestDraw();
+        }
+      } catch (error) {
+        console.error('ERROR: Failed to apply BDE theme:', error);
         throw error;
       }
     }
@@ -751,6 +800,7 @@ export const MolecularViewer: React.FC<MolecularViewerProps> = ({
           await pluginRef.current.builders.structure.representation.addRepresentation(ligand, {
             type: 'ball-and-stick',
             color: 'element-symbol',
+            typeParams: { multipleBonds: 'symmetric' },
           })
           hasLigands = true
           console.log('SUCCESS: Ball-and-stick representation added for ligands')
@@ -770,6 +820,7 @@ export const MolecularViewer: React.FC<MolecularViewerProps> = ({
             await pluginRef.current.builders.structure.representation.addRepresentation(nonStandard, {
               type: 'ball-and-stick',
               color: 'element-symbol',
+              typeParams: { multipleBonds: 'symmetric' },
             })
             hasLigands = true
             console.log('SUCCESS: Ball-and-stick representation added for non-standard entities')
@@ -820,6 +871,7 @@ export const MolecularViewer: React.FC<MolecularViewerProps> = ({
           await pluginRef.current.builders.structure.representation.addRepresentation(structure, {
             type: 'ball-and-stick',
             color: 'element-symbol',
+            typeParams: { multipleBonds: 'symmetric' },
           })
           console.log('SUCCESS: Fallback representation created')
         } catch (e) {
@@ -1165,6 +1217,7 @@ export const MolecularViewer: React.FC<MolecularViewerProps> = ({
       const { DefaultPluginUISpec } = await import('molstar/lib/mol-plugin-ui/spec')
       const { renderReact18 } = await import('molstar/lib/mol-plugin-ui/react18')
       const { PluginConfig } = await import('molstar/lib/mol-plugin/config')
+      const { SequenceView } = await import('molstar/lib/mol-plugin-ui/sequence')
 
       const defaultSpec = DefaultPluginUISpec()
       const plugin = await createPluginUI({
@@ -1180,7 +1233,7 @@ export const MolecularViewer: React.FC<MolecularViewerProps> = ({
             },
           },
           components: {
-            controls: { top: 'none', bottom: 'none' },
+            controls: { top: SequenceView, bottom: 'none' },
             hideTaskOverlay: true,
           },
           config: [
@@ -1205,6 +1258,153 @@ export const MolecularViewer: React.FC<MolecularViewerProps> = ({
       if (canvas) {
         canvas.style.backgroundImage = 'none'
       }
+
+      // Fix Molstar buttons with light inline background colors for dark theme
+      const fixMolstarButtonStyles = () => {
+        // Helper to check if a color string represents a light color
+        const isLightColor = (color: string) => {
+          if (!color) return false
+
+          // Handle RGB/RGBA
+          if (color.startsWith('rgb')) {
+            const rgb = color.match(/\d+/g)
+            if (rgb && rgb.length >= 3) {
+              const r = parseInt(rgb[0])
+              const g = parseInt(rgb[1])
+              const b = parseInt(rgb[2])
+              // Calculate brightness (perceived)
+              const brightness = (r * 299 + g * 587 + b * 114) / 1000
+              return brightness > 128 // Standard threshold for "light" color
+            }
+          }
+
+          // Handle Hex
+          if (color.startsWith('#')) {
+            const hex = color.substring(1)
+            const r = parseInt(hex.substring(0, 2), 16)
+            const g = parseInt(hex.substring(2, 4), 16)
+            const b = parseInt(hex.substring(4, 6), 16)
+            const brightness = (r * 299 + g * 587 + b * 114) / 1000
+            return brightness > 128
+          }
+
+          return false
+        }
+
+        // Target buttons specifically in the Left/Right panels and UI overlays (info panel)
+        const rightPanelButtons = targetElement.querySelectorAll('.msp-layout-right button')
+        const leftPanelButtons = targetElement.querySelectorAll('.msp-layout-left button')
+        const overlayButtons = targetElement.querySelectorAll('.msp-plugin-ui button') // Info/Settings panel is usually here
+        // Also target the viewport controls panel (Settings / Controls Info overlay)
+        const viewportControlButtons = targetElement.querySelectorAll('.msp-viewport-controls-panel-controls button')
+
+        const processButton = (button: HTMLButtonElement) => {
+          // SKIP .msp-control-group-expander buttons — they are position:absolute
+          // transparent overlays that sit ON TOP of label text. Making them opaque
+          // would hide the text behind them.
+          if (button.classList.contains('msp-control-group-expander')) {
+            button.style.color = '#ffffff'
+            button.style.backgroundColor = 'transparent'
+            return
+          }
+
+          const computedStyle = getComputedStyle(button)
+          const bgColor = button.style.backgroundColor || computedStyle.backgroundColor
+
+          // Check if it's a light color
+          if (isLightColor(bgColor)) {
+            // If light background, force dark theme with white text
+            if (button.style.backgroundColor !== 'rgb(55, 65, 81)') {
+              button.style.backgroundColor = '#374151' // gray-700
+              button.style.color = '#ffffff'
+              button.style.borderColor = '#4b5563' // gray-600
+
+              const icons = button.querySelectorAll('svg')
+              icons.forEach(icon => {
+                icon.style.fill = '#ffffff'
+              })
+            }
+          } else {
+            // If background is already dark (or transparent), ensure text/icons are white
+            // This fixes buttons that are dark but have dark text (invisible)
+            // We only apply this in our targeted dark panels (Right Panel & UI Overlays)
+            button.style.color = '#ffffff'
+
+            const icons = button.querySelectorAll('svg')
+            icons.forEach(icon => {
+              icon.style.fill = '#ffffff'
+              // Also set fill on individual path/circle/rect elements inside SVGs
+              icon.querySelectorAll('path, circle, rect').forEach(shape => {
+                (shape as SVGElement).style.fill = '#ffffff'
+              })
+            })
+          }
+        }
+
+        rightPanelButtons.forEach(btn => processButton(btn as HTMLButtonElement))
+        leftPanelButtons.forEach(btn => processButton(btn as HTMLButtonElement))
+        overlayButtons.forEach(btn => processButton(btn as HTMLButtonElement))
+        viewportControlButtons.forEach(btn => processButton(btn as HTMLButtonElement))
+
+        // Fix ALL text labels (span.msp-control-row-label) which hold the
+        // button/control text like "Shadow", "Outline", etc.
+        const labels = targetElement.querySelectorAll('.msp-control-row-label')
+        labels.forEach(label => {
+          (label as HTMLElement).style.color = '#ffffff'
+        })
+
+        // Fix the viewport controls panel container itself.
+        // Labels like "Occlusion", "Shadow", "Outline" are RAW TEXT NODES
+        // (not wrapped in any element), so they can only inherit color from
+        // their parent container. We must set color on the container directly.
+        const viewportPanel = targetElement.querySelector('.msp-viewport-controls-panel-controls') as HTMLElement
+        if (viewportPanel) {
+          viewportPanel.style.color = '#ffffff'
+        }
+
+        // Fix ALL span elements inside the viewport controls panel
+        const viewportSpans = targetElement.querySelectorAll('.msp-viewport-controls-panel-controls span')
+        viewportSpans.forEach(span => {
+          (span as HTMLElement).style.color = '#ffffff'
+        })
+
+        // Also fix specific container backgrounds in the panels if they are light
+        const panelElements = targetElement.querySelectorAll('.msp-layout-right div, .msp-layout-left div, .msp-plugin-ui div, .msp-viewport-controls-panel-controls div')
+        panelElements.forEach((el) => {
+          const element = el as HTMLElement
+          const bgColor = element.style.backgroundColor
+
+          if (bgColor && isLightColor(bgColor) && element.style.backgroundColor !== 'rgb(31, 41, 55)') {
+            // Don't override if it looks like a color swatch (small size)
+            const rect = element.getBoundingClientRect()
+            if (rect.width > 24 && rect.height > 24) {
+              element.style.backgroundColor = '#1f2937' // gray-800
+              element.style.color = '#e5e7eb'
+            }
+          }
+        })
+      }
+
+      // Run initially and set up observer for dynamic content
+      fixMolstarButtonStyles()
+      const styleObserver = new MutationObserver((mutations) => {
+        // Optimization: only run if nodes added or style changed
+        let shouldRun = false
+        for (const mutation of mutations) {
+          if (mutation.type === 'childList' && mutation.addedNodes.length > 0) {
+            shouldRun = true
+            break
+          }
+          if (mutation.type === 'attributes' && (mutation.attributeName === 'style' || mutation.attributeName === 'class')) {
+            shouldRun = true
+            break
+          }
+        }
+        if (shouldRun) {
+          fixMolstarButtonStyles()
+        }
+      })
+      styleObserver.observe(targetElement, { childList: true, subtree: true, attributes: true, attributeFilter: ['style', 'class'] })
 
       const handle: MolstarViewerHandle = {
         plugin,
@@ -1264,7 +1464,8 @@ export const MolecularViewer: React.FC<MolecularViewerProps> = ({
 
     const isDockedPose = currentStructure.metadata?.is_docked_pose === true
     const isBoltz2Pose = currentStructure.metadata?.is_boltz2_pose === true
-    const isPose = isDockedPose || isBoltz2Pose
+    const isConformer = currentStructure.metadata?.is_conformer === true
+    const isPose = isDockedPose || isBoltz2Pose || isConformer
     const shouldSkipReload = !isPose && loadedStructureId === currentStructure.structure_id
 
     if (shouldSkipReload) {
@@ -1288,7 +1489,7 @@ export const MolecularViewer: React.FC<MolecularViewerProps> = ({
     } else if (currentStructure.pdb_data || currentStructure.sdf_data || currentStructure.xyz_data) {
       // Determine which format and data to use for visualization
       // Special cases (docked poses, Boltz2 poses) always use PDB data
-      // Otherwise: XYZ > SDF > PDB (XYZ for QC results, SDF for small molecules, PDB for proteins)
+      // Otherwise: SDF > XYZ > PDB (SDF for small molecules with bond orders, XYZ for QC results, PDB for proteins)
       let primaryFormat: BuiltInTrajectoryFormat = 'pdb'
       let visualizationData = ''
 
@@ -1300,17 +1501,17 @@ export const MolecularViewer: React.FC<MolecularViewerProps> = ({
         // Docked poses and Boltz2 predictions must use PDB format
         primaryFormat = 'pdb'
         visualizationData = currentStructure.pdb_data
+      } else if (currentStructure.sdf_data) {
+        // SDF encodes explicit bond orders; always prefer over XYZ so double/triple
+        // bonds render correctly. XYZ has no bond-order field.
+        primaryFormat = 'sdf'
+        visualizationData = currentStructure.sdf_data
       } else if (currentStructure.xyz_data) {
         primaryFormat = 'xyz'
         visualizationData = currentStructure.xyz_data
       } else if (currentStructure.pdb_data) {
-        // Prioritize PDB as it is more robust for visualization in Molstar and generally preferred
         primaryFormat = 'pdb'
         visualizationData = currentStructure.pdb_data
-      } else if (currentStructure.sdf_data) {
-        // Molstar uses 'sdf' format which handles both SDF and MOL files
-        primaryFormat = 'sdf'
-        visualizationData = currentStructure.sdf_data
       }
 
       if (!visualizationData) {
@@ -1319,6 +1520,7 @@ export const MolecularViewer: React.FC<MolecularViewerProps> = ({
       }
 
       const isTrajectory = (currentStructure as any).isTrajectory || false
+      const isAnimation = currentStructure.metadata?.isAnimation === true
 
       const loadStructure = async () => {
         try {
@@ -1326,7 +1528,12 @@ export const MolecularViewer: React.FC<MolecularViewerProps> = ({
           await pluginRef.current?.clear()
           console.log('SUCCESS: Viewer cleared, now loading structure...')
 
-          if (isTrajectory && loadTrajectory) {
+          if (isAnimation && visualizationData) {
+            // Animation structure (e.g., vibrational mode) - use animateNormalMode
+            console.log('🎬 Loading animation (vibrational mode)...')
+            await animateNormalMode(visualizationData, { mode: 'palindrome' })
+            console.log('SUCCESS: Loaded animation structure')
+          } else if (isTrajectory && loadTrajectory) {
             console.log('🎬 Loading trajectory...')
             await loadTrajectory({ pdbData: visualizationData }, 'pdb')
             console.log(`SUCCESS: Loaded trajectory (primary format: ${primaryFormat.toUpperCase()})`);
@@ -1354,7 +1561,7 @@ export const MolecularViewer: React.FC<MolecularViewerProps> = ({
 
       loadStructure()
     }
-  }, [currentStructure, load, loadTrajectory, loadOverlayPoses, onStructureLoaded, loadedStructureId])
+  }, [currentStructure, load, loadTrajectory, loadOverlayPoses, onStructureLoaded, loadedStructureId, animateNormalMode])
 
   // Apply background color when it changes
   useEffect(() => {

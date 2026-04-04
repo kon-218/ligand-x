@@ -1,8 +1,22 @@
 'use client'
 
 import { CheckCircle2 } from 'lucide-react'
+import { cn } from '@/lib/utils'
 import type { WorkflowStep, AccentColor } from './types'
 import { accentColorClasses } from './types'
+
+/** Literal shadow classes so Tailwind emits them (dynamic `shadow-${x}-500/30` never does). */
+const STEP_ACTIVE_SHADOW: Record<AccentColor, string> = {
+  blue: 'shadow-blue-500/30',
+  green: 'shadow-green-500/30',
+  purple: 'shadow-purple-500/30',
+  orange: 'shadow-orange-500/30',
+  pink: 'shadow-pink-500/30',
+  teal: 'shadow-teal-500/30',
+  indigo: 'shadow-indigo-500/30',
+  cyan: 'shadow-cyan-500/30',
+  amber: 'shadow-amber-500/30',
+}
 
 interface StepIndicatorProps {
   steps: WorkflowStep[]
@@ -17,7 +31,7 @@ export function StepIndicator({
   currentStep,
   onStepClick,
   disabled = false,
-  accentColor = 'blue',
+  accentColor = 'cyan',
 }: StepIndicatorProps) {
   const colors = accentColorClasses[accentColor]
 
@@ -45,15 +59,14 @@ export function StepIndicator({
             <button
               onClick={() => isClickable && onStepClick(stepNumber)}
               disabled={disabled && isClickable === false}
-              className={`
-                relative z-10 w-10 h-10 rounded-full flex items-center justify-center 
-                font-semibold transition-all duration-200
-                ${isClickable ? 'cursor-pointer hover:scale-105' : 'cursor-default'}
-                ${disabled && isClickable === false ? 'opacity-50' : ''}
-                ${isActive ? `${colors.bg} text-white shadow-lg shadow-${accentColor}-500/30` : ''}
-                ${isCompleted ? 'bg-green-500 text-white' : ''}
-                ${!isActive && !isCompleted ? 'bg-gray-700 text-gray-400' : ''}
-              `}
+              className={cn(
+                'relative z-10 w-10 h-10 rounded-full flex items-center justify-center font-semibold transition-all duration-200',
+                isClickable ? 'cursor-pointer hover:scale-105' : 'cursor-default',
+                disabled && isClickable === false && 'opacity-50',
+                isActive && cn(colors.bg, 'text-white shadow-lg', STEP_ACTIVE_SHADOW[accentColor]),
+                isCompleted && 'bg-green-500 text-white',
+                !isActive && !isCompleted && 'bg-gray-700 text-gray-400',
+              )}
             >
               {isCompleted ? (
                 <CheckCircle2 className="w-5 h-5" />

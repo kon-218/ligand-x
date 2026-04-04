@@ -194,10 +194,13 @@ export function ABFEDetailedAnalysis({ jobId }: ABFEDetailedAnalysisProps) {
 
 // Overview Tab Component
 function OverviewTab({ analysis }: { analysis: ABFEAnalysisData }) {
+    const hasThermodynamicCycle = !!analysis.thermodynamic_cycle
+    const hasLegs = analysis.legs && analysis.legs.length > 0
+
     return (
         <div className="space-y-6">
             {/* Thermodynamic Cycle */}
-            {analysis.thermodynamic_cycle && (
+            {hasThermodynamicCycle && (
                 <div className="space-y-3">
                     <h3 className="text-sm font-semibold text-gray-300 flex items-center gap-2">
                         <ArrowRightLeft className="w-4 h-4 text-purple-400" />
@@ -207,38 +210,38 @@ function OverviewTab({ analysis }: { analysis: ABFEAnalysisData }) {
                         <div className="p-4 bg-blue-900/20 border border-blue-700/30 rounded-lg">
                             <p className="text-xs text-gray-400 mb-1">ΔG (Complex)</p>
                             <p className="text-lg font-mono text-blue-300">
-                                {analysis.thermodynamic_cycle.dg_complex.toFixed(2)}
-                                <span className="text-xs text-gray-400 ml-1">± {analysis.thermodynamic_cycle.dg_complex_error.toFixed(2)}</span>
+                                {analysis.thermodynamic_cycle!.dg_complex.toFixed(2)}
+                                <span className="text-xs text-gray-400 ml-1">± {analysis.thermodynamic_cycle!.dg_complex_error.toFixed(2)}</span>
                             </p>
                             <p className="text-xs text-gray-500">kcal/mol</p>
                         </div>
                         <div className="p-4 bg-green-900/20 border border-green-700/30 rounded-lg">
                             <p className="text-xs text-gray-400 mb-1">ΔG (Solvent)</p>
                             <p className="text-lg font-mono text-green-300">
-                                {analysis.thermodynamic_cycle.dg_solvent.toFixed(2)}
-                                <span className="text-xs text-gray-400 ml-1">± {analysis.thermodynamic_cycle.dg_solvent_error.toFixed(2)}</span>
+                                {analysis.thermodynamic_cycle!.dg_solvent.toFixed(2)}
+                                <span className="text-xs text-gray-400 ml-1">± {analysis.thermodynamic_cycle!.dg_solvent_error.toFixed(2)}</span>
                             </p>
                             <p className="text-xs text-gray-500">kcal/mol</p>
                         </div>
                         <div className="p-4 bg-purple-900/20 border border-purple-700/30 rounded-lg">
                             <p className="text-xs text-gray-400 mb-1">ΔG (Binding)</p>
                             <p className="text-xl font-mono font-bold text-purple-300">
-                                {analysis.thermodynamic_cycle.dg_binding.toFixed(2)}
-                                <span className="text-sm text-gray-400 ml-1">± {analysis.thermodynamic_cycle.dg_binding_error.toFixed(2)}</span>
+                                {analysis.thermodynamic_cycle!.dg_binding.toFixed(2)}
+                                <span className="text-sm text-gray-400 ml-1">± {analysis.thermodynamic_cycle!.dg_binding_error.toFixed(2)}</span>
                             </p>
                             <p className="text-xs text-gray-500">kcal/mol</p>
                         </div>
                     </div>
-                    {analysis.thermodynamic_cycle.dg_restraint_correction !== undefined && analysis.thermodynamic_cycle.dg_restraint_correction !== 0 && (
+                    {analysis.thermodynamic_cycle!.dg_restraint_correction !== undefined && analysis.thermodynamic_cycle!.dg_restraint_correction !== 0 && (
                         <p className="text-xs text-gray-400">
-                            Standard state correction: {analysis.thermodynamic_cycle.dg_restraint_correction.toFixed(2)} kcal/mol
+                            Standard state correction: {analysis.thermodynamic_cycle!.dg_restraint_correction.toFixed(2)} kcal/mol
                         </p>
                     )}
                 </div>
             )}
 
             {/* Leg Contributions */}
-            {analysis.thermodynamic_cycle && (
+            {hasThermodynamicCycle && (
                 <div className="space-y-3">
                     <h3 className="text-sm font-semibold text-gray-300 flex items-center gap-2">
                         <BarChart3 className="w-4 h-4 text-purple-400" />
@@ -262,10 +265,10 @@ function OverviewTab({ analysis }: { analysis: ABFEAnalysisData }) {
                                             </span>
                                         </td>
                                         <td className="py-3 px-4 text-right font-mono text-white">
-                                            {analysis.thermodynamic_cycle.dg_complex.toFixed(2)}
+                                            {analysis.thermodynamic_cycle!.dg_complex.toFixed(2)}
                                         </td>
                                         <td className="py-3 px-4 text-right font-mono text-gray-400">
-                                            ± {analysis.thermodynamic_cycle.dg_complex_error.toFixed(2)}
+                                            ± {analysis.thermodynamic_cycle!.dg_complex_error.toFixed(2)}
                                         </td>
                                     </tr>
                                     <tr className="border-b border-gray-700/50 hover:bg-gray-800/30">
@@ -275,13 +278,13 @@ function OverviewTab({ analysis }: { analysis: ABFEAnalysisData }) {
                                             </span>
                                         </td>
                                         <td className="py-3 px-4 text-right font-mono text-white">
-                                            {analysis.thermodynamic_cycle.dg_solvent.toFixed(2)}
+                                            {analysis.thermodynamic_cycle!.dg_solvent.toFixed(2)}
                                         </td>
                                         <td className="py-3 px-4 text-right font-mono text-gray-400">
-                                            ± {analysis.thermodynamic_cycle.dg_solvent_error.toFixed(2)}
+                                            ± {analysis.thermodynamic_cycle!.dg_solvent_error.toFixed(2)}
                                         </td>
                                     </tr>
-                                    {analysis.thermodynamic_cycle.dg_restraint_correction !== undefined && analysis.thermodynamic_cycle.dg_restraint_correction !== 0 && (
+                                    {analysis.thermodynamic_cycle!.dg_restraint_correction !== undefined && analysis.thermodynamic_cycle!.dg_restraint_correction !== 0 && (
                                         <tr className="border-b border-gray-700/50 hover:bg-gray-800/30">
                                             <td className="py-3 px-4">
                                                 <span className="px-2 py-1 rounded text-xs font-medium bg-purple-900/30 text-purple-300">
@@ -289,7 +292,7 @@ function OverviewTab({ analysis }: { analysis: ABFEAnalysisData }) {
                                                 </span>
                                             </td>
                                             <td className="py-3 px-4 text-right font-mono text-white">
-                                                {analysis.thermodynamic_cycle.dg_restraint_correction.toFixed(2)}
+                                                {analysis.thermodynamic_cycle!.dg_restraint_correction.toFixed(2)}
                                             </td>
                                             <td className="py-3 px-4 text-right font-mono text-gray-400">
                                                 ± 0.00
@@ -300,6 +303,30 @@ function OverviewTab({ analysis }: { analysis: ABFEAnalysisData }) {
                             </table>
                         </div>
                     </div>
+                </div>
+            )}
+
+            {/* Fallback: Show Leg Status Cards if no thermodynamic cycle but legs exist */}
+            {!hasThermodynamicCycle && hasLegs && (
+                <div className="space-y-3">
+                    <h3 className="text-sm font-semibold text-gray-300 flex items-center gap-2">
+                        <Layers className="w-4 h-4 text-blue-400" />
+                        Simulation Legs
+                    </h3>
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        {analysis.legs.map((leg, idx) => (
+                            <LegCard key={idx} leg={leg} />
+                        ))}
+                    </div>
+                </div>
+            )}
+
+            {/* No data message */}
+            {!hasThermodynamicCycle && !hasLegs && (
+                <div className="text-center py-8">
+                    <BarChart3 className="w-12 h-12 mx-auto mb-4 text-gray-600" />
+                    <p className="text-gray-400">No overview data available</p>
+                    <p className="text-xs text-gray-500 mt-1">Analysis results may still be processing</p>
                 </div>
             )}
         </div>

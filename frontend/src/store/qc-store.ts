@@ -150,7 +150,15 @@ interface QCStore {
   
   // Advanced Parameters
   advancedParameters: QCAdvancedParameters | null
-  
+
+  // Pending navigation from New Experiment overlay
+  pendingInitialState: {
+    calculationType: 'standard' | 'fukui' | 'conformer' | 'bde'
+    workflow?: 'optimize' | 'ir' | 'properties'
+  } | null
+  setPendingInitialState: (state: { calculationType: 'standard' | 'fukui' | 'conformer' | 'bde'; workflow?: 'optimize' | 'ir' | 'properties' }) => void
+  clearPendingInitialState: () => void
+
   // Visualization State
   activeVisualization: 'ir' | 'homo' | 'lumo' | 'esp' | null
   showMolecularOrbitals: boolean
@@ -197,7 +205,9 @@ export const useQCStore = create<QCStore>((set, get) => ({
   selectedPreset: null,
   
   advancedParameters: null,
-  
+
+  pendingInitialState: null,
+
   activeVisualization: null,
   showMolecularOrbitals: false,
   showESPMap: false,
@@ -283,7 +293,10 @@ export const useQCStore = create<QCStore>((set, get) => ({
       ? { ...state.advancedParameters, ...params }
       : null
   })),
-  
+
+  setPendingInitialState: (state) => set({ pendingInitialState: state }),
+  clearPendingInitialState: () => set({ pendingInitialState: null }),
+
   // Visualization Actions
   setActiveVisualization: (viz) => set({ activeVisualization: viz }),
   setShowMolecularOrbitals: (show) => set({ showMolecularOrbitals: show }),
@@ -299,6 +312,7 @@ export const useQCStore = create<QCStore>((set, get) => ({
     results: {},
     activeResults: null,
     advancedParameters: null,
+    pendingInitialState: null,
     activeVisualization: null,
     showMolecularOrbitals: false,
     showESPMap: false,

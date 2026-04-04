@@ -98,11 +98,11 @@ func (a *App) shutdown(ctx context.Context) {
 }
 
 func (a *App) initDockerClient() {
-	// Use timeout to prevent hanging on Docker daemon connection
 	opts := []client.Opt{
 		client.FromEnv,
 		client.WithAPIVersionNegotiation(),
-		client.WithTimeout(3 * time.Second),
+		// No global timeout — pull operations can take many minutes for large images.
+		// Short timeouts are applied per-operation via context.WithTimeout where needed.
 	}
 
 	cli, err := client.NewClientWithOpts(opts...)
@@ -1200,6 +1200,15 @@ func (a *App) PullServiceGroups(groupIDs []string) {
 
 		failedGroups := []string{}
 
+		// Count total images across all selected groups for compounding progress
+		totalImagesAll := 0
+		for _, groupID := range groupIDs {
+			if group, ok := groupMap[groupID]; ok {
+				totalImagesAll += len(group.Images)
+			}
+		}
+		globalImgIdx := 0
+
 		for _, groupID := range groupIDs {
 			group, ok := groupMap[groupID]
 			if !ok {
@@ -1213,10 +1222,11 @@ func (a *App) PullServiceGroups(groupIDs []string) {
 			})
 
 			groupFailed := false
-			for imgIdx, image := range group.Images {
+			for _, image := range group.Images {
+				imgIdx := globalImgIdx
 				ctx, cancel := context.WithCancel(a.ctx)
 
-				if err := a.pullImageWithProgress(ctx, image, groupID, group.Name, imgIdx, len(group.Images)); err != nil {
+				if err := a.pullImageWithProgress(ctx, image, groupID, group.Name, imgIdx, totalImagesAll); err != nil {
 					wailsRuntime.EventsEmit(a.ctx, "log", LogEntry{
 						Service:   groupID,
 						Message:   fmt.Sprintf("Failed to pull %s: %v", image, err),
@@ -1226,12 +1236,13 @@ func (a *App) PullServiceGroups(groupIDs []string) {
 				} else {
 					wailsRuntime.EventsEmit(a.ctx, "log", LogEntry{
 						Service:   groupID,
-						Message:   fmt.Sprintf("Pulled image %d/%d: %s", imgIdx+1, len(group.Images), image),
+						Message:   fmt.Sprintf("Pulled image %d/%d: %s", imgIdx+1, totalImagesAll, image),
 						Timestamp: time.Now().Format("15:04:05"),
 					})
 				}
 
 				cancel()
+				globalImgIdx++
 			}
 
 			if groupFailed {

@@ -321,21 +321,25 @@ async function cleanDocker() {
 
 function handleLogEvent(entry) {
     addLog(entry.service, entry.message);
+
+    // Also pipe logs into the wizard terminal while it's visible
+    const wizard = document.getElementById('firstRunWizard');
+    const logsContainer = document.getElementById('wizardLogsContainer');
+    if (wizard && !wizard.classList.contains('hidden') && logsContainer) {
+        const line = document.createElement('div');
+        line.className = 'log-entry';
+        line.style.color = entry.service === 'launcher' ? 'var(--text-muted)' : 'var(--text-primary)';
+        line.textContent = `[${entry.service}] ${entry.message}`;
+        logsContainer.appendChild(line);
+        logsContainer.scrollTop = logsContainer.scrollHeight;
+    }
 }
 
-function handlePullProgress(event) {
-    const data = event.detail;
-
-    // Update wizard progress if visible (only show progress for wizard, not for re-pulls)
+function handlePullProgress(data) {
+    // Update wizard progress bar if visible (only show progress for wizard, not for re-pulls)
     if (!document.getElementById('firstRunWizard').classList.contains('hidden')) {
         document.getElementById('pullOverallBar').style.width = data.overallPercent.toFixed(1) + '%';
         document.getElementById('pullImageCounter').textContent = (data.imageIndex + 1) + ' / ' + data.totalImages;
-
-        const imageName = data.currentImage.split('/').pop();
-        document.getElementById('pullCurrentImage').textContent = imageName;
-
-        document.getElementById('pullImageBar').style.width = data.imagePercent.toFixed(1) + '%';
-        document.getElementById('pullStatusText').textContent = data.status || 'Downloading...';
     }
 }
 
@@ -413,49 +417,53 @@ function escapeHtml(text) {
 let wizardServiceGroups = [];
 let wizardSelectedGroups = [];
 let failedPullGroups = [];
+let wizardImageStatus = {};
 
 async function initializeWizard() {
     try {
-        const config = await window.go.main.App.GetLauncherConfig();
+        const [config, groups, imageStatus] = await Promise.all([
+            window.go.main.App.GetLauncherConfig(),
+            window.go.main.App.GetServiceGroups(),
+            window.go.main.App.CheckImagePresence(),
+        ]);
 
-        if (!config.firstRunDone) {
-            // Get service groups and check image presence
-            wizardServiceGroups = await window.go.main.App.GetServiceGroups();
-            const imageStatus = await window.go.main.App.CheckImagePresence();
+        wizardServiceGroups = groups;
+        wizardImageStatus = imageStatus || {};
 
-            // Check if default groups are already pulled
-            const defaultGroups = wizardServiceGroups
-                .filter(g => g.defaultOn || g.required)
-                .map(g => g.id);
+        // Pre-select saved groups if available, otherwise default groups
+        if (config.selectedGroups && config.selectedGroups.length > 0) {
+            wizardSelectedGroups = config.selectedGroups.slice();
+        } else {
+            wizardSelectedGroups = groups.filter(g => g.defaultOn || g.required).map(g => g.id);
+        }
 
-            const allDefaultsPresent = defaultGroups.every(groupId => imageStatus[groupId]);
-
-            if (allDefaultsPresent) {
-                // All default images already present - skip wizard and mark as done
-                const newConfig = {
-                    firstRunDone: true,
-                    selectedGroups: defaultGroups,
-                    configVersion: 1
-                };
-                await window.go.main.App.SaveLauncherConfig(newConfig);
-            } else {
-                // Some images missing - show wizard
-                wizardSelectedGroups = defaultGroups;
-                showWizard();
+        // Always force-include required groups that aren't downloaded yet — they must be pulled
+        for (const g of groups) {
+            if (g.required && !wizardImageStatus[g.id] && !wizardSelectedGroups.includes(g.id)) {
+                wizardSelectedGroups.push(g.id);
             }
         }
+
+        showWizard();
     } catch (err) {
         console.error('Failed to initialize wizard:', err);
     }
 }
 
 function showWizard() {
-    const wizard = document.getElementById('firstRunWizard');
-    wizard.classList.remove('hidden');
+    document.getElementById('firstRunWizard').classList.remove('hidden');
+    document.getElementById('pullProgressContainer').classList.add('hidden');
+    document.getElementById('pullSetupBtn').style.display = '';
+    document.getElementById('skipPullBtn').style.display = 'none';
+    document.getElementById('pullErrorBanner').classList.add('hidden');
 
-    // Render service cards for step 2
     renderWizardServiceCards();
     updateEstimatedSize();
+}
+
+function dismissWizard() {
+    document.getElementById('firstRunWizard').classList.add('hidden');
+    wizardSelectedGroups = [];
 }
 
 function renderWizardServiceCards() {
@@ -465,8 +473,9 @@ function renderWizardServiceCards() {
     }
 
     wizardServiceGroups.forEach(group => {
+        const isPresent = !!wizardImageStatus[group.id];
+        const isDisabled = group.required && !isPresent;
         const isSelected = wizardSelectedGroups.includes(group.id);
-        const isDisabled = group.required;
 
         const card = document.createElement('div');
         card.className = `wizard-card ${isDisabled ? 'disabled' : ''}`;
@@ -480,9 +489,22 @@ function renderWizardServiceCards() {
         const info = document.createElement('div');
         info.className = 'wizard-card-info';
 
+        const nameRow = document.createElement('div');
+        nameRow.style.cssText = 'display:flex;align-items:center;gap:8px;';
+
         const name = document.createElement('p');
         name.className = 'wizard-card-name';
+        name.style.margin = '0';
         name.textContent = group.name;
+
+        nameRow.appendChild(name);
+
+        if (isPresent) {
+            const badge = document.createElement('span');
+            badge.textContent = 'Downloaded';
+            badge.style.cssText = 'font-size:10px;font-weight:600;color:var(--accent-success);background:rgba(34,197,94,0.12);border:1px solid rgba(34,197,94,0.3);border-radius:4px;padding:1px 6px;white-space:nowrap;';
+            nameRow.appendChild(badge);
+        }
 
         const desc = document.createElement('p');
         desc.className = 'wizard-card-desc';
@@ -490,9 +512,10 @@ function renderWizardServiceCards() {
 
         const size = document.createElement('p');
         size.className = 'wizard-card-size';
-        size.textContent = `~${(group.sizeMb / 1000).toFixed(1)} GB`;
+        size.textContent = isPresent ? 'Already on disk' : `~${(group.sizeMb / 1000).toFixed(1)} GB`;
+        if (isPresent) size.style.color = 'var(--accent-success)';
 
-        info.appendChild(name);
+        info.appendChild(nameRow);
         info.appendChild(desc);
         info.appendChild(size);
 
@@ -514,47 +537,37 @@ function toggleWizardGroup(groupId) {
 }
 
 function updateEstimatedSize() {
+    // Determine which selected groups still need downloading
+    const needDownload = wizardSelectedGroups.filter(id => !wizardImageStatus[id]);
     let total = 0;
     wizardServiceGroups.forEach(group => {
-        if (wizardSelectedGroups.includes(group.id)) {
+        if (needDownload.includes(group.id)) {
             total += group.sizeMb;
         }
     });
+    const allReady = needDownload.length === 0 && wizardSelectedGroups.length > 0;
+
     const gb = (total / 1000).toFixed(1);
     document.getElementById('estimatedSize').textContent = gb;
+    document.getElementById('downloadSizeInfo').style.display = allReady ? 'none' : '';
+    document.getElementById('readyNotice').style.display = allReady ? '' : 'none';
+
+    // Swap action button
+    document.getElementById('pullSetupBtn').style.display = allReady ? 'none' : '';
+    document.getElementById('skipPullBtn').style.display = allReady ? 'inline-flex' : 'none';
 }
 
-function nextWizardStep() {
-    const steps = document.querySelectorAll('.wizard-step');
-    const activeStep = document.querySelector('.wizard-step.active');
-    const activeIndex = Array.from(steps).indexOf(activeStep);
-
-    if (activeIndex < steps.length - 1) {
-        activeStep.classList.remove('active');
-        steps[activeIndex + 1].classList.add('active');
-    }
-}
-
-function previousWizardStep() {
-    const steps = document.querySelectorAll('.wizard-step');
-    const activeStep = document.querySelector('.wizard-step.active');
-    const activeIndex = Array.from(steps).indexOf(activeStep);
-
-    if (activeIndex > 0) {
-        activeStep.classList.remove('active');
-        steps[activeIndex - 1].classList.add('active');
-    }
-}
 
 async function startWizardPull() {
     // Hide actions, show progress
     document.getElementById('pullSetupBtn').style.display = 'none';
+    document.getElementById('skipPullBtn').style.display = 'none';
     document.getElementById('pullProgressContainer').classList.remove('hidden');
     document.getElementById('pullErrorBanner').classList.add('hidden');
 
     failedPullGroups = [];
 
-    // Clear progress logs
+    // Clear terminal logs
     const logsContainer = document.getElementById('wizardLogsContainer');
     while (logsContainer.firstChild) {
         logsContainer.removeChild(logsContainer.firstChild);
@@ -562,6 +575,11 @@ async function startWizardPull() {
 
     // Start pull
     window.go.main.App.PullServiceGroups(wizardSelectedGroups);
+}
+
+async function skipWizardPull() {
+    // User already has images downloaded — skip straight to saving config
+    await saveWizardConfig();
 }
 
 function handlePullComplete(data) {
@@ -607,8 +625,9 @@ function handlePullComplete(data) {
 
             errorBanner.classList.remove('hidden');
 
-            // Reset button
+            // Reset buttons
             document.getElementById('pullSetupBtn').style.display = 'block';
+            document.getElementById('skipPullBtn').style.display = 'block';
             document.getElementById('pullProgressContainer').classList.add('hidden');
         } else {
             // Service tab pull failed - re-enable button with error state
@@ -649,8 +668,9 @@ async function saveWizardConfig() {
         // Clear wizard selections so future pulls are not confused as wizard pulls
         wizardSelectedGroups = [];
 
-        // Update status to show selected services
+        // Refresh status panel and services tab
         await updateStatus();
+        await renderServicesTab();
     } catch (err) {
         console.error('Failed to save config:', err);
     }

@@ -754,9 +754,9 @@ async def render_smiles(smiles: str, width: int = 300, height: int = 300):
         img = Draw.MolToImage(mol, size=(width, height))
         buffered = BytesIO()
         img.save(buffered, format="PNG")
-        buffered.seek(0)
-        
-        return StreamingResponse(buffered, media_type="image/png")
+
+        from fastapi.responses import Response
+        return Response(content=buffered.getvalue(), media_type="image/png")
     except HTTPException:
         raise
     except Exception as e:

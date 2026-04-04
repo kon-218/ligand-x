@@ -7,6 +7,7 @@ import { useUIStore } from '@/store/ui-store'
 import { useBaseColor } from '@/hooks/use-base-color'
 import { cn } from '@/lib/utils'
 import { api } from '@/lib/api-client'
+import { getProteinCleaningSourceError } from '@/lib/structure-validation'
 import { Label } from '@/components/ui/label'
 import {
   WorkflowContainer,
@@ -29,7 +30,7 @@ function getWorkflowAccentColor(baseColor: string, isCustom: boolean): AccentCol
     teal: 'teal',
     blue: 'blue',
     indigo: 'indigo',
-    magenta: 'pink', // magenta → pink
+    magenta: 'magenta',
     fuchsia: 'fuchsia',
     rose: 'rose',
   }
@@ -121,7 +122,17 @@ export function ProteinCleaningTool() {
   const handleCleanProtein = async () => {
     const pdbData = getCurrentPdbData()
     if (!pdbData) {
-      setCleaningError('No PDB data available. Please select a structure or upload a file.')
+      const msg = 'No PDB data available. Please select a structure or upload a file.'
+      setCleaningError(msg)
+      addNotification('error', msg)
+      return
+    }
+
+    const proteinError = getProteinCleaningSourceError(inputSource, currentStructure, uploadedPdbData)
+    if (proteinError) {
+      const msg = 'No protein structure loaded. Please load a structure first.'
+      setCleaningError(msg)
+      addNotification('error', msg)
       return
     }
 
@@ -280,12 +291,22 @@ export function ProteinCleaningTool() {
     setCurrentStep(1)
   }
 
+  const pdbDataForValidation = getCurrentPdbData()
+  const proteinSourceError = pdbDataForValidation
+    ? getProteinCleaningSourceError(inputSource, currentStructure, uploadedPdbData)
+    : null
+  const hasValidProteinInput = Boolean(pdbDataForValidation && !proteinSourceError)
+
   const canProceed = () => {
     switch (currentStep) {
-      case 1: return getCurrentPdbData() !== null
-      case 2: return true
-      case 3: return !isCleaning
-      default: return true
+      case 1:
+        return hasValidProteinInput
+      case 2:
+        return hasValidProteinInput
+      case 3:
+        return !isCleaning && hasValidProteinInput
+      default:
+        return true
     }
   }
 
@@ -297,36 +318,34 @@ export function ProteinCleaningTool() {
             {/* Protein Structure Status */}
             <div className="space-y-2">
               <Label className="text-gray-300">Protein Structure</Label>
-              <div className={`p-3 rounded-lg border ${
-                inputSource === 'current' && currentStructure 
-                  ? 'bg-gray-800 border-gray-700' 
-                  : inputSource === 'upload' && uploadedFile
-                    ? 'bg-gray-800 border-gray-700'
-                    : 'bg-gray-800/50 border-gray-700/50'
-              }`}>
+              <div
+                className={`p-3 rounded-lg border ${
+                  hasValidProteinInput ? 'bg-gray-800 border-gray-700' : 'bg-gray-800/50 border-gray-700/50'
+                }`}
+              >
                 <div className="flex items-center gap-2">
-                  {(inputSource === 'current' && currentStructure) || (inputSource === 'upload' && uploadedFile) ? (
+                  {hasValidProteinInput ? (
                     <>
-                      <div className="p-1 rounded-full" style={{ backgroundColor: themeBg20 }}>
+                      <div className="p-1 rounded-full shrink-0" style={{ backgroundColor: themeBg20 }}>
                         <Check className="w-4 h-4" style={{ color: bc_active.hexValue }} />
                       </div>
                       <span className="text-gray-300">
-                        {inputSource === 'current' 
+                        {inputSource === 'current'
                           ? (currentStructure?.structure_id || 'Current Structure')
-                          : uploadedFile?.name
-                        }
+                          : uploadedFile?.name}
                       </span>
                     </>
                   ) : (
                     <>
-                      <div className="p-1 rounded-full bg-yellow-500/20">
+                      <div className="p-1 rounded-full bg-yellow-500/20 shrink-0">
                         <AlertCircle className="w-4 h-4 text-yellow-400" />
                       </div>
                       <span className="text-gray-400">
-                        {inputSource === 'current' 
-                          ? 'No structure loaded. Please load a structure or upload a file.'
-                          : 'No file uploaded. Please upload a PDB/CIF file.'
-                        }
+                        {inputSource === 'upload' && !uploadedFile
+                          ? 'No file uploaded. Please upload a PDB/CIF file.'
+                          : inputSource === 'current' && !currentStructure
+                            ? 'No structure loaded. Please load a structure or upload a file.'
+                            : 'No protein structure loaded. Please load a structure first.'}
                       </span>
                     </>
                   )}

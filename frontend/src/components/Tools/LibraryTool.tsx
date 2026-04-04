@@ -25,6 +25,24 @@ interface Molecule {
   num_bonds?: number
 }
 
+/** Tabs from SMILES input store raw input in `smiles` and canonical in `canonicalSmiles`; library rows use `canonical_smiles`. */
+function findOpenTabForLibraryMolecule(
+  tabs: {
+    id: string
+    metadata?: { molecule_id?: number }
+    canonicalSmiles?: string
+    smiles?: string
+  }[],
+  molecule: Molecule
+) {
+  return tabs.find(
+    tab =>
+      tab.metadata?.molecule_id === molecule.id ||
+      tab.canonicalSmiles === molecule.canonical_smiles ||
+      tab.smiles === molecule.canonical_smiles
+  )
+}
+
 export function LibraryTool() {
   const [molecules, setMolecules] = useState<Molecule[]>([])
   const [loading, setLoading] = useState(true)
@@ -87,10 +105,7 @@ export function LibraryTool() {
     try {
       // Check if a tab for this molecule is already open (priority: ID, fallback: canonical SMILES)
       // Note: Name is not part of the check since the tab name might differ from library name
-      const existingTab = structureTabs.find(tab =>
-        tab.metadata?.molecule_id === molecule.id ||
-        tab.smiles === molecule.canonical_smiles
-      )
+      const existingTab = findOpenTabForLibraryMolecule(structureTabs, molecule)
 
       if (existingTab) {
         setActiveTab(existingTab.id)
@@ -223,9 +238,14 @@ export function LibraryTool() {
   const handleOpenQC = async (molecule: Molecule) => {
     setOpenDropdownId(null)
     try {
-      // Load molecule into viewer first, then switch to QC tool
-      const structure = await api.uploadSmiles(molecule.canonical_smiles, molecule.name)
-      addStructureTab(structure, molecule.name)
+      const existingTab = findOpenTabForLibraryMolecule(structureTabs, molecule)
+      if (existingTab) {
+        setActiveTab(existingTab.id)
+      } else {
+        const structure = await api.uploadSmiles(molecule.canonical_smiles, molecule.name)
+        structure.metadata = { ...structure.metadata, molecule_id: molecule.id }
+        addStructureTab(structure, molecule.name)
+      }
       setActiveTool('quantum-chemistry')
       closeOverlay()
     } catch (err: any) {
@@ -244,9 +264,14 @@ export function LibraryTool() {
   const handleOpenEditor = async (molecule: Molecule) => {
     setOpenDropdownId(null)
     try {
-      // Load molecule into viewer as a structure, then switch to editor
-      const structure = await api.uploadSmiles(molecule.canonical_smiles, molecule.name)
-      addStructureTab(structure, molecule.name)
+      const existingTab = findOpenTabForLibraryMolecule(structureTabs, molecule)
+      if (existingTab) {
+        setActiveTab(existingTab.id)
+      } else {
+        const structure = await api.uploadSmiles(molecule.canonical_smiles, molecule.name)
+        structure.metadata = { ...structure.metadata, molecule_id: molecule.id }
+        addStructureTab(structure, molecule.name)
+      }
       setPendingEditorImport(true)
       setActiveTool('editor')
       closeOverlay()

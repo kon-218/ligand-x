@@ -1,7 +1,7 @@
 'use client'
 
 import React, { useState, useEffect, useRef } from 'react'
-import { ScanSearch, CheckCircle2, AlertTriangle } from 'lucide-react'
+import { ScanSearch, Check, AlertCircle } from 'lucide-react'
 import { useMolecularStore } from '@/store/molecular-store'
 import { useUIStore } from '@/store/ui-store'
 import { api } from '@/lib/api-client'
@@ -147,21 +147,27 @@ export function PocketFinderTool() {
       case 1:
         return (
           <div className="space-y-6">
-            <div className={`flex items-center gap-3 p-3 rounded-lg border ${
-              hasProtein
-                ? 'bg-green-900/20 border-green-700/40'
-                : 'bg-amber-900/20 border-amber-700/40'
-            }`}>
-              {hasProtein ? (
-                <CheckCircle2 className="w-4 h-4 text-green-400 shrink-0" />
-              ) : (
-                <AlertTriangle className="w-4 h-4 text-amber-400 shrink-0" />
-              )}
-              <span className={`text-sm ${hasProtein ? 'text-green-300' : 'text-amber-300'}`}>
-                {hasProtein
-                  ? `Protein loaded: ${currentStructure?.structure_id || 'Unknown'}`
-                  : 'No protein loaded. Load a structure from the Input tab first.'}
-              </span>
+            <div className="space-y-2">
+            <label className="text-sm font-medium text-gray-300">Protein Structure</label>
+            <div className={`p-3 rounded-lg border ${hasProtein ? 'bg-gray-800 border-gray-700' : 'bg-gray-800/50 border-gray-700/50'}`}>
+              <div className="flex items-center gap-2">
+                {hasProtein ? (
+                  <>
+                    <div className="p-1 rounded-full bg-purple-500/20">
+                      <Check className="w-4 h-4 text-purple-400" />
+                    </div>
+                    <span className="text-gray-300">{currentStructure?.structure_id || 'Structure loaded'}</span>
+                  </>
+                ) : (
+                  <>
+                    <div className="p-1 rounded-full bg-yellow-500/20">
+                      <AlertCircle className="w-4 h-4 text-yellow-400" />
+                    </div>
+                    <span className="text-gray-400">No protein structure loaded. Please load a structure first.</span>
+                  </>
+                )}
+              </div>
+            </div>
             </div>
 
             <ParameterSection title="Detection Settings" accentColor="purple">

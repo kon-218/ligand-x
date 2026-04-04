@@ -7,7 +7,7 @@ import { useUIStore } from '@/store/ui-store'
 import { useBaseColor } from '@/hooks/use-base-color'
 import { api } from '@/lib/api-client'
 import { isValidPdbId, isValidSmiles, cn } from '@/lib/utils'
-import { saveLigandsToLibrary } from '@/lib/structure-utils'
+import { saveLigandsToLibrary, withLibraryMoleculeTabMetadata } from '@/lib/structure-utils'
 import { FileUpload } from '@/components/ui/FileUpload'
 import { Button } from '@/components/ui/button'
 
@@ -173,7 +173,7 @@ export function InputTool() {
     setError(null)
     try {
       const structure = await api.uploadSmiles(smiles, smiles)
-      addStructureTab(structure, smiles)
+      addStructureTab(withLibraryMoleculeTabMetadata(structure), smiles)
       addNotification('success', 'Generated 3D structure from SMILES')
 
       // Check if molecule was saved to library
@@ -251,7 +251,7 @@ export function InputTool() {
     setUsing(t.smiles)
     try {
       const structure = await api.uploadSmiles(t.smiles, t.smiles)
-      addStructureTab(structure, label)
+      addStructureTab(withLibraryMoleculeTabMetadata(structure), label)
       const newTabId = useMolecularStore.getState().activeTabId
       if (newTabId) setTautomerTabIds(prev => ({ ...prev, [t.smiles]: newTabId }))
       addNotification('success', 'Tautomer opened in new viewer tab')

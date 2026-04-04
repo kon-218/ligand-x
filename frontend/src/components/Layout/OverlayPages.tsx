@@ -49,6 +49,7 @@ const EXPERIMENT_CARD_ICON_HOVER_GLOW: Record<AccentColor, string> = {
   purple: 'group-hover:shadow-[0_0_15px_rgba(168,85,247,0.2)]',
   orange: 'group-hover:shadow-[0_0_15px_rgba(249,115,22,0.2)]',
   pink: 'group-hover:shadow-[0_0_15px_rgba(236,72,153,0.2)]',
+  magenta: 'group-hover:shadow-[0_0_15px_rgba(234,6,116,0.22)]',
   teal: 'group-hover:shadow-[0_0_15px_rgba(20,184,166,0.2)]',
   indigo: 'group-hover:shadow-[0_0_15px_rgba(99,102,241,0.2)]',
   cyan: 'group-hover:shadow-[0_0_15px_rgba(6,182,212,0.2)]',
@@ -310,9 +311,9 @@ function ProjectsOverlay() {
 
             <button
               className={cn(
-                'flex items-center gap-2 px-5 py-2.5 rounded-xl text-sm font-bold text-gray-900 transition-all hover:scale-105',
+                'flex items-center gap-2 px-5 py-2.5 rounded-xl text-sm font-bold text-white transition-all hover:scale-105 border',
                 !wa.isCustom &&
-                  `bg-gradient-to-r ${ac!.gradientFrom} ${ac!.gradientTo} ${ac!.gradientHoverFrom} ${ac!.gradientHoverTo} ${ac!.shadowGlow} ${ac!.shadowGlowHover}`
+                  `${ac!.buttonBg} ${ac!.buttonBgHover} ${ac!.buttonBorder} ${ac!.shadowGlow} ${ac!.shadowGlowHover}`
               )}
               style={wa.isCustom && cs ? cs.projectsNewButton : undefined}
               onMouseEnter={(e) => {
@@ -616,11 +617,17 @@ function AccountOverlay() {
 }
 
 function NewExperimentOverlay() {
-  const { closeOverlay, setActiveTool, addExperimentTool, addMultipleExperimentTools, sidebarWidth } =
+  const { closeOverlay, setActiveTool, addExperimentTool, addMultipleExperimentTools, sidebarWidth, serviceStatus } =
     useUIStore()
   const bc_active = useBaseColor()
   const { setPendingInitialState } = useQCStore()
   const [selectedToolIds, setSelectedToolIds] = useState<Set<string>>(() => new Set())
+
+  const isServiceAvailable = (service: string | undefined): boolean => {
+    if (!service) return true
+    if (Object.keys(serviceStatus).length === 0) return true
+    return serviceStatus[service] === true
+  }
 
   const handleToolSelect = (toolId: string) => {
     addExperimentTool(toolId as ToolId)
@@ -628,7 +635,8 @@ function NewExperimentOverlay() {
     closeOverlay()
   }
 
-  const handleToolClick = (toolId: string, event: React.MouseEvent<HTMLButtonElement>) => {
+  const handleToolClick = (toolId: string, available: boolean, event: React.MouseEvent<HTMLButtonElement>) => {
+    if (!available) return
     if (event.ctrlKey || event.metaKey) {
       event.preventDefault()
       setSelectedToolIds((prev) => {
@@ -651,7 +659,8 @@ function NewExperimentOverlay() {
     closeOverlay()
   }
 
-  const handleQCWorkflowClick = (card: QCWorkflowCard, event: React.MouseEvent<HTMLButtonElement>) => {
+  const handleQCWorkflowClick = (card: QCWorkflowCard, available: boolean, event: React.MouseEvent<HTMLButtonElement>) => {
+    if (!available) return
     if (event.ctrlKey || event.metaKey) {
       event.preventDefault()
       setSelectedToolIds((prev) => {
@@ -745,6 +754,7 @@ function NewExperimentOverlay() {
                       description: string
                       iconName: string
                       accent: string
+                      available: boolean
                       onClick: (e: React.MouseEvent<HTMLButtonElement>) => void
                     }[] =
                       tool.id === 'quantum-chemistry'
@@ -754,7 +764,8 @@ function NewExperimentOverlay() {
                           description: card.description,
                           iconName: card.iconName,
                           accent: card.accentColor,
-                          onClick: (e) => handleQCWorkflowClick(card, e),
+                          available: isServiceAvailable('qc'),
+                          onClick: (e) => handleQCWorkflowClick(card, isServiceAvailable('qc'), e),
                         }))
                         : [{
                           id: tool.id as string,
@@ -762,10 +773,11 @@ function NewExperimentOverlay() {
                           description: tool.description,
                           iconName: tool.iconName,
                           accent: tool.accentColor || 'blue',
-                          onClick: (e) => handleToolClick(tool.id as string, e),
+                          available: isServiceAvailable(tool.service),
+                          onClick: (e) => handleToolClick(tool.id as string, isServiceAvailable(tool.service), e),
                         }]
 
-                    return cards.map(({ id, name, description, iconName, accent, onClick }) => {
+                    return cards.map(({ id, name, description, iconName, accent, available, onClick }) => {
                       const accentKey: AccentColor = isAccentColor(accent) ? accent : 'blue'
                       const ac = accentColorClasses[accentKey]
                       return (
@@ -776,7 +788,8 @@ function NewExperimentOverlay() {
                         className={cn(
                           'group relative p-6 rounded-2xl text-left transition-all duration-300',
                           'bg-gray-900/40 border border-gray-800/80 backdrop-blur-sm overflow-hidden',
-                          'hover:bg-gray-800/50 hover:border-gray-700',
+                          available && 'hover:bg-gray-800/50 hover:border-gray-700',
+                          !available && 'opacity-40',
                           selectedToolIds.has(id) && 'border-2 scale-[1.02]',
                           selectedToolIds.has(id) && accent === 'purple' && 'border-purple-500/60 shadow-[0_0_20px_rgba(168,85,247,0.3)]',
                           selectedToolIds.has(id) && accent === 'indigo' && 'border-indigo-500/60 shadow-[0_0_20px_rgba(99,102,241,0.3)]',
@@ -789,9 +802,16 @@ function NewExperimentOverlay() {
                           selectedToolIds.has(id) && accent === 'amber' && 'border-amber-500/60 shadow-[0_0_20px_rgba(217,119,6,0.3)]',
                         )}
                       >
-                        {/* Hover glow effect */}
+                        {/* Unavailable badge */}
+                        {!available && (
+                          <div className="absolute top-3 right-3 text-xs bg-gray-800 text-gray-500 px-2 py-0.5 rounded-full pointer-events-none">
+                            Unavailable
+                          </div>
+                        )}
+
+                        {/* Hover glow effect — suppressed when unavailable */}
                         <div
-                          className="absolute inset-0 bg-gradient-to-br opacity-0 group-hover:opacity-10 transition-opacity duration-500 pointer-events-none"
+                          className={cn("absolute inset-0 bg-gradient-to-br transition-opacity duration-500 pointer-events-none", available ? "opacity-0 group-hover:opacity-10" : "opacity-0")}
                           style={{
                             backgroundImage: accent === 'purple' ? 'linear-gradient(to bottom right, #a855f7, transparent)' :
                               accent === 'indigo' ? 'linear-gradient(to bottom right, #6366f1, transparent)' :
@@ -805,10 +825,11 @@ function NewExperimentOverlay() {
                           }}
                         />
 
-                        {/* Border glow */}
+                        {/* Border glow — suppressed when unavailable */}
                         <div
                           className={cn(
-                            "absolute inset-0 rounded-2xl opacity-0 group-hover:opacity-100 transition-opacity duration-300 pointer-events-none",
+                            "absolute inset-0 rounded-2xl transition-opacity duration-300 pointer-events-none",
+                            available ? "opacity-0 group-hover:opacity-100" : "opacity-0",
                           )}
                           style={{
                             boxShadow: accent === 'purple' ? 'inset 0 0 0 1px rgba(168, 85, 247, 0.2)' :
@@ -872,9 +893,15 @@ function NewExperimentOverlay() {
               }}
               className={cn(
                 'px-6 py-3 rounded-xl font-semibold transition-all duration-300 text-white border',
-                'hover:scale-105 shadow-lg hover:shadow-xl shadow-blue-500/25',
-                EXPERIMENT_ENTRY_BUTTON_CLASS
+                'hover:scale-105 shadow-lg hover:shadow-xl',
+                !bc_active.isCustom && bc_active.buttonBg,
+                !bc_active.isCustom && bc_active.buttonBgHover,
+                !bc_active.isCustom && bc_active.buttonBorder,
               )}
+              style={bc_active.isCustom ? {
+                ...bc_active.styles?.buttonBg,
+                borderColor: `rgba(${bc_active.rgbString}, 0.6)`,
+              } : undefined}
             >
               Load {selectedToolIds.size} Tool{selectedToolIds.size !== 1 ? 's' : ''}
             </button>

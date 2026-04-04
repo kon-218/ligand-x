@@ -12,6 +12,7 @@ const STEP_ACTIVE_SHADOW: Record<AccentColor, string> = {
   purple: 'shadow-purple-500/30',
   orange: 'shadow-orange-500/30',
   pink: 'shadow-pink-500/30',
+  magenta: 'shadow-[0_8px_24px_rgba(234,6,116,0.35)]',
   teal: 'shadow-teal-500/30',
   indigo: 'shadow-indigo-500/30',
   cyan: 'shadow-cyan-500/30',

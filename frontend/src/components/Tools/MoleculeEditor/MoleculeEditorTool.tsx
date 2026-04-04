@@ -87,7 +87,7 @@ export function MoleculeEditorTool() {
   const [isLibraryDropdownOpen, setIsLibraryDropdownOpen] = useState(false)
   const [isLoadingLibrary, setIsLoadingLibrary] = useState(false)
   const [importedLibraryName, setImportedLibraryName] = useState<string | null>(null)
-  const libraryFetchedRef = useRef(false)
+
   const [isLigandSelectorOpen, setIsLigandSelectorOpen] = useState(false)
   const [saveDialogOpen, setSaveDialogOpen] = useState(false)
   const [saveDialogName, setSaveDialogName] = useState('New Molecule')
@@ -95,14 +95,10 @@ export function MoleculeEditorTool() {
   const [currentEditorMoleculeName, setCurrentEditorMoleculeName] = useState<string | null>(null)
 
   const fetchLibraryMolecules = useCallback(async () => {
-    // Skip if already fetched
-    if (libraryFetchedRef.current) return
-
     try {
       setIsLoadingLibrary(true)
       const molecules = await api.getMolecules()
       setLibraryMolecules(Array.isArray(molecules) ? molecules : [])
-      libraryFetchedRef.current = true
     } catch (err) {
       console.error('Failed to fetch library molecules:', err)
       setLibraryMolecules([])
@@ -1080,7 +1076,7 @@ export function MoleculeEditorTool() {
                       <button
                         key={ligand.id}
                         onClick={() => handleImportFromViewer(ligand.id)}
-                        className="w-full px-4 py-2 text-left text-xs text-gray-700 hover:bg-blue-50 hover:text-blue-700 flex items-center gap-2 transition-colors border-b border-gray-100 last:border-b-0"
+                        className="w-full px-4 py-2 text-left text-xs text-gray-200 hover:bg-gray-800 hover:text-white flex items-center gap-2 transition-colors border-b border-gray-800 last:border-b-0"
                         title={`Import ${ligand.id}`}
                       >
                         <Beaker className="h-4 w-4 flex-shrink-0" />
@@ -1132,7 +1128,7 @@ export function MoleculeEditorTool() {
                   onClick={() => setIsLibraryDropdownOpen(false)}
                 />
                 {/* Dropdown Menu */}
-                <div className="absolute left-0 mt-1 w-48 bg-gray-900 border border-gray-800 rounded-lg shadow-xl opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all z-10">
+                <div className="absolute top-full left-0 mt-1 w-48 bg-gray-900 border border-gray-800 rounded-lg shadow-xl z-[9999] max-h-80 overflow-y-auto">
                   {isLoadingLibrary ? (
                     <div className="px-4 py-3 text-xs text-gray-500 flex items-center gap-2">
                       <Loader2 className="h-4 w-4 animate-spin" />
@@ -1147,7 +1143,7 @@ export function MoleculeEditorTool() {
                       <button
                         key={molecule.id}
                         onClick={() => handleImportFromLibrary(molecule)}
-                        className="w-full px-4 py-2 text-left text-xs text-gray-700 hover:bg-blue-50 hover:text-blue-700 flex items-center gap-2 transition-colors border-b border-gray-100 last:border-b-0"
+                        className="w-full px-4 py-2 text-left text-xs text-gray-200 hover:bg-gray-800 hover:text-white flex items-center gap-2 transition-colors border-b border-gray-800 last:border-b-0"
                         title={molecule.canonical_smiles}
                       >
                         <Beaker className="h-4 w-4 flex-shrink-0" />

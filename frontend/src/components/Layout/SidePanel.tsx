@@ -180,6 +180,7 @@ function getAccentColorHex(accentColor: AccentColor | undefined): string {
     'purple': '#a855f7',
     'orange': '#ea580c',
     'pink': '#ec4899',
+    'magenta': '#ea0674',
     'teal': '#14b8a6',
     'indigo': '#4f46e5',
     'cyan': '#06b6d4',
@@ -635,9 +636,11 @@ export function SidePanel() {
                 >
                   <div className={cn(
                     "w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0 transition-colors",
-                    isActive && !bc_active.isCustom
+                    isBaseColor && isActive && !bc_active.isCustom
                       ? bc_active.bgLighter
-                      : (isActive && bc_active.isCustom ? '' : "bg-gray-800")
+                      : !isBaseColor && isColored && tool.accentColor
+                      ? accentColorClasses[tool.accentColor].bgLight
+                      : (isBaseColor && isActive && bc_active.isCustom ? '' : "bg-gray-800")
                   )}
                     style={!isBaseColor && isColored ? { color: accentHex } : (isBaseColor && isActive && bc_active.isCustom) ? {
                       backgroundColor: `rgba(${bc_active.rgbString}, 0.2)`,
@@ -708,9 +711,11 @@ export function SidePanel() {
                     >
                       <div className={cn(
                         "w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0 transition-colors",
-                        isActive && !bc_active.isCustom
+                        isBaseColor && isActive && !bc_active.isCustom
                           ? bc_active.bgLighter
-                          : (isActive && bc_active.isCustom ? '' : "bg-gray-800")
+                          : !isBaseColor && isColored && tool.accentColor
+                          ? accentColorClasses[tool.accentColor].bgLight
+                          : (isBaseColor && isActive && bc_active.isCustom ? '' : "bg-gray-800")
                       )}
                         style={!isBaseColor && isColored ? { color: accentHex } : (isBaseColor && isActive && bc_active.isCustom) ? {
                           backgroundColor: `rgba(${bc_active.rgbString}, 0.2)`,

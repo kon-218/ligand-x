@@ -52,6 +52,8 @@ export interface MolecularStructure {
   sdf_data?: string
   xyz_data?: string
   smiles?: string
+  /** RDKit canonical form; used to match library entries when input SMILES differ */
+  canonical_smiles?: string
   atoms?: Atom[]
   bonds?: Bond[]
   residues?: Residue[]

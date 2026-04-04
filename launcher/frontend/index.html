@@ -50,7 +50,7 @@
                 <div class="control-row">
                     <div class="control-group">
                         <label for="envMode">Environment</label>
-                        <select id="envMode" class="select">
+                        <select id="envMode" class="select" onchange="onEnvModeChange()">
                             <option value="dev">Development</option>
                             <option value="prod">Production</option>
                         </select>
@@ -97,6 +97,7 @@
             <div class="tab-strip">
                 <button class="tab-button active" data-tab="services">Services</button>
                 <button class="tab-button" data-tab="logs">Logs</button>
+                <button class="tab-button" data-tab="config">Config</button>
             </div>
 
             <!-- Services Panel (Tabbed) -->
@@ -149,6 +150,14 @@
                 <div class="logs-container" id="logsContainer">
                     <div class="log-placeholder">Logs will appear here...</div>
                 </div>
+            </section>
+            <!-- Config Panel (Tabbed) -->
+            <section class="panel tab-content" data-tab="config">
+                <div class="logs-header">
+                    <h2>.env Configuration</h2>
+                    <button class="btn btn-sm btn-primary" onclick="saveEnvConfig()">Save</button>
+                </div>
+                <textarea id="envEditor" spellcheck="false" style="width: 100%; height: 420px; resize: vertical; font-family: monospace; font-size: 12px; background: var(--bg-secondary); color: var(--text-primary); border: 1px solid var(--border-color); border-radius: var(--radius-sm); padding: 10px; box-sizing: border-box; outline: none;"></textarea>
             </section>
         </main>
 

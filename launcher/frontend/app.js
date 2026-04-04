@@ -6,6 +6,9 @@ let statusInterval = null;
 const MAX_LOGS = 500;
 let logs = [];
 
+// Services tab selection state (mirrors config.selectedGroups)
+let serviceTabSelection = [];
+
 const CORE_SERVICES = ['postgres', 'redis', 'rabbitmq', 'gateway', 'frontend', 'structure'];
 
 // Initialize on load
@@ -29,6 +32,9 @@ async function init() {
 
     // Start polling for status updates
     statusInterval = setInterval(updateStatus, 5000);
+
+    // Render the default active tab (services) on load
+    await renderServicesTab();
 
     // Subscribe to log events
     window.runtime.EventsOn('log', handleLogEvent);
@@ -69,6 +75,11 @@ function setupTabSwitching() {
             if (tabName === 'services') {
                 await renderServicesTab();
             }
+
+            // Load env config if clicked
+            if (tabName === 'config') {
+                await loadEnvConfig();
+            }
         });
     });
 }
@@ -83,7 +94,7 @@ async function checkDocker() {
         updateDockerStatus(ok, message);
         return ok;
     } catch (err) {
-        updateDockerStatus(false, err.message);
+        updateDockerStatus(false, err.message || err);
         return false;
     }
 }
@@ -160,24 +171,22 @@ function clearControlButtonLoading(activeIcon, originalIconHtml) {
 
 async function startServices() {
     const env = document.getElementById('envMode').value;
-    const preset = document.getElementById('servicePreset').value;
     const btn = document.getElementById('startBtn');
     const icon = btn.querySelector('svg');
     const originalIcon = icon.innerHTML;
     setControlButtonsLoading(icon);
 
     try {
-        const services = getSelectedServices();
-        if (services === null) {
-            await window.go.main.App.StartServices(env);
+        if (serviceTabSelection.length > 0) {
+            await window.go.main.App.StartServiceGroups(env, serviceTabSelection);
+            addLog('launcher', `Services started in ${env} mode (${serviceTabSelection.length} groups selected)`);
         } else {
-            await window.go.main.App.StartServicesCustom(env, services);
+            await window.go.main.App.StartServices(env);
+            addLog('launcher', `Services started in ${env} mode`);
         }
         await updateStatus();
-        const label = services === null ? 'all' : `${services.length}`;
-        addLog('launcher', `Services started in ${env} mode (${label} services)`);
     } catch (err) {
-        addLog('launcher', `Error: ${err.message}`, 'error');
+        addLog('launcher', `Error: ${err.message || err}`, 'error');
     } finally {
         clearControlButtonLoading(icon, originalIcon);
         await updateStatus();
@@ -195,7 +204,7 @@ async function stopServices() {
         await updateStatus();
         addLog('launcher', 'Services stopped');
     } catch (err) {
-        addLog('launcher', `Error: ${err.message}`, 'error');
+        addLog('launcher', `Error: ${err.message || err}`, 'error');
     } finally {
         clearControlButtonLoading(icon, originalIcon);
         await updateStatus();
@@ -209,11 +218,16 @@ async function restartServices() {
     setControlButtonsLoading(icon);
 
     try {
-        await window.go.main.App.RestartServices();
+        if (serviceTabSelection.length > 0) {
+            await window.go.main.App.RestartServiceGroups(serviceTabSelection);
+            addLog('launcher', `Services restarted (${serviceTabSelection.length} groups selected)`);
+        } else {
+            await window.go.main.App.RestartServices();
+            addLog('launcher', 'Services restarted');
+        }
         await updateStatus();
-        addLog('launcher', 'Services restarted');
     } catch (err) {
-        addLog('launcher', `Error: ${err.message}`, 'error');
+        addLog('launcher', `Error: ${err.message || err}`, 'error');
     } finally {
         clearControlButtonLoading(icon, originalIcon);
         await updateStatus();
@@ -227,16 +241,15 @@ async function pullImages() {
     icon.style.animation = 'spin 0.8s linear infinite';
 
     try {
-        const config = await window.go.main.App.GetLauncherConfig();
-        if (!config.selectedGroups || config.selectedGroups.length === 0) {
-            addLog('launcher', 'No services selected. Please configure services in the Services tab.');
+        if (serviceTabSelection.length === 0) {
+            addLog('launcher', 'No services selected. Please select services in the Services tab.');
             return;
         }
 
-        addLog('launcher', `Pulling services: ${config.selectedGroups.join(', ')}...`);
-        window.go.main.App.PullServiceGroups(config.selectedGroups);
+        addLog('launcher', `Pulling services: ${serviceTabSelection.join(', ')}...`);
+        window.go.main.App.PullServiceGroups(serviceTabSelection);
     } catch (err) {
-        addLog('launcher', `Error: ${err.message}`, 'error');
+        addLog('launcher', `Error: ${err.message || err}`, 'error');
     } finally {
         btn.disabled = false;
         icon.style.animation = '';
@@ -271,7 +284,7 @@ async function selectProjectFolder() {
             addLog('launcher', `Project path set to: ${path}`);
         }
     } catch (err) {
-        addLog('launcher', `Error: ${err.message}`, 'error');
+        addLog('launcher', `Error: ${err.message || err}`, 'error');
     }
 }
 
@@ -287,7 +300,7 @@ async function cleanDocker() {
         await window.go.main.App.CleanDocker();
         addLog('launcher', 'Docker cleanup completed');
     } catch (err) {
-        addLog('launcher', `Error: ${err.message}`, 'error');
+        addLog('launcher', `Error: ${err.message || err}`, 'error');
     } finally {
         btn.disabled = false;
         icon.innerHTML = originalIcon;
@@ -372,7 +385,7 @@ async function changeLogService() {
         await window.go.main.App.ViewLogs(service);
         addLog('launcher', `Now viewing logs for: ${service}`);
     } catch (err) {
-        addLog('launcher', `Error: ${err.message}`, 'error');
+        addLog('launcher', `Error: ${err.message || err}`, 'error');
     }
 }
 
@@ -544,8 +557,7 @@ async function startWizardPull() {
     window.go.main.App.PullServiceGroups(wizardSelectedGroups);
 }
 
-function handlePullComplete(event) {
-    const data = event.detail;
+function handlePullComplete(data) {
 
     // Clear pulling state
     window.isPulling = false;
@@ -627,6 +639,9 @@ async function saveWizardConfig() {
         const wizard = document.getElementById('firstRunWizard');
         wizard.classList.add('hidden');
 
+        // Clear wizard selections so future pulls are not confused as wizard pulls
+        wizardSelectedGroups = [];
+
         // Update status to show selected services
         await updateStatus();
     } catch (err) {
@@ -640,13 +655,32 @@ async function saveWizardConfig() {
 
 async function renderServicesTab() {
     try {
-        const [allGroups, imageStatus, config] = await Promise.all([
+        const container = document.getElementById('servicesTabContent');
+
+        // Fetch data with timeout (5 seconds)
+        const fetchPromise = Promise.all([
             window.go.main.App.GetServiceGroups(),
             window.go.main.App.CheckImagePresence(),
             window.go.main.App.GetLauncherConfig()
         ]);
 
-        const container = document.getElementById('servicesTabContent');
+        const timeoutPromise = new Promise((_, reject) =>
+            setTimeout(() => reject(new Error('Backend request timeout')), 5000)
+        );
+
+        const [allGroups, imageStatus, config] = await Promise.race([fetchPromise, timeoutPromise]);
+
+        // Sync in-memory selection on first load:
+        // prefer saved config, otherwise default to all pulled groups
+        if (serviceTabSelection.length === 0) {
+            if (config.selectedGroups && config.selectedGroups.length > 0) {
+                serviceTabSelection = config.selectedGroups.slice();
+            } else {
+                serviceTabSelection = allGroups.filter(g => imageStatus[g.id]).map(g => g.id);
+            }
+        }
+
+        // Clear container
         while (container.firstChild) {
             container.removeChild(container.firstChild);
         }
@@ -661,24 +695,38 @@ async function renderServicesTab() {
 
             const card = document.createElement('div');
             card.setAttribute('data-group', group.id);
-            card.style.cssText = 'display: flex; align-items: center; gap: 12px; padding: 12px; background: var(--bg-tertiary); border: 1px solid var(--border-color); border-radius: var(--radius-md);';
+            card.style.cssText = [
+                'display: flex', 'align-items: center', 'gap: 12px', 'padding: 12px',
+                'background: var(--bg-tertiary)',
+                'border: 1px solid ' + (isSelected ? 'var(--accent-primary)' : 'var(--border-color)'),
+                'border-radius: var(--radius-md)',
+                'cursor: ' + (group.required ? 'default' : 'pointer'),
+                'transition: border-color 0.15s ease'
+            ].join('; ') + ';';
 
-            // Status badge
+            if (!group.required) {
+                card.addEventListener('click', (e) => {
+                    if (e.target.tagName === 'BUTTON' || e.target.closest('button')) return;
+                    toggleServiceSelection(group.id);
+                });
+            }
+
+            // Status badge (pulled / not pulled / pulling indicator)
             const badge = document.createElement('div');
             if (isPulling) {
                 badge.textContent = '⟳';
                 badge.style.cssText = 'width: 24px; height: 24px; background: var(--accent-warning); color: white; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-weight: bold; font-size: 14px; animation: spin 0.8s linear infinite;';
             } else if (isPulled) {
                 badge.textContent = '✓';
-                badge.style.cssText = 'width: 24px; height: 24px; background: var(--accent-success); color: white; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-weight: bold; font-size: 14px;';
+                badge.style.cssText = badgeBase + ' background: var(--accent-success);';
             } else {
                 badge.textContent = '✗';
-                badge.style.cssText = 'width: 24px; height: 24px; background: var(--accent-danger); color: white; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-weight: bold; font-size: 14px;';
+                badge.style.cssText = badgeBase + ' background: var(--accent-danger);';
             }
 
             // Info
             const info = document.createElement('div');
-            info.style.cssText = 'flex: 1;';
+            info.style.cssText = 'flex: 1; min-width: 0;';
 
             const name = document.createElement('p');
             name.style.cssText = 'margin: 0; font-size: 14px; font-weight: 500; color: var(--text-primary);';
@@ -715,11 +763,44 @@ async function renderServicesTab() {
     } catch (err) {
         console.error('Failed to render Services tab:', err);
         const container = document.getElementById('servicesTabContent');
-        container.textContent = 'Error loading services: ' + err.message;
+        container.textContent = 'Error loading services: ' + err.message || err;
+    }
+}
+
+async function toggleServiceSelection(groupId) {
+    const idx = serviceTabSelection.indexOf(groupId);
+    if (idx > -1) {
+        serviceTabSelection.splice(idx, 1);
+    } else {
+        serviceTabSelection.push(groupId);
+    }
+
+    // Persist to config
+    try {
+        const config = await window.go.main.App.GetLauncherConfig();
+        config.selectedGroups = serviceTabSelection.slice();
+        await window.go.main.App.SaveLauncherConfig(config);
+    } catch (err) {
+        console.error('Failed to save selection:', err);
+    }
+
+    renderServicesTab();
+}
+
+async function deleteServiceGroupImages(groupId) {
+    try {
+        addLog('launcher', 'Deleting images for ' + groupId + '...');
+        await window.go.main.App.DeleteServiceGroupImages(groupId);
+        addLog('launcher', 'Images deleted for ' + groupId);
+    } catch (err) {
+        addLog('launcher', 'Error deleting images: ' + err.message || err, 'error');
+    } finally {
+        renderServicesTab();
     }
 }
 
 async function pullServiceGroup(groupId) {
+<<<<<<< HEAD
     // Find and disable the button for this group
     const button = document.querySelector(`[data-group="${groupId}"] button`);
     if (button) {
@@ -727,12 +808,50 @@ async function pullServiceGroup(groupId) {
         button.textContent = 'Pulling...';
     }
 
+=======
+>>>>>>> 00a3b6a (feat: launcher Config tab, services tab fixes, and reliability improvements)
     // Store which group we're pulling for completion handling
     window.currentPullingGroup = groupId;
     window.isPulling = true;
 
+    // Re-render so spinner and "Pulling..." button appear immediately
+    await renderServicesTab();
+
     // Start pull
     window.go.main.App.PullServiceGroups([groupId]);
+}
+
+// ============================================================
+// Config Tab
+// ============================================================
+
+function onEnvModeChange() {
+    const configTab = document.querySelector('.tab-content[data-tab="config"]');
+    if (configTab && configTab.classList.contains('active')) {
+        loadEnvConfig();
+    }
+}
+
+async function loadEnvConfig() {
+    const mode = document.getElementById('envMode').value;
+    const editor = document.getElementById('envEditor');
+    try {
+        const content = await window.go.main.App.GetEnvContent(mode);
+        editor.value = content;
+    } catch (err) {
+        addLog('launcher', `Error loading .env: ${err.message || err}`, 'error');
+    }
+}
+
+async function saveEnvConfig() {
+    const mode = document.getElementById('envMode').value;
+    const content = document.getElementById('envEditor').value;
+    try {
+        await window.go.main.App.SaveEnvContent(mode, content);
+        addLog('launcher', `.env${mode === 'prod' ? '.production' : ''} saved successfully`);
+    } catch (err) {
+        addLog('launcher', `Error saving .env: ${err.message || err}`, 'error');
+    }
 }
 
 // Cleanup on unload

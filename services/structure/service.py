@@ -116,6 +116,7 @@ class StructureService:
             "pdb_data": pdb_data,
             "components": processed_data['components'],
             "smiles": smiles,
+            "canonical_smiles": canonical_smiles,
             "source": "smiles_upload",
             "library_save": library_save_result
         }

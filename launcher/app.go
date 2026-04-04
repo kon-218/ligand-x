@@ -303,6 +303,51 @@ func (a *App) StartServices(mode string) error {
 	return a.runDockerCompose(args, "Starting services...")
 }
 
+func (a *App) StartServiceGroups(env string, groupIDs []string) error {
+	dockerOk, msg := a.CheckDocker()
+	if !dockerOk {
+		return fmt.Errorf(msg)
+	}
+
+	if err := a.ensureDataDirs(); err != nil {
+		wailsRuntime.EventsEmit(a.ctx, "log", LogEntry{
+			Service:   "launcher",
+			Message:   fmt.Sprintf("Warning: Could not create data directories: %v", err),
+			Timestamp: time.Now().Format("15:04:05"),
+		})
+	}
+
+	allGroups := a.GetServiceGroups()
+	groupMap := make(map[string]ServiceGroup)
+	for _, g := range allGroups {
+		groupMap[g.ID] = g
+	}
+
+	serviceSet := make(map[string]bool)
+	for _, groupID := range groupIDs {
+		if group, ok := groupMap[groupID]; ok {
+			for _, svc := range group.Services {
+				serviceSet[svc] = true
+			}
+		}
+	}
+
+	var services []string
+	for svc := range serviceSet {
+		services = append(services, svc)
+	}
+
+	var args []string
+	if env == "prod" {
+		args = []string{"compose", "-f", "docker-compose.yml", "up", "-d", "--pull=never"}
+	} else {
+		args = []string{"compose", "up", "-d", "--pull=never"}
+	}
+	args = append(args, services...)
+
+	return a.runDockerCompose(args, fmt.Sprintf("Starting %s (%d services)...", env, len(services)))
+}
+
 func (a *App) StartServicesCustom(env string, services []string) error {
 	dockerOk, msg := a.CheckDocker()
 	if !dockerOk {
@@ -340,6 +385,39 @@ func (a *App) StopServices() error {
 
 func (a *App) RestartServices() error {
 	return a.runDockerCompose([]string{"compose", "restart"}, "Restarting services...")
+}
+
+func (a *App) RestartServiceGroups(groupIDs []string) error {
+	allGroups := a.GetServiceGroups()
+	groupMap := make(map[string]ServiceGroup)
+	for _, g := range allGroups {
+		groupMap[g.ID] = g
+	}
+
+	serviceSet := make(map[string]bool)
+	for _, groupID := range groupIDs {
+		if group, ok := groupMap[groupID]; ok {
+			for _, svc := range group.Services {
+				serviceSet[svc] = true
+			}
+		}
+	}
+
+	var services []string
+	for svc := range serviceSet {
+		services = append(services, svc)
+	}
+
+	args := []string{"compose", "restart"}
+	args = append(args, services...)
+	return a.runDockerCompose(args, fmt.Sprintf("Restarting %d services...", len(services)))
+}
+
+func (a *App) RestartServicesCustom(services []string) error {
+	args := []string{"compose", "restart"}
+	args = append(args, services...)
+	label := fmt.Sprintf("Restarting %d services...", len(services))
+	return a.runDockerCompose(args, label)
 }
 
 func (a *App) runDockerCompose(args []string, message string) error {
@@ -492,6 +570,46 @@ func (a *App) SelectProjectFolder() (string, error) {
 	}
 
 	return a.projectPath, nil
+}
+
+func (a *App) GetEnvContent(mode string) (string, error) {
+	var envFile, templateFile string
+	if mode == "prod" {
+		envFile = ".env.production"
+		templateFile = ".env.production.template"
+	} else {
+		envFile = ".env"
+		templateFile = ".env.example"
+	}
+
+	envPath := filepath.Join(a.projectPath, envFile)
+	data, err := os.ReadFile(envPath)
+	if err == nil {
+		return string(data), nil
+	}
+
+	// env file doesn't exist — load template and auto-save it as the env file
+	templatePath := filepath.Join(a.projectPath, templateFile)
+	data, err = os.ReadFile(templatePath)
+	if err != nil {
+		return "", fmt.Errorf("no %s file found and could not read %s: %v", envFile, templateFile, err)
+	}
+
+	// Write template as the starting env file so docker compose can read it immediately
+	_ = os.WriteFile(envPath, data, 0644)
+
+	return string(data), nil
+}
+
+func (a *App) SaveEnvContent(mode string, content string) error {
+	var envFile string
+	if mode == "prod" {
+		envFile = ".env.production"
+	} else {
+		envFile = ".env"
+	}
+	envPath := filepath.Join(a.projectPath, envFile)
+	return os.WriteFile(envPath, []byte(content), 0644)
 }
 
 func (a *App) ViewLogs(service string) error {
@@ -950,6 +1068,71 @@ func (a *App) CheckImagePresence() map[string]bool {
 	return result
 }
 
+func (a *App) DeleteServiceGroupImages(groupID string) error {
+	if a.dockerClient == nil {
+		a.initDockerClient()
+	}
+	if a.dockerClient == nil {
+		return fmt.Errorf("docker client not available")
+	}
+
+	allGroups := a.GetServiceGroups()
+	var group *ServiceGroup
+	for i := range allGroups {
+		if allGroups[i].ID == groupID {
+			group = &allGroups[i]
+			break
+		}
+	}
+	if group == nil {
+		return fmt.Errorf("unknown service group: %s", groupID)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	images, err := a.dockerClient.ImageList(ctx, types.ImageListOptions{})
+	if err != nil {
+		return err
+	}
+
+	for _, requiredImage := range group.Images {
+		parts := strings.Split(requiredImage, "/")
+		serviceName := ""
+		if len(parts) > 0 {
+			lastPart := parts[len(parts)-1]
+			serviceName = strings.Split(lastPart, ":")[0]
+		}
+
+		for _, img := range images {
+			for _, tag := range img.RepoTags {
+				if tag == "<none>:<none>" {
+					continue
+				}
+				if strings.Contains(tag, requiredImage) || (serviceName != "" && strings.Contains(tag, serviceName)) {
+					_, removeErr := a.dockerClient.ImageRemove(ctx, img.ID, types.ImageRemoveOptions{Force: false, PruneChildren: true})
+					if removeErr != nil {
+						wailsRuntime.EventsEmit(a.ctx, "log", LogEntry{
+							Service:   "launcher",
+							Message:   fmt.Sprintf("Warning: could not remove image %s: %v", tag, removeErr),
+							Timestamp: time.Now().Format("15:04:05"),
+						})
+					} else {
+						wailsRuntime.EventsEmit(a.ctx, "log", LogEntry{
+							Service:   "launcher",
+							Message:   fmt.Sprintf("Removed image: %s", tag),
+							Timestamp: time.Now().Format("15:04:05"),
+						})
+					}
+					break
+				}
+			}
+		}
+	}
+
+	return nil
+}
+
 func (a *App) PullServiceGroups(groupIDs []string) {
 	go func() {
 		defer func() {
@@ -1034,7 +1217,7 @@ func (a *App) PullServiceGroups(groupIDs []string) {
 				} else {
 					wailsRuntime.EventsEmit(a.ctx, "log", LogEntry{
 						Service:   groupID,
-						Message:   fmt.Sprintf("Successfully pulled %s", image),
+						Message:   fmt.Sprintf("Pulled image %d/%d: %s", imgIdx+1, len(group.Images), image),
 						Timestamp: time.Now().Format("15:04:05"),
 					})
 				}
@@ -1044,6 +1227,12 @@ func (a *App) PullServiceGroups(groupIDs []string) {
 
 			if groupFailed {
 				failedGroups = append(failedGroups, groupID)
+			} else {
+				wailsRuntime.EventsEmit(a.ctx, "log", LogEntry{
+					Service:   groupID,
+					Message:   fmt.Sprintf("✓ All images pulled successfully for %s", group.Name),
+					Timestamp: time.Now().Format("15:04:05"),
+				})
 			}
 		}
 

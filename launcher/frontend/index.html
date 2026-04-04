@@ -216,10 +216,18 @@
                 </div>
 
                 <div id="pullProgressContainer" class="hidden">
-                    <div class="progress-message">Pulling images...</div>
-                    <div class="logs-container" id="wizardLogsContainer" style="max-height: 200px; overflow-y: auto;">
-                        <div class="log-placeholder">Waiting for pull to start...</div>
+                    <div class="pull-progress-header">
+                        <span id="pullGroupLabel">Pulling...</span>
+                        <span id="pullImageCounter">0 / 0 images</span>
                     </div>
+                    <div class="progress-bar-track">
+                        <div class="progress-bar-fill" id="pullOverallBar" style="width:0%"></div>
+                    </div>
+                    <div class="pull-current-image" id="pullCurrentImage">—</div>
+                    <div class="progress-bar-track progress-bar-track-sm">
+                        <div class="progress-bar-fill progress-bar-fill-dim" id="pullImageBar" style="width:0%"></div>
+                    </div>
+                    <div class="pull-status-text" id="pullStatusText">Waiting...</div>
                 </div>
             </div>
         </div>

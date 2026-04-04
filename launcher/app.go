@@ -40,6 +40,19 @@ type LogEntry struct {
 	Timestamp string `json:"timestamp"`
 }
 
+type PullProgress struct {
+	GroupID         string  `json:"groupId"`
+	GroupName       string  `json:"groupName"`
+	ImageIndex      int     `json:"imageIndex"`
+	TotalImages     int     `json:"totalImages"`
+	CurrentImage    string  `json:"currentImage"`
+	ImagePercent    float64 `json:"imagePercent"`
+	OverallPercent  float64 `json:"overallPercent"`
+	Status          string  `json:"status"`
+	BytesTotal      int64   `json:"bytesTotal"`
+	BytesDownloaded int64   `json:"bytesDownloaded"`
+}
+
 type ServiceGroup struct {
 	ID          string   `json:"id"`
 	Name        string   `json:"name"`
@@ -539,8 +552,144 @@ func (a *App) stopAllLogStreams() {
 	a.logStreams = make(map[string]context.CancelFunc)
 }
 
+func (a *App) pullImageWithProgress(ctx context.Context, image, groupID, groupName string, imageIndex, totalImages int) error {
+	// Track layer-level progress
+	type layerState struct {
+		status   string
+		current  int64
+		total    int64
+		startTime time.Time
+	}
+	layers := make(map[string]*layerState)
+	var lastEmitPercent float64
+	var lastEmitTime time.Time
+
+	// Use Docker API directly for structured JSON stream
+	reader, err := a.dockerClient.ImagePull(ctx, image, types.ImagePullOptions{})
+	if err != nil {
+		return fmt.Errorf("failed to pull %s: %v", image, err)
+	}
+	defer reader.Close()
+
+	scanner := bufio.NewScanner(reader)
+	for scanner.Scan() {
+		var msg struct {
+			Status         string `json:"status"`
+			Error          string `json:"error"`
+			ID             string `json:"id"`
+			ProgressDetail struct {
+				Current int64 `json:"current"`
+				Total   int64 `json:"total"`
+			} `json:"progressDetail"`
+		}
+
+		if err := json.Unmarshal(scanner.Bytes(), &msg); err != nil {
+			continue // Skip non-JSON lines
+		}
+
+		// Handle errors in stream
+		if msg.Error != "" {
+			return fmt.Errorf("docker pull error: %s", msg.Error)
+		}
+
+		// Update or create layer state
+		if msg.ID != "" {
+			if _, ok := layers[msg.ID]; !ok {
+				layers[msg.ID] = &layerState{startTime: time.Now()}
+			}
+			layers[msg.ID].status = msg.Status
+			if msg.ProgressDetail.Total > 0 {
+				layers[msg.ID].current = msg.ProgressDetail.Current
+				layers[msg.ID].total = msg.ProgressDetail.Total
+			}
+		}
+
+		// Calculate per-image progress
+		var totalBytes int64
+		var downloadedBytes int64
+		for _, layer := range layers {
+			totalBytes += layer.total
+			if layer.status == "Downloading" || layer.status == "Pull complete" {
+				downloadedBytes += layer.current
+			}
+		}
+
+		var imagePercent float64
+		if totalBytes > 0 {
+			imagePercent = float64(downloadedBytes) / float64(totalBytes) * 100
+		}
+
+		overallPercent := (float64(imageIndex) + imagePercent/100) / float64(totalImages) * 100
+
+		// Throttle emissions: only emit if percent changed ≥1% or 500ms elapsed
+		shouldEmit := false
+		if imagePercent-lastEmitPercent >= 1 {
+			shouldEmit = true
+		} else if time.Since(lastEmitTime) >= 500*time.Millisecond {
+			shouldEmit = true
+		}
+
+		if shouldEmit && totalBytes > 0 {
+			lastEmitPercent = imagePercent
+			lastEmitTime = time.Now()
+
+			progress := PullProgress{
+				GroupID:         groupID,
+				GroupName:       groupName,
+				ImageIndex:      imageIndex,
+				TotalImages:     totalImages,
+				CurrentImage:    image,
+				ImagePercent:    imagePercent,
+				OverallPercent:  overallPercent,
+				Status:          msg.Status,
+				BytesDownloaded: downloadedBytes,
+				BytesTotal:      totalBytes,
+			}
+			wailsRuntime.EventsEmit(a.ctx, "pullProgress", progress)
+		}
+	}
+
+	if err := scanner.Err(); err != nil {
+		return fmt.Errorf("error reading pull stream: %v", err)
+	}
+
+	return nil
+}
+
 func (a *App) PullImages() error {
-	return a.runDockerCompose([]string{"compose", "pull"}, "Pulling latest images...")
+	config, err := a.GetLauncherConfig()
+	if err != nil || config.SelectedGroups == nil || len(config.SelectedGroups) == 0 {
+		wailsRuntime.EventsEmit(a.ctx, "log", LogEntry{
+			Service:   "launcher",
+			Message:   "No services selected. Configure services in the Services tab first.",
+			Timestamp: time.Now().Format("15:04:05"),
+		})
+		return fmt.Errorf("no services selected; configure in Services tab")
+	}
+
+	// Get selected services from groups
+	allGroups := a.GetServiceGroups()
+	groupMap := make(map[string]ServiceGroup)
+	for _, g := range allGroups {
+		groupMap[g.ID] = g
+	}
+
+	serviceSet := make(map[string]bool)
+	for _, groupID := range config.SelectedGroups {
+		if group, ok := groupMap[groupID]; ok {
+			for _, svc := range group.Services {
+				serviceSet[svc] = true
+			}
+		}
+	}
+
+	var services []string
+	for svc := range serviceSet {
+		services = append(services, svc)
+	}
+
+	// Pull selected services using docker compose (logs only, no progress bars)
+	return a.runDockerCompose(append([]string{"compose", "pull"}, services...), "Pulling selected services...")
 }
 
 func (a *App) CleanDocker() error {
@@ -872,33 +1021,25 @@ func (a *App) PullServiceGroups(groupIDs []string) {
 			})
 
 			groupFailed := false
-			for _, image := range group.Images {
-				cmd := exec.Command("docker", "pull", image)
-				stdout, _ := cmd.StdoutPipe()
-				stderr, _ := cmd.StderrPipe()
+			for imgIdx, image := range group.Images {
+				ctx, cancel := context.WithCancel(a.ctx)
 
-				if err := cmd.Start(); err != nil {
+				if err := a.pullImageWithProgress(ctx, image, groupID, group.Name, imgIdx, len(group.Images)); err != nil {
 					wailsRuntime.EventsEmit(a.ctx, "log", LogEntry{
 						Service:   groupID,
 						Message:   fmt.Sprintf("Failed to pull %s: %v", image, err),
 						Timestamp: time.Now().Format("15:04:05"),
 					})
 					groupFailed = true
-					continue
-				}
-
-				// Stream output
-				go a.streamOutput(stdout, groupID)
-				go a.streamOutput(stderr, groupID)
-
-				if err := cmd.Wait(); err != nil {
+				} else {
 					wailsRuntime.EventsEmit(a.ctx, "log", LogEntry{
 						Service:   groupID,
-						Message:   fmt.Sprintf("Failed to pull %s: %v", image, err),
+						Message:   fmt.Sprintf("Successfully pulled %s", image),
 						Timestamp: time.Now().Format("15:04:05"),
 					})
-					groupFailed = true
 				}
+
+				cancel()
 			}
 
 			if groupFailed {

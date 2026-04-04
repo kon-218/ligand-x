@@ -32,6 +32,7 @@ async function init() {
 
     // Subscribe to log events
     window.runtime.EventsOn('log', handleLogEvent);
+    window.runtime.EventsOn('pullProgress', handlePullProgress);
     window.runtime.EventsOn('pullComplete', handlePullComplete);
 
     // Start streaming logs for the default selection (All Services)
@@ -302,6 +303,22 @@ function handleLogEvent(entry) {
     addLog(entry.service, entry.message);
 }
 
+function handlePullProgress(event) {
+    const data = event.detail;
+
+    // Update wizard progress if visible (only show progress for wizard, not for re-pulls)
+    if (!document.getElementById('firstRunWizard').classList.contains('hidden')) {
+        document.getElementById('pullOverallBar').style.width = data.overallPercent.toFixed(1) + '%';
+        document.getElementById('pullImageCounter').textContent = (data.imageIndex + 1) + ' / ' + data.totalImages;
+
+        const imageName = data.currentImage.split('/').pop();
+        document.getElementById('pullCurrentImage').textContent = imageName;
+
+        document.getElementById('pullImageBar').style.width = data.imagePercent.toFixed(1) + '%';
+        document.getElementById('pullStatusText').textContent = data.status || 'Downloading...';
+    }
+}
+
 function addLog(service, message, type = 'info') {
     const container = document.getElementById('logsContainer');
 
@@ -546,6 +563,7 @@ function handlePullComplete(event) {
                     button.disabled = false;
                     button.textContent = 'Re-pull';
                 }
+
                 window.currentPullingGroup = null;
             }
 
@@ -581,6 +599,7 @@ function handlePullComplete(event) {
                     button.disabled = false;
                     button.textContent = 'Pull Failed - Retry';
                 }
+
                 window.currentPullingGroup = null;
             }
 
@@ -638,6 +657,7 @@ async function renderServicesTab() {
         allGroups.forEach(group => {
             const isPulled = imageStatus[group.id];
             const isSelected = config.selectedGroups && config.selectedGroups.includes(group.id);
+            const isPulling = window.currentPullingGroup === group.id;
 
             const card = document.createElement('div');
             card.setAttribute('data-group', group.id);
@@ -645,7 +665,10 @@ async function renderServicesTab() {
 
             // Status badge
             const badge = document.createElement('div');
-            if (isPulled) {
+            if (isPulling) {
+                badge.textContent = '⟳';
+                badge.style.cssText = 'width: 24px; height: 24px; background: var(--accent-warning); color: white; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-weight: bold; font-size: 14px; animation: spin 0.8s linear infinite;';
+            } else if (isPulled) {
                 badge.textContent = '✓';
                 badge.style.cssText = 'width: 24px; height: 24px; background: var(--accent-success); color: white; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-weight: bold; font-size: 14px;';
             } else {
@@ -671,9 +694,16 @@ async function renderServicesTab() {
             // Pull button
             const button = document.createElement('button');
             button.className = 'btn btn-sm btn-secondary';
-            button.textContent = isPulled ? 'Re-pull' : 'Pull';
             button.style.flexShrink = '0';
-            button.onclick = () => pullServiceGroup(group.id);
+
+            if (isPulling) {
+                button.textContent = 'Pulling...';
+                button.disabled = true;
+            } else {
+                button.textContent = isPulled ? 'Re-pull' : 'Pull';
+                button.disabled = false;
+                button.onclick = () => pullServiceGroup(group.id);
+            }
 
             card.appendChild(badge);
             card.appendChild(info);
@@ -695,16 +725,6 @@ async function pullServiceGroup(groupId) {
     if (button) {
         button.disabled = true;
         button.textContent = 'Pulling...';
-    }
-
-    // Clear logs container and prepare to show only pull logs
-    const logsContainer = document.getElementById('logsContainer');
-    logsContainer.innerHTML = '';
-
-    // Switch to Logs tab to show progress
-    const logsButton = document.querySelector('.tab-button[data-tab="logs"]');
-    if (logsButton) {
-        logsButton.click();
     }
 
     // Store which group we're pulling for completion handling

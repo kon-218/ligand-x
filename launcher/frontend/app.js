@@ -6,31 +6,39 @@ let statusInterval = null;
 const MAX_LOGS = 500;
 let logs = [];
 
+// Services tab selection state (mirrors config.selectedGroups)
+let serviceTabSelection = [];
+
 const CORE_SERVICES = ['postgres', 'redis', 'rabbitmq', 'gateway', 'frontend', 'structure'];
 
-// Initialize on load
-document.addEventListener('DOMContentLoaded', init);
+// Initialize on load — wait for Wails runtime to be injected before calling backend
+document.addEventListener('DOMContentLoaded', () => {
+    // Poll until window.go and window.runtime are available (Wails injects them async)
+    const waitForWails = setInterval(() => {
+        if (window.go && window.runtime) {
+            clearInterval(waitForWails);
+            init();
+        }
+    }, 50);
+    // Timeout after 10 seconds to avoid hanging forever
+    setTimeout(() => clearInterval(waitForWails), 10000);
+});
 
 async function init() {
-    // Setup tab switching
+    // Setup tab switching first — sync, no backend needed
     setupTabSwitching();
 
-    // Check for first-run wizard
-    await initializeWizard();
-
-    // Check Docker status
-    await checkDocker();
-
-    // Get initial status
-    await updateStatus();
-
-    // Get project path
-    await updateProjectPath();
+    // Run all backend initialization in parallel — none of these should block the UI
+    checkDocker();
+    updateStatus();
+    updateProjectPath();
+    initializeWizard();
+    renderServicesTab();
 
     // Start polling for status updates
     statusInterval = setInterval(updateStatus, 5000);
 
-    // Subscribe to log events
+    // Subscribe to log events (these don't depend on initialization)
     window.runtime.EventsOn('log', handleLogEvent);
     window.runtime.EventsOn('pullProgress', handlePullProgress);
     window.runtime.EventsOn('pullComplete', handlePullComplete);
@@ -69,6 +77,11 @@ function setupTabSwitching() {
             if (tabName === 'services') {
                 await renderServicesTab();
             }
+
+            // Load env config if clicked
+            if (tabName === 'config') {
+                await loadEnvConfig();
+            }
         });
     });
 }
@@ -79,11 +92,16 @@ function setupTabSwitching() {
 
 async function checkDocker() {
     try {
-        const [ok, message] = await window.go.main.App.CheckDocker();
+        // Add a 3-second timeout for Docker check
+        const checkPromise = window.go.main.App.CheckDocker();
+        const timeoutPromise = new Promise((_, reject) =>
+            setTimeout(() => reject(new Error('Docker check timed out')), 3000)
+        );
+        const [ok, message] = await Promise.race([checkPromise, timeoutPromise]);
         updateDockerStatus(ok, message);
         return ok;
     } catch (err) {
-        updateDockerStatus(false, err.message);
+        updateDockerStatus(false, err.message || err);
         return false;
     }
 }
@@ -160,24 +178,22 @@ function clearControlButtonLoading(activeIcon, originalIconHtml) {
 
 async function startServices() {
     const env = document.getElementById('envMode').value;
-    const preset = document.getElementById('servicePreset').value;
     const btn = document.getElementById('startBtn');
     const icon = btn.querySelector('svg');
     const originalIcon = icon.innerHTML;
     setControlButtonsLoading(icon);
 
     try {
-        const services = getSelectedServices();
-        if (services === null) {
-            await window.go.main.App.StartServices(env);
+        if (serviceTabSelection.length > 0) {
+            await window.go.main.App.StartServiceGroups(env, serviceTabSelection);
+            addLog('launcher', `Services started in ${env} mode (${serviceTabSelection.length} groups selected)`);
         } else {
-            await window.go.main.App.StartServicesCustom(env, services);
+            await window.go.main.App.StartServices(env);
+            addLog('launcher', `Services started in ${env} mode`);
         }
         await updateStatus();
-        const label = services === null ? 'all' : `${services.length}`;
-        addLog('launcher', `Services started in ${env} mode (${label} services)`);
     } catch (err) {
-        addLog('launcher', `Error: ${err.message}`, 'error');
+        addLog('launcher', `Error: ${err.message || err}`, 'error');
     } finally {
         clearControlButtonLoading(icon, originalIcon);
         await updateStatus();
@@ -195,7 +211,7 @@ async function stopServices() {
         await updateStatus();
         addLog('launcher', 'Services stopped');
     } catch (err) {
-        addLog('launcher', `Error: ${err.message}`, 'error');
+        addLog('launcher', `Error: ${err.message || err}`, 'error');
     } finally {
         clearControlButtonLoading(icon, originalIcon);
         await updateStatus();
@@ -209,11 +225,16 @@ async function restartServices() {
     setControlButtonsLoading(icon);
 
     try {
-        await window.go.main.App.RestartServices();
+        if (serviceTabSelection.length > 0) {
+            await window.go.main.App.RestartServiceGroups(serviceTabSelection);
+            addLog('launcher', `Services restarted (${serviceTabSelection.length} groups selected)`);
+        } else {
+            await window.go.main.App.RestartServices();
+            addLog('launcher', 'Services restarted');
+        }
         await updateStatus();
-        addLog('launcher', 'Services restarted');
     } catch (err) {
-        addLog('launcher', `Error: ${err.message}`, 'error');
+        addLog('launcher', `Error: ${err.message || err}`, 'error');
     } finally {
         clearControlButtonLoading(icon, originalIcon);
         await updateStatus();
@@ -227,16 +248,15 @@ async function pullImages() {
     icon.style.animation = 'spin 0.8s linear infinite';
 
     try {
-        const config = await window.go.main.App.GetLauncherConfig();
-        if (!config.selectedGroups || config.selectedGroups.length === 0) {
-            addLog('launcher', 'No services selected. Please configure services in the Services tab.');
+        if (serviceTabSelection.length === 0) {
+            addLog('launcher', 'No services selected. Please select services in the Services tab.');
             return;
         }
 
-        addLog('launcher', `Pulling services: ${config.selectedGroups.join(', ')}...`);
-        window.go.main.App.PullServiceGroups(config.selectedGroups);
+        addLog('launcher', `Pulling services: ${serviceTabSelection.join(', ')}...`);
+        window.go.main.App.PullServiceGroups(serviceTabSelection);
     } catch (err) {
-        addLog('launcher', `Error: ${err.message}`, 'error');
+        addLog('launcher', `Error: ${err.message || err}`, 'error');
     } finally {
         btn.disabled = false;
         icon.style.animation = '';
@@ -271,7 +291,7 @@ async function selectProjectFolder() {
             addLog('launcher', `Project path set to: ${path}`);
         }
     } catch (err) {
-        addLog('launcher', `Error: ${err.message}`, 'error');
+        addLog('launcher', `Error: ${err.message || err}`, 'error');
     }
 }
 
@@ -287,7 +307,7 @@ async function cleanDocker() {
         await window.go.main.App.CleanDocker();
         addLog('launcher', 'Docker cleanup completed');
     } catch (err) {
-        addLog('launcher', `Error: ${err.message}`, 'error');
+        addLog('launcher', `Error: ${err.message || err}`, 'error');
     } finally {
         btn.disabled = false;
         icon.innerHTML = originalIcon;
@@ -301,21 +321,25 @@ async function cleanDocker() {
 
 function handleLogEvent(entry) {
     addLog(entry.service, entry.message);
+
+    // Also pipe logs into the wizard terminal while it's visible
+    const wizard = document.getElementById('firstRunWizard');
+    const logsContainer = document.getElementById('wizardLogsContainer');
+    if (wizard && !wizard.classList.contains('hidden') && logsContainer) {
+        const line = document.createElement('div');
+        line.className = 'log-entry';
+        line.style.color = entry.service === 'launcher' ? 'var(--text-muted)' : 'var(--text-primary)';
+        line.textContent = `[${entry.service}] ${entry.message}`;
+        logsContainer.appendChild(line);
+        logsContainer.scrollTop = logsContainer.scrollHeight;
+    }
 }
 
-function handlePullProgress(event) {
-    const data = event.detail;
-
-    // Update wizard progress if visible (only show progress for wizard, not for re-pulls)
+function handlePullProgress(data) {
+    // Update wizard progress bar if visible (only show progress for wizard, not for re-pulls)
     if (!document.getElementById('firstRunWizard').classList.contains('hidden')) {
         document.getElementById('pullOverallBar').style.width = data.overallPercent.toFixed(1) + '%';
         document.getElementById('pullImageCounter').textContent = (data.imageIndex + 1) + ' / ' + data.totalImages;
-
-        const imageName = data.currentImage.split('/').pop();
-        document.getElementById('pullCurrentImage').textContent = imageName;
-
-        document.getElementById('pullImageBar').style.width = data.imagePercent.toFixed(1) + '%';
-        document.getElementById('pullStatusText').textContent = data.status || 'Downloading...';
     }
 }
 
@@ -372,7 +396,7 @@ async function changeLogService() {
         await window.go.main.App.ViewLogs(service);
         addLog('launcher', `Now viewing logs for: ${service}`);
     } catch (err) {
-        addLog('launcher', `Error: ${err.message}`, 'error');
+        addLog('launcher', `Error: ${err.message || err}`, 'error');
     }
 }
 
@@ -393,49 +417,53 @@ function escapeHtml(text) {
 let wizardServiceGroups = [];
 let wizardSelectedGroups = [];
 let failedPullGroups = [];
+let wizardImageStatus = {};
 
 async function initializeWizard() {
     try {
-        const config = await window.go.main.App.GetLauncherConfig();
+        const [config, groups, imageStatus] = await Promise.all([
+            window.go.main.App.GetLauncherConfig(),
+            window.go.main.App.GetServiceGroups(),
+            window.go.main.App.CheckImagePresence(),
+        ]);
 
-        if (!config.firstRunDone) {
-            // Get service groups and check image presence
-            wizardServiceGroups = await window.go.main.App.GetServiceGroups();
-            const imageStatus = await window.go.main.App.CheckImagePresence();
+        wizardServiceGroups = groups;
+        wizardImageStatus = imageStatus || {};
 
-            // Check if default groups are already pulled
-            const defaultGroups = wizardServiceGroups
-                .filter(g => g.defaultOn || g.required)
-                .map(g => g.id);
+        // Pre-select saved groups if available, otherwise default groups
+        if (config.selectedGroups && config.selectedGroups.length > 0) {
+            wizardSelectedGroups = config.selectedGroups.slice();
+        } else {
+            wizardSelectedGroups = groups.filter(g => g.defaultOn || g.required).map(g => g.id);
+        }
 
-            const allDefaultsPresent = defaultGroups.every(groupId => imageStatus[groupId]);
-
-            if (allDefaultsPresent) {
-                // All default images already present - skip wizard and mark as done
-                const newConfig = {
-                    firstRunDone: true,
-                    selectedGroups: defaultGroups,
-                    configVersion: 1
-                };
-                await window.go.main.App.SaveLauncherConfig(newConfig);
-            } else {
-                // Some images missing - show wizard
-                wizardSelectedGroups = defaultGroups;
-                showWizard();
+        // Always force-include required groups that aren't downloaded yet — they must be pulled
+        for (const g of groups) {
+            if (g.required && !wizardImageStatus[g.id] && !wizardSelectedGroups.includes(g.id)) {
+                wizardSelectedGroups.push(g.id);
             }
         }
+
+        showWizard();
     } catch (err) {
         console.error('Failed to initialize wizard:', err);
     }
 }
 
 function showWizard() {
-    const wizard = document.getElementById('firstRunWizard');
-    wizard.classList.remove('hidden');
+    document.getElementById('firstRunWizard').classList.remove('hidden');
+    document.getElementById('pullProgressContainer').classList.add('hidden');
+    document.getElementById('pullSetupBtn').style.display = '';
+    document.getElementById('skipPullBtn').style.display = 'none';
+    document.getElementById('pullErrorBanner').classList.add('hidden');
 
-    // Render service cards for step 2
     renderWizardServiceCards();
     updateEstimatedSize();
+}
+
+function dismissWizard() {
+    document.getElementById('firstRunWizard').classList.add('hidden');
+    wizardSelectedGroups = [];
 }
 
 function renderWizardServiceCards() {
@@ -445,8 +473,9 @@ function renderWizardServiceCards() {
     }
 
     wizardServiceGroups.forEach(group => {
+        const isPresent = !!wizardImageStatus[group.id];
+        const isDisabled = group.required && !isPresent;
         const isSelected = wizardSelectedGroups.includes(group.id);
-        const isDisabled = group.required;
 
         const card = document.createElement('div');
         card.className = `wizard-card ${isDisabled ? 'disabled' : ''}`;
@@ -460,9 +489,22 @@ function renderWizardServiceCards() {
         const info = document.createElement('div');
         info.className = 'wizard-card-info';
 
+        const nameRow = document.createElement('div');
+        nameRow.style.cssText = 'display:flex;align-items:center;gap:8px;';
+
         const name = document.createElement('p');
         name.className = 'wizard-card-name';
+        name.style.margin = '0';
         name.textContent = group.name;
+
+        nameRow.appendChild(name);
+
+        if (isPresent) {
+            const badge = document.createElement('span');
+            badge.textContent = 'Downloaded';
+            badge.style.cssText = 'font-size:10px;font-weight:600;color:var(--accent-success);background:rgba(34,197,94,0.12);border:1px solid rgba(34,197,94,0.3);border-radius:4px;padding:1px 6px;white-space:nowrap;';
+            nameRow.appendChild(badge);
+        }
 
         const desc = document.createElement('p');
         desc.className = 'wizard-card-desc';
@@ -470,9 +512,10 @@ function renderWizardServiceCards() {
 
         const size = document.createElement('p');
         size.className = 'wizard-card-size';
-        size.textContent = `~${(group.sizeMb / 1000).toFixed(1)} GB`;
+        size.textContent = isPresent ? 'Already on disk' : `~${(group.sizeMb / 1000).toFixed(1)} GB`;
+        if (isPresent) size.style.color = 'var(--accent-success)';
 
-        info.appendChild(name);
+        info.appendChild(nameRow);
         info.appendChild(desc);
         info.appendChild(size);
 
@@ -494,47 +537,37 @@ function toggleWizardGroup(groupId) {
 }
 
 function updateEstimatedSize() {
+    // Determine which selected groups still need downloading
+    const needDownload = wizardSelectedGroups.filter(id => !wizardImageStatus[id]);
     let total = 0;
     wizardServiceGroups.forEach(group => {
-        if (wizardSelectedGroups.includes(group.id)) {
+        if (needDownload.includes(group.id)) {
             total += group.sizeMb;
         }
     });
+    const allReady = needDownload.length === 0 && wizardSelectedGroups.length > 0;
+
     const gb = (total / 1000).toFixed(1);
     document.getElementById('estimatedSize').textContent = gb;
+    document.getElementById('downloadSizeInfo').style.display = allReady ? 'none' : '';
+    document.getElementById('readyNotice').style.display = allReady ? '' : 'none';
+
+    // Swap action button
+    document.getElementById('pullSetupBtn').style.display = allReady ? 'none' : '';
+    document.getElementById('skipPullBtn').style.display = allReady ? 'inline-flex' : 'none';
 }
 
-function nextWizardStep() {
-    const steps = document.querySelectorAll('.wizard-step');
-    const activeStep = document.querySelector('.wizard-step.active');
-    const activeIndex = Array.from(steps).indexOf(activeStep);
-
-    if (activeIndex < steps.length - 1) {
-        activeStep.classList.remove('active');
-        steps[activeIndex + 1].classList.add('active');
-    }
-}
-
-function previousWizardStep() {
-    const steps = document.querySelectorAll('.wizard-step');
-    const activeStep = document.querySelector('.wizard-step.active');
-    const activeIndex = Array.from(steps).indexOf(activeStep);
-
-    if (activeIndex > 0) {
-        activeStep.classList.remove('active');
-        steps[activeIndex - 1].classList.add('active');
-    }
-}
 
 async function startWizardPull() {
     // Hide actions, show progress
     document.getElementById('pullSetupBtn').style.display = 'none';
+    document.getElementById('skipPullBtn').style.display = 'none';
     document.getElementById('pullProgressContainer').classList.remove('hidden');
     document.getElementById('pullErrorBanner').classList.add('hidden');
 
     failedPullGroups = [];
 
-    // Clear progress logs
+    // Clear terminal logs
     const logsContainer = document.getElementById('wizardLogsContainer');
     while (logsContainer.firstChild) {
         logsContainer.removeChild(logsContainer.firstChild);
@@ -544,8 +577,12 @@ async function startWizardPull() {
     window.go.main.App.PullServiceGroups(wizardSelectedGroups);
 }
 
-function handlePullComplete(event) {
-    const data = event.detail;
+async function skipWizardPull() {
+    // User already has images downloaded — skip straight to saving config
+    await saveWizardConfig();
+}
+
+function handlePullComplete(data) {
 
     // Clear pulling state
     window.isPulling = false;
@@ -588,8 +625,9 @@ function handlePullComplete(event) {
 
             errorBanner.classList.remove('hidden');
 
-            // Reset button
+            // Reset buttons
             document.getElementById('pullSetupBtn').style.display = 'block';
+            document.getElementById('skipPullBtn').style.display = 'block';
             document.getElementById('pullProgressContainer').classList.add('hidden');
         } else {
             // Service tab pull failed - re-enable button with error state
@@ -627,8 +665,12 @@ async function saveWizardConfig() {
         const wizard = document.getElementById('firstRunWizard');
         wizard.classList.add('hidden');
 
-        // Update status to show selected services
+        // Clear wizard selections so future pulls are not confused as wizard pulls
+        wizardSelectedGroups = [];
+
+        // Refresh status panel and services tab
         await updateStatus();
+        await renderServicesTab();
     } catch (err) {
         console.error('Failed to save config:', err);
     }
@@ -640,19 +682,40 @@ async function saveWizardConfig() {
 
 async function renderServicesTab() {
     try {
-        const [allGroups, imageStatus, config] = await Promise.all([
+        const container = document.getElementById('servicesTabContent');
+
+        // Fetch data with timeout (5 seconds)
+        const fetchPromise = Promise.all([
             window.go.main.App.GetServiceGroups(),
             window.go.main.App.CheckImagePresence(),
             window.go.main.App.GetLauncherConfig()
         ]);
 
-        const container = document.getElementById('servicesTabContent');
+        const timeoutPromise = new Promise((_, reject) =>
+            setTimeout(() => reject(new Error('Backend request timeout')), 5000)
+        );
+
+        const [allGroups, imageStatus, config] = await Promise.race([fetchPromise, timeoutPromise]);
+
+        // Sync in-memory selection on first load:
+        // prefer saved config, otherwise default to all pulled groups
+        if (serviceTabSelection.length === 0) {
+            if (config.selectedGroups && config.selectedGroups.length > 0) {
+                serviceTabSelection = config.selectedGroups.slice();
+            } else {
+                serviceTabSelection = allGroups.filter(g => imageStatus[g.id]).map(g => g.id);
+            }
+        }
+
+        // Clear container
         while (container.firstChild) {
             container.removeChild(container.firstChild);
         }
 
         const grid = document.createElement('div');
         grid.style.cssText = 'display: flex; flex-direction: column; gap: 12px;';
+
+        const badgeBase = 'width: 24px; height: 24px; color: white; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-weight: bold; font-size: 14px;';
 
         allGroups.forEach(group => {
             const isPulled = imageStatus[group.id];
@@ -661,24 +724,38 @@ async function renderServicesTab() {
 
             const card = document.createElement('div');
             card.setAttribute('data-group', group.id);
-            card.style.cssText = 'display: flex; align-items: center; gap: 12px; padding: 12px; background: var(--bg-tertiary); border: 1px solid var(--border-color); border-radius: var(--radius-md);';
+            card.style.cssText = [
+                'display: flex', 'align-items: center', 'gap: 12px', 'padding: 12px',
+                'background: var(--bg-tertiary)',
+                'border: 1px solid ' + (isSelected ? 'var(--accent-primary)' : 'var(--border-color)'),
+                'border-radius: var(--radius-md)',
+                'cursor: ' + (group.required ? 'default' : 'pointer'),
+                'transition: border-color 0.15s ease'
+            ].join('; ') + ';';
 
-            // Status badge
+            if (!group.required) {
+                card.addEventListener('click', (e) => {
+                    if (e.target.tagName === 'BUTTON' || e.target.closest('button')) return;
+                    toggleServiceSelection(group.id);
+                });
+            }
+
+            // Status badge (pulled / not pulled / pulling indicator)
             const badge = document.createElement('div');
             if (isPulling) {
                 badge.textContent = '⟳';
                 badge.style.cssText = 'width: 24px; height: 24px; background: var(--accent-warning); color: white; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-weight: bold; font-size: 14px; animation: spin 0.8s linear infinite;';
             } else if (isPulled) {
                 badge.textContent = '✓';
-                badge.style.cssText = 'width: 24px; height: 24px; background: var(--accent-success); color: white; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-weight: bold; font-size: 14px;';
+                badge.style.cssText = badgeBase + ' background: var(--accent-success);';
             } else {
                 badge.textContent = '✗';
-                badge.style.cssText = 'width: 24px; height: 24px; background: var(--accent-danger); color: white; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-weight: bold; font-size: 14px;';
+                badge.style.cssText = badgeBase + ' background: var(--accent-danger);';
             }
 
             // Info
             const info = document.createElement('div');
-            info.style.cssText = 'flex: 1;';
+            info.style.cssText = 'flex: 1; min-width: 0;';
 
             const name = document.createElement('p');
             name.style.cssText = 'margin: 0; font-size: 14px; font-weight: 500; color: var(--text-primary);';
@@ -702,12 +779,36 @@ async function renderServicesTab() {
             } else {
                 button.textContent = isPulled ? 'Re-pull' : 'Pull';
                 button.disabled = false;
-                button.onclick = () => pullServiceGroup(group.id);
+                button.onclick = (e) => { e.stopPropagation(); pullServiceGroup(group.id); };
             }
 
             card.appendChild(badge);
             card.appendChild(info);
             card.appendChild(button);
+
+            if (isPulled && !isPulling) {
+                const deleteBtn = document.createElement('button');
+                deleteBtn.className = 'btn btn-sm btn-danger';
+                deleteBtn.title = 'Delete image';
+                deleteBtn.style.flexShrink = '0';
+                const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+                svg.setAttribute('viewBox', '0 0 24 24');
+                svg.setAttribute('fill', 'none');
+                svg.setAttribute('stroke', 'currentColor');
+                svg.setAttribute('stroke-width', '2');
+                svg.setAttribute('width', '14');
+                svg.setAttribute('height', '14');
+                const pl = document.createElementNS('http://www.w3.org/2000/svg', 'polyline');
+                pl.setAttribute('points', '3,6 5,6 21,6');
+                const p1 = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+                p1.setAttribute('d', 'M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2');
+                svg.appendChild(pl);
+                svg.appendChild(p1);
+                deleteBtn.appendChild(svg);
+                deleteBtn.onclick = (e) => { e.stopPropagation(); deleteServiceGroupImages(group.id); };
+                card.appendChild(deleteBtn);
+            }
+
             grid.appendChild(card);
         });
 
@@ -715,7 +816,39 @@ async function renderServicesTab() {
     } catch (err) {
         console.error('Failed to render Services tab:', err);
         const container = document.getElementById('servicesTabContent');
-        container.textContent = 'Error loading services: ' + err.message;
+        container.textContent = 'Error loading services: ' + err.message || err;
+    }
+}
+
+async function toggleServiceSelection(groupId) {
+    const idx = serviceTabSelection.indexOf(groupId);
+    if (idx > -1) {
+        serviceTabSelection.splice(idx, 1);
+    } else {
+        serviceTabSelection.push(groupId);
+    }
+
+    // Persist to config
+    try {
+        const config = await window.go.main.App.GetLauncherConfig();
+        config.selectedGroups = serviceTabSelection.slice();
+        await window.go.main.App.SaveLauncherConfig(config);
+    } catch (err) {
+        console.error('Failed to save selection:', err);
+    }
+
+    renderServicesTab();
+}
+
+async function deleteServiceGroupImages(groupId) {
+    try {
+        addLog('launcher', 'Deleting images for ' + groupId + '...');
+        await window.go.main.App.DeleteServiceGroupImages(groupId);
+        addLog('launcher', 'Images deleted for ' + groupId);
+    } catch (err) {
+        addLog('launcher', 'Error deleting images: ' + err.message || err, 'error');
+    } finally {
+        renderServicesTab();
     }
 }
 
@@ -731,8 +864,44 @@ async function pullServiceGroup(groupId) {
     window.currentPullingGroup = groupId;
     window.isPulling = true;
 
+    // Re-render so spinner and "Pulling..." button appear immediately
+    await renderServicesTab();
+
     // Start pull
     window.go.main.App.PullServiceGroups([groupId]);
+}
+
+// ============================================================
+// Config Tab
+// ============================================================
+
+function onEnvModeChange() {
+    const configTab = document.querySelector('.tab-content[data-tab="config"]');
+    if (configTab && configTab.classList.contains('active')) {
+        loadEnvConfig();
+    }
+}
+
+async function loadEnvConfig() {
+    const mode = document.getElementById('envMode').value;
+    const editor = document.getElementById('envEditor');
+    try {
+        const content = await window.go.main.App.GetEnvContent(mode);
+        editor.value = content;
+    } catch (err) {
+        addLog('launcher', `Error loading .env: ${err.message || err}`, 'error');
+    }
+}
+
+async function saveEnvConfig() {
+    const mode = document.getElementById('envMode').value;
+    const content = document.getElementById('envEditor').value;
+    try {
+        await window.go.main.App.SaveEnvContent(mode, content);
+        addLog('launcher', `.env${mode === 'prod' ? '.production' : ''} saved successfully`);
+    } catch (err) {
+        addLog('launcher', `Error saving .env: ${err.message || err}`, 'error');
+    }
 }
 
 // Cleanup on unload

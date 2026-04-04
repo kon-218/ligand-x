@@ -33,7 +33,19 @@ export interface WorkflowConfig {
   accentColor: 'cyan' | 'green' | 'purple' | 'orange' | 'pink'
 }
 
-export type AccentColor = 'blue' | 'green' | 'purple' | 'orange' | 'pink' | 'teal' | 'indigo' | 'cyan' | 'amber' | 'fuchsia' | 'rose'
+export type AccentColor =
+  | 'blue'
+  | 'green'
+  | 'purple'
+  | 'orange'
+  | 'pink'
+  | 'magenta'
+  | 'teal'
+  | 'indigo'
+  | 'cyan'
+  | 'amber'
+  | 'fuchsia'
+  | 'rose'
 
 export const accentColorClasses: Record<AccentColor, {
   bg: string
@@ -88,6 +100,16 @@ export const accentColorClasses: Record<AccentColor, {
     border: 'border-pink-500',
     borderLight: 'border-pink-700/40',
     gradient: 'from-pink-500/20 to-rose-500/20',
+  },
+  /** App base preset "Magenta" — matches `baseColorConfigs.magenta` / New Experiment button, not Tailwind pink-500 */
+  magenta: {
+    bg: 'bg-[#ea0674]',
+    bgHover: 'hover:bg-[#c50562]',
+    bgLight: 'bg-[#ea0674]/20',
+    text: 'text-[#fb7eb5]',
+    border: 'border-[#ea0674]',
+    borderLight: 'border-[#ea0674]/40',
+    gradient: 'from-[#ea0674]/20 to-[#9d174d]/20',
   },
   teal: {
     bg: 'bg-teal-500',

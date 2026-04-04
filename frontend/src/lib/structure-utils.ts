@@ -6,6 +6,18 @@ import type { VisualizationStyle, MolecularStructure, Ligand } from '@/types/mol
 import { api, apiClient } from './api-client'
 
 /**
+ * Attach library molecule id to structure metadata so viewer tabs match library "View 3D" / QC / editor.
+ */
+export function withLibraryMoleculeTabMetadata(structure: MolecularStructure): MolecularStructure {
+  const mid = structure.library_save?.molecule_id
+  if (mid == null) return structure
+  return {
+    ...structure,
+    metadata: { ...structure.metadata, molecule_id: mid },
+  }
+}
+
+/**
  * Extract atom count from XYZ format string
  */
 export function getAtomCountFromXyz(xyzData: string): number | null {

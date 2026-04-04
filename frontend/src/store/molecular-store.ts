@@ -19,6 +19,8 @@ interface StructureTab {
   components?: MolecularStructure['components']
   ligands?: MolecularStructure['ligands']
   librarySave?: MolecularStructure['library_save']
+  /** Canonical SMILES for deduping with molecule library */
+  canonicalSmiles?: string
   name: string
   createdAt: number
   visualizationState: VisualizationState // Each tab maintains its own visualization settings
@@ -63,6 +65,7 @@ function storeStructureData(structure: MolecularStructure, name?: string): Struc
     components: structure.components,
     ligands: structure.ligands,
     librarySave: structure.library_save,
+    canonicalSmiles: structure.canonical_smiles,
     name: name || structure.structure_id || 'Unnamed',
     createdAt: Date.now(),
     visualizationState: {
@@ -88,6 +91,7 @@ export function getStructureFromTab(tab: StructureTab): MolecularStructure {
     sdf_data: tab.sdfBlobId ? BlobRegistry.get(tab.sdfBlobId) || undefined : undefined,
     xyz_data: tab.xyzBlobId ? BlobRegistry.get(tab.xyzBlobId) || undefined : undefined,
     smiles: tab.smiles,
+    canonical_smiles: tab.canonicalSmiles,
     format: tab.format,
     source: tab.source,
     metadata: tab.metadata,

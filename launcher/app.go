@@ -86,7 +86,7 @@ func NewApp() *App {
 
 func (a *App) startup(ctx context.Context) {
 	a.ctx = ctx
-	a.initDockerClient()
+	// Don't initialize Docker client here - do it lazily in CheckDocker() to avoid blocking on startup
 	a.detectProjectPath()
 }
 
@@ -98,10 +98,19 @@ func (a *App) shutdown(ctx context.Context) {
 }
 
 func (a *App) initDockerClient() {
-	cli, err := client.NewClientWithOpts(client.FromEnv, client.WithAPIVersionNegotiation())
+	// Use timeout to prevent hanging on Docker daemon connection
+	opts := []client.Opt{
+		client.FromEnv,
+		client.WithAPIVersionNegotiation(),
+		client.WithTimeout(3 * time.Second),
+	}
+
+	cli, err := client.NewClientWithOpts(opts...)
 	if err == nil {
 		a.dockerClient = cli
 	}
+	// If there's an error (Docker not running), dockerClient stays nil
+	// This is safe - CheckDocker() will handle it
 }
 
 func (a *App) detectProjectPath() {
@@ -180,7 +189,7 @@ func (a *App) GetSystemStatus() SystemStatus {
 		return status
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
 	containers, err := a.dockerClient.ContainerList(ctx, types.ContainerListOptions{All: true})
@@ -1012,7 +1021,7 @@ func (a *App) CheckImagePresence() map[string]bool {
 		return result
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
 	images, err := a.dockerClient.ImageList(ctx, types.ImageListOptions{})

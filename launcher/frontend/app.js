@@ -11,32 +11,34 @@ let serviceTabSelection = [];
 
 const CORE_SERVICES = ['postgres', 'redis', 'rabbitmq', 'gateway', 'frontend', 'structure'];
 
-// Initialize on load
-document.addEventListener('DOMContentLoaded', init);
+// Initialize on load — wait for Wails runtime to be injected before calling backend
+document.addEventListener('DOMContentLoaded', () => {
+    // Poll until window.go and window.runtime are available (Wails injects them async)
+    const waitForWails = setInterval(() => {
+        if (window.go && window.runtime) {
+            clearInterval(waitForWails);
+            init();
+        }
+    }, 50);
+    // Timeout after 10 seconds to avoid hanging forever
+    setTimeout(() => clearInterval(waitForWails), 10000);
+});
 
 async function init() {
-    // Setup tab switching
+    // Setup tab switching first — sync, no backend needed
     setupTabSwitching();
 
-    // Check for first-run wizard
-    await initializeWizard();
-
-    // Check Docker status
-    await checkDocker();
-
-    // Get initial status
-    await updateStatus();
-
-    // Get project path
-    await updateProjectPath();
+    // Run all backend initialization in parallel — none of these should block the UI
+    checkDocker();
+    updateStatus();
+    updateProjectPath();
+    initializeWizard();
+    renderServicesTab();
 
     // Start polling for status updates
     statusInterval = setInterval(updateStatus, 5000);
 
-    // Render the default active tab (services) on load
-    await renderServicesTab();
-
-    // Subscribe to log events
+    // Subscribe to log events (these don't depend on initialization)
     window.runtime.EventsOn('log', handleLogEvent);
     window.runtime.EventsOn('pullProgress', handlePullProgress);
     window.runtime.EventsOn('pullComplete', handlePullComplete);
@@ -90,7 +92,12 @@ function setupTabSwitching() {
 
 async function checkDocker() {
     try {
-        const [ok, message] = await window.go.main.App.CheckDocker();
+        // Add a 3-second timeout for Docker check
+        const checkPromise = window.go.main.App.CheckDocker();
+        const timeoutPromise = new Promise((_, reject) =>
+            setTimeout(() => reject(new Error('Docker check timed out')), 3000)
+        );
+        const [ok, message] = await Promise.race([checkPromise, timeoutPromise]);
         updateDockerStatus(ok, message);
         return ok;
     } catch (err) {
@@ -688,6 +695,8 @@ async function renderServicesTab() {
         const grid = document.createElement('div');
         grid.style.cssText = 'display: flex; flex-direction: column; gap: 12px;';
 
+        const badgeBase = 'width: 24px; height: 24px; color: white; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-weight: bold; font-size: 14px;';
+
         allGroups.forEach(group => {
             const isPulled = imageStatus[group.id];
             const isSelected = config.selectedGroups && config.selectedGroups.includes(group.id);
@@ -750,12 +759,36 @@ async function renderServicesTab() {
             } else {
                 button.textContent = isPulled ? 'Re-pull' : 'Pull';
                 button.disabled = false;
-                button.onclick = () => pullServiceGroup(group.id);
+                button.onclick = (e) => { e.stopPropagation(); pullServiceGroup(group.id); };
             }
 
             card.appendChild(badge);
             card.appendChild(info);
             card.appendChild(button);
+
+            if (isPulled && !isPulling) {
+                const deleteBtn = document.createElement('button');
+                deleteBtn.className = 'btn btn-sm btn-danger';
+                deleteBtn.title = 'Delete image';
+                deleteBtn.style.flexShrink = '0';
+                const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+                svg.setAttribute('viewBox', '0 0 24 24');
+                svg.setAttribute('fill', 'none');
+                svg.setAttribute('stroke', 'currentColor');
+                svg.setAttribute('stroke-width', '2');
+                svg.setAttribute('width', '14');
+                svg.setAttribute('height', '14');
+                const pl = document.createElementNS('http://www.w3.org/2000/svg', 'polyline');
+                pl.setAttribute('points', '3,6 5,6 21,6');
+                const p1 = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+                p1.setAttribute('d', 'M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2');
+                svg.appendChild(pl);
+                svg.appendChild(p1);
+                deleteBtn.appendChild(svg);
+                deleteBtn.onclick = (e) => { e.stopPropagation(); deleteServiceGroupImages(group.id); };
+                card.appendChild(deleteBtn);
+            }
+
             grid.appendChild(card);
         });
 
@@ -800,7 +833,6 @@ async function deleteServiceGroupImages(groupId) {
 }
 
 async function pullServiceGroup(groupId) {
-<<<<<<< HEAD
     // Find and disable the button for this group
     const button = document.querySelector(`[data-group="${groupId}"] button`);
     if (button) {
@@ -808,8 +840,6 @@ async function pullServiceGroup(groupId) {
         button.textContent = 'Pulling...';
     }
 
-=======
->>>>>>> 00a3b6a (feat: launcher Config tab, services tab fixes, and reliability improvements)
     // Store which group we're pulling for completion handling
     window.currentPullingGroup = groupId;
     window.isPulling = true;

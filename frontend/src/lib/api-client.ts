@@ -1,11 +1,41 @@
 import axios from 'axios'
-import type { MolecularStructure, ADMETRequest, ADMETResult, DockingConfig, DockingResult } from '@/types/molecular'
+import type { MolecularStructure, ADMETRequest, ADMETResult, ADMETBatchResult, DockingConfig as GridDockingConfig } from '@/types/molecular'
 import type { MDResult, MDOptimizationConfig, TrajectoryFrame, TrajectoryInfo, MDAnalyticsData } from '@/types/md-types'
 import type { StructureOption } from '@/components/Tools/shared/types'
 import type { Boltz2PredictionParams, Boltz2AlignmentOptions, Boltz2Result, Boltz2MSAOptions } from '@/store/boltz2-store'
 import type { UnifiedJob, ServiceType } from '@/types/unified-job-types'
 import { normalizeToUnifiedJob } from '@/types/unified-job-types'
 import type { DockingResults } from '@/types/docking'
+
+interface DockingSubmissionConfig {
+  protein_pdb: string
+  ligand_data: string
+  ligand_format: 'sdf' | 'pdb' | 'mol'
+  ligand_resname?: string
+  grid_padding: number
+  grid_box?: any
+  docking_params?: any
+  use_api?: boolean
+  protein_id?: string
+  ligand_id?: string
+  [key: string]: any
+}
+
+interface DockingJobResult {
+  poses: Array<{
+    pose_id: string
+    pdb_data: string
+    affinity: number
+    rmsd_lb: number
+    rmsd_ub: number
+  }>
+  log: string
+  poses_sdf?: string
+  best_affinity: number
+  binding_strength?: string
+  analysis?: any
+  job_id: string
+}
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'
 
@@ -38,6 +68,12 @@ export const injectNotificationHandler = (handler: NotifyFn) => {
 apiClient.interceptors.response.use(
   (response) => response,
   (error) => {
+    // Ignore intentional request cancellation (e.g., rapid job selection changes).
+    // These are client-side aborts, not backend outages.
+    if (error?.code === 'ERR_CANCELED' || error?.message === 'canceled') {
+      return Promise.reject(error)
+    }
+
     let message = 'An unexpected error occurred'
 
     if (error.response) {
@@ -240,16 +276,15 @@ export const api = {
     return response.data
   },
 
-  getDockingJob: async (jobId: string) => {
-    // Use unified PostgreSQL endpoint instead of service-specific endpoint
-    return await api.getJobDetails(jobId)
+  getDockingJob: async (jobId: string, options?: { signal?: AbortSignal }) => {
+    return await api.getJobDetails(jobId, options)
   },
 
   // Docking with SSE streaming via Celery job submission
   dockProteinLigand: async (
-    config: DockingConfig,
+    config: DockingSubmissionConfig,
     onProgress?: (progress: number, status: string, jobId?: string) => void
-  ): Promise<DockingResult> => {
+  ): Promise<DockingJobResult> => {
     return new Promise(async (resolve, reject) => {
       try {
         // First, prepare the docking (convert PDB to PDBQT and calculate grid box)
@@ -257,7 +292,7 @@ export const api = {
         const prepareResponse = await api.prepareDocking(
           config.protein_pdb,
           config.ligand_data,
-          config.ligand_format,
+          config.ligand_format as 'sdf' | 'pdb',
           config.ligand_resname,
           config.grid_padding,
           config.grid_box  // Pass pre-calculated grid box to avoid recalculation
@@ -368,9 +403,8 @@ export const api = {
     return response.data
   },
 
-  getMDJob: async (jobId: string) => {
-    // Use unified PostgreSQL endpoint instead of service-specific endpoint
-    return await api.getJobDetails(jobId)
+  getMDJob: async (jobId: string, options?: { signal?: AbortSignal }) => {
+    return await api.getJobDetails(jobId, options)
   },
 
   optimizeMD: async (
@@ -432,9 +466,10 @@ export const api = {
 
       // Add force field and system configuration
       backendConfig.charge_method = config.parameters.charge_method || 'am1bcc'
-      backendConfig.forcefield_method = config.parameters.forcefield_method || 'openff-2.2.0'
+      backendConfig.forcefield_method = config.parameters.forcefield_method || 'openff-2.2.1'
       backendConfig.box_shape = config.parameters.box_shape || 'dodecahedron'
       backendConfig.padding_nm = config.parameters.padding_nm || 1.0
+      backendConfig.heating_steps_per_stage = config.parameters.heating_steps_per_stage || 2500
     }
 
     if (config.preview_before_equilibration) {
@@ -640,9 +675,8 @@ export const api = {
     return response.data
   },
 
-  getBoltz2Job: async (jobId: string) => {
-    // Use unified PostgreSQL endpoint instead of service-specific endpoint
-    return await api.getJobDetails(jobId)
+  getBoltz2Job: async (jobId: string, options?: { signal?: AbortSignal }) => {
+    return await api.getJobDetails(jobId, options)
   },
 
   getBoltz2PosePAE: async (jobId: string, poseIndex: number) => {
@@ -868,9 +902,8 @@ export const api = {
     return response.data
   },
 
-  getABFEStatus: async (jobId: string) => {
-    // Use unified PostgreSQL endpoint instead of service-specific endpoint
-    return await api.getJobDetails(jobId)
+  getABFEStatus: async (jobId: string, options?: { signal?: AbortSignal }) => {
+    return await api.getJobDetails(jobId, options)
   },
 
   listABFEJobs: async () => {
@@ -878,8 +911,8 @@ export const api = {
     return response.data
   },
 
-  parseABFEResults: async (jobId: string) => {
-    const response = await apiClient.get(`/api/abfe/parse-results/${jobId}`)
+  parseABFEResults: async (jobId: string, options?: { signal?: AbortSignal }) => {
+    const response = await apiClient.get(`/api/abfe/parse-results/${jobId}`, { signal: options?.signal })
     return response.data
   },
 
@@ -1090,6 +1123,9 @@ export const api = {
     protein_id?: string
     network_topology?: 'mst' | 'radial' | 'maximal'
     central_ligand?: string
+    atom_mapper?: string
+    atom_map_hydrogens?: boolean
+    lomap_max3d?: number
     simulation_settings?: Record<string, any>
     pause_after_docking?: boolean
     docking_acknowledged?: boolean
@@ -1103,6 +1139,9 @@ export const api = {
       protein_id: config.protein_id || 'protein',
       network_topology: config.network_topology || 'mst',
       central_ligand: config.central_ligand,
+      atom_mapper: config.atom_mapper || 'kartograf',
+      atom_map_hydrogens: config.atom_map_hydrogens !== false,
+      lomap_max3d: config.lomap_max3d ?? 1.0,
     }
 
     if (config.simulation_settings) {
@@ -1113,14 +1152,19 @@ export const api = {
     return response.data
   },
 
-  getRBFEStatus: async (jobId: string) => {
-    // Use unified PostgreSQL endpoint instead of service-specific endpoint
-    return await api.getJobDetails(jobId)
+  getRBFEStatus: async (jobId: string, options?: { signal?: AbortSignal }) => {
+    return await api.getJobDetails(jobId, options)
   },
 
   getRBFEFileUrl: (jobId: string, filename: string): string => {
     const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'
     return `${API_BASE_URL}/api/rbfe/files/${jobId}/${encodeURIComponent(filename)}`
+  },
+
+  // Extract HETATM ligands from a loaded PDB structure (for co-crystal reference pose)
+  extractCocrystalLigands: async (pdbData: string): Promise<{ residue_name: string; chain_id: string; pdb_string: string }[]> => {
+    const response = await apiClient.post('/api/structure/extract_hetatm', { pdb_data: pdbData })
+    return response.data.residues || []
   },
 
   // Continue RBFE calculation after docking validation
@@ -1156,9 +1200,17 @@ export const api = {
     })
 
     // Normalize jobs from PostgreSQL format
-    const allJobs: UnifiedJob[] = (response.data.jobs || []).map((j: any) =>
-      normalizeToUnifiedJob(j, j.job_type as ServiceType)
-    )
+    const allJobs: UnifiedJob[] = (response.data.jobs || [])
+      .map((j: any) => normalizeToUnifiedJob(j, j.job_type as ServiceType))
+      .filter((j: UnifiedJob) => {
+        // Filter out explicit mapping preview jobs
+        if (j.service === 'rbfe_mapping_preview' as ServiceType) return false
+        
+        // Filter out RBFE jobs that are missing network topology (likely mislabeled preview jobs)
+        if (j.service === 'rbfe' && !j.metadata?.network_topology) return false
+        
+        return true
+      })
 
     // Sort by creation time (newest first)
     return {
@@ -1205,7 +1257,7 @@ export const api = {
    * Get full job details from PostgreSQL
    * @param jobId - Job identifier
    */
-  getJobDetails: async (jobId: string): Promise<{
+  getJobDetails: async (jobId: string, options?: { signal?: AbortSignal }): Promise<{
     id: string
     job_type: string
     status: string
@@ -1220,7 +1272,7 @@ export const api = {
     message?: string
     molecule_name?: string
   }> => {
-    const response = await apiClient.get(`/api/jobs/${jobId}`)
+    const response = await apiClient.get(`/api/jobs/${jobId}`, { signal: options?.signal })
     return response.data
   },
 
@@ -1341,4 +1393,16 @@ export const api = {
 
   getTrajectoryAnalysis: async (trajectoryPath: string) =>
     (await apiClient.post('/api/md/trajectory/analysis', { trajectory_path: trajectoryPath }, { timeout: 120000 })).data,
+
+  getLigandImageDataUrl: async (smiles: string): Promise<string | null> => {
+    try {
+      const response = await apiClient.get('/api/rbfe/ligand-image', {
+        params: { smiles },
+        responseType: 'blob',
+      })
+      return URL.createObjectURL(response.data as Blob)
+    } catch {
+      return null
+    }
+  },
 }

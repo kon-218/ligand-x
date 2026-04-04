@@ -128,6 +128,8 @@ interface ImageFileTab {
   name: string
   imageUrl: string
   createdAt: number
+  /** When set, library 2D viewer reuses this tab instead of opening duplicates */
+  libraryMoleculeId?: number
 }
 
 // Docking results interface
@@ -158,7 +160,7 @@ interface MolecularStore {
   addStructureTab: (structure: MolecularStructure, name?: string) => void
   removeStructureTab: (tabId: string) => void
   setActiveTab: (tabId: string) => void
-  
+
   // Animation tab (reusable tab for vibrational mode animations)
   animationTabId: string | null
   openAnimationTab: (structure: MolecularStructure, name?: string) => string // Creates or updates animation tab, returns tab ID
@@ -175,7 +177,11 @@ interface MolecularStore {
 
   // Image file preview tabs
   imageFileTabs: ImageFileTab[]
-  addImageFileTab: (imageUrl: string, name?: string) => string // Returns tab ID
+  addImageFileTab: (
+    imageUrl: string,
+    name?: string,
+    options?: { libraryMoleculeId?: number }
+  ) => string // Returns tab ID
   removeImageFileTab: (tabId: string) => void
 
   // Structure data (legacy - for backward compatibility)
@@ -239,6 +245,10 @@ interface MolecularStore {
   pendingDockingGridBox: GridBox | null
   setPendingDockingGridBox: (gridBox: GridBox | null) => void
 
+  // Library sync state
+  libraryLastUpdated: number
+  refreshLibrary: () => void
+
   // Reset function
   reset: () => void
 }
@@ -281,6 +291,7 @@ export const useMolecularStore = create<MolecularStore>((set, get) => ({
   pendingEditorImport: false,
   pendingTautomerSmiles: null,
   pendingDockingGridBox: null,
+  libraryLastUpdated: 0,
 
   // Tab Actions
   addStructureTab: (structure, name) => {
@@ -469,16 +480,34 @@ export const useMolecularStore = create<MolecularStore>((set, get) => ({
     }
   },
 
-  addImageFileTab: (imageUrl, name) => {
+  addImageFileTab: (imageUrl, name, options) => {
+    const state = get()
+    const libId = options?.libraryMoleculeId
+    if (libId != null) {
+      const existing = state.imageFileTabs.find((t) => t.libraryMoleculeId === libId)
+      if (existing) {
+        const tabName = name || existing.name
+        set({
+          imageFileTabs: state.imageFileTabs.map((t) =>
+            t.id === existing.id ? { ...t, imageUrl, name: tabName } : t
+          ),
+          activeTabId: existing.id,
+          error: null,
+        })
+        return existing.id
+      }
+    }
+
     const tabId = `image-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`
     const newTab: ImageFileTab = {
       id: tabId,
       name: name || 'Image',
       imageUrl,
       createdAt: Date.now(),
+      ...(libId != null ? { libraryMoleculeId: libId } : {}),
     }
-    set((state) => ({
-      imageFileTabs: [...state.imageFileTabs, newTab],
+    set((s) => ({
+      imageFileTabs: [...s.imageFileTabs, newTab],
       activeTabId: tabId,
       error: null,
     }))
@@ -895,7 +924,9 @@ export const useMolecularStore = create<MolecularStore>((set, get) => ({
 
   setPendingTautomerSmiles: (pendingTautomerSmiles) => set({ pendingTautomerSmiles }),
 
-  setPendingDockingGridBox: (pendingDockingGridBox) => set({ pendingDockingGridBox }),
+  setPendingDockingGridBox: (gridBox) => set({ pendingDockingGridBox: gridBox }),
+
+  refreshLibrary: () => set({ libraryLastUpdated: Date.now() }),
 
   reset: () => {
     // Clean up all blob data before resetting

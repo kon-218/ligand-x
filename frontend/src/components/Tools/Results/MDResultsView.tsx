@@ -17,21 +17,25 @@ export function MDResultsView({ jobId }: MDResultsViewProps) {
     const [error, setError] = useState<string | null>(null)
 
     useEffect(() => {
+        const controller = new AbortController()
+
         const fetchJob = async () => {
             try {
                 setLoading(true)
-                const data = await api.getMDJob(jobId)
+                const data = await api.getMDJob(jobId, { signal: controller.signal })
                 setJob(data)
                 setError(null)
             } catch (err: any) {
+                if (controller.signal.aborted) return
                 console.error('Failed to fetch MD job:', err)
                 setError(err.message || 'Failed to load MD results')
             } finally {
-                setLoading(false)
+                if (!controller.signal.aborted) setLoading(false)
             }
         }
 
         fetchJob()
+        return () => controller.abort()
     }, [jobId])
 
     if (loading) {

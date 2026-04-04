@@ -1,6 +1,9 @@
 'use client'
 
-import { useUIStore, type OverlayId } from '@/store/ui-store'
+import { useState, useEffect, type CSSProperties } from 'react'
+import { useUIStore, type OverlayId, type ToolId } from '@/store/ui-store'
+import { usePreferencesStore } from '@/store/preferences-store'
+import { baseColorConfigs, BASE_COLOR_LABELS, type BaseColorName } from '@/lib/base-color-config'
 import { motion, AnimatePresence } from 'framer-motion'
 import {
   FolderOpen,
@@ -23,11 +26,38 @@ import {
   Atom,
   Layers,
   Scissors,
+  Palette,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
-import { experimentTools, toolCategories, getToolsByCategory, type ToolCategory } from '@/lib/tools-config'
-import { accentColorClasses } from '@/components/Tools/shared/types'
+import {
+  experimentTools,
+  toolCategories,
+  getToolsByCategory,
+  EXPERIMENT_ENTRY_BUTTON_CLASS,
+  type ToolCategory,
+} from '@/lib/tools-config'
+import { accentColorClasses, type AccentColor } from '@/components/Tools/shared/types'
+
+function isAccentColor(value: string): value is AccentColor {
+  return value in accentColorClasses
+}
+
+/** Icon tile hover glow — matches service accent (not user base colour). */
+const EXPERIMENT_CARD_ICON_HOVER_GLOW: Record<AccentColor, string> = {
+  blue: 'group-hover:shadow-[0_0_15px_rgba(59,130,246,0.2)]',
+  green: 'group-hover:shadow-[0_0_15px_rgba(34,197,94,0.2)]',
+  purple: 'group-hover:shadow-[0_0_15px_rgba(168,85,247,0.2)]',
+  orange: 'group-hover:shadow-[0_0_15px_rgba(249,115,22,0.2)]',
+  pink: 'group-hover:shadow-[0_0_15px_rgba(236,72,153,0.2)]',
+  teal: 'group-hover:shadow-[0_0_15px_rgba(20,184,166,0.2)]',
+  indigo: 'group-hover:shadow-[0_0_15px_rgba(99,102,241,0.2)]',
+  cyan: 'group-hover:shadow-[0_0_15px_rgba(6,182,212,0.2)]',
+  amber: 'group-hover:shadow-[0_0_15px_rgba(217,119,6,0.2)]',
+}
 import { useQCStore } from '@/store/qc-store'
+import { warmAccentConfigs, WARM_ACCENT_LABELS, type WarmAccentPreset } from '@/lib/accent-config'
+import { useBaseColor } from '@/hooks/use-base-color'
+import { useWarmAccent } from '@/hooks/use-warm-accent'
 
 const iconMap: Record<string, React.ReactNode> = {
   ScanSearch: <ScanSearch className="w-6 h-6" />,
@@ -116,6 +146,27 @@ const QC_WORKFLOW_CARDS: QCWorkflowCard[] = [
   },
 ]
 
+/** Map overlay selection ids (tool ids or QC workflow card ids) to sidebar ToolIds for bulk add. */
+function resolveExperimentToolsFromSelection(selectedIds: Set<string>): {
+  toolIds: ToolId[]
+  qcCardForPending: QCWorkflowCard | null
+} {
+  const raw: ToolId[] = []
+  let qcCardForPending: QCWorkflowCard | null = null
+  let hasQc = false
+  for (const id of selectedIds) {
+    const card = QC_WORKFLOW_CARDS.find((c) => c.id === id)
+    if (card) {
+      hasQc = true
+      qcCardForPending = card
+    } else {
+      raw.push(id as ToolId)
+    }
+  }
+  if (hasQc) raw.push('quantum-chemistry')
+  return { toolIds: [...new Set(raw)], qcCardForPending: hasQc ? qcCardForPending : null }
+}
+
 const categoryOrder: ToolCategory[] = ['preparation', 'simulations', 'free-energy', 'analysis']
 
 interface OverlayWrapperProps {
@@ -126,36 +177,47 @@ interface OverlayWrapperProps {
   showSidebar?: boolean
 }
 
-function OverlayWrapper({ children, title, icon, iconBg = "from-cyan-500/20 to-blue-500/20", showSidebar = false }: OverlayWrapperProps) {
+function OverlayWrapper({ children, title, icon, iconBg, showSidebar = false }: OverlayWrapperProps) {
   const { closeOverlay, sidebarWidth } = useUIStore()
+  const bc_active = useBaseColor()
+  const useThemedIconBg = iconBg === undefined
+  const iconBoxClass = useThemedIconBg
+    ? cn(
+        'w-8 h-8 rounded-lg flex items-center justify-center border',
+        !bc_active.isCustom && `bg-gradient-to-br ${bc_active.gradientFromLight} to-blue-500/20 ${bc_active.borderLight}`,
+      )
+    : cn('w-8 h-8 rounded-lg bg-gradient-to-br flex items-center justify-center', iconBg)
+  const iconBoxStyle =
+    useThemedIconBg && bc_active.isCustom
+      ? {
+          background: `linear-gradient(to bottom right, rgba(${bc_active.rgbString}, 0.2), rgba(59, 130, 246, 0.1))`,
+          borderColor: `rgba(${bc_active.rgbString}, 0.2)`,
+        }
+      : undefined
 
   return (
-    <motion.div
-      initial={{ opacity: 0 }}
-      animate={{ opacity: 1 }}
-      exit={{ opacity: 0 }}
-      transition={{ duration: 0.15 }}
-      className="absolute z-50 bg-gray-900"
-      style={{ left: 0, top: 0, right: 0, bottom: 0 }}
+    <div
+      className="fixed z-50 bg-gray-900"
+      style={{ left: sidebarWidth, top: 0, right: 0, bottom: 0 }}
     >
       <div className="flex flex-col h-full">
         {/* Header */}
-        <div className="flex items-center gap-4 p-6 border-b border-gray-800 bg-gray-900">
+        <div className="sticky top-0 z-20 flex items-center justify-between px-6 h-14 flex-shrink-0 border-b border-gray-800 bg-gray-950/80 backdrop-blur-md">
+          <div className="flex items-center gap-4">
+            <button
+              onClick={closeOverlay}
+              className="p-1.5 rounded-lg hover:bg-gray-800 transition-colors text-gray-400 hover:text-white"
+            >
+              <ArrowLeft className="w-5 h-5" />
+            </button>
+            <div className={iconBoxClass} style={iconBoxStyle}>
+              <div className="scale-75 origin-center">{icon}</div>
+            </div>
+            <h1 className="text-lg font-semibold text-white">{title}</h1>
+          </div>
           <button
             onClick={closeOverlay}
-            className="p-2 rounded-lg hover:bg-gray-800 transition-colors text-gray-400 hover:text-white"
-          >
-            <ArrowLeft className="w-5 h-5" />
-          </button>
-          <div className={cn("w-12 h-12 rounded-xl bg-gradient-to-br flex items-center justify-center", iconBg)}>
-            {icon}
-          </div>
-          <div className="flex-1">
-            <h1 className="text-2xl font-bold text-white">{title}</h1>
-          </div>
-          <button
-            onClick={closeOverlay}
-            className="p-2 rounded-lg hover:bg-gray-800 transition-colors text-gray-400 hover:text-white"
+            className="p-1.5 rounded-lg hover:bg-gray-800 transition-colors text-gray-400 hover:text-white"
           >
             <X className="w-5 h-5" />
           </button>
@@ -166,7 +228,7 @@ function OverlayWrapper({ children, title, icon, iconBg = "from-cyan-500/20 to-b
           {children}
         </div>
       </div>
-    </motion.div>
+    </div>
   )
 }
 
@@ -193,83 +255,140 @@ const dummyProjects = [
 
 function ProjectsOverlay() {
   const { closeOverlay, sidebarWidth } = useUIStore()
+  const wa = useWarmAccent()
+  const ac = wa.config
+  const cs = wa.customStyles
+  const [hoveredCard, setHoveredCard] = useState<number | null>(null)
+
+  const headerIconClass = wa.isCustom
+    ? 'w-14 h-14 rounded-2xl flex items-center justify-center border relative overflow-hidden'
+    : cn(
+        'w-14 h-14 rounded-2xl flex items-center justify-center border relative overflow-hidden',
+        ac!.iconBg,
+        ac!.iconBorder,
+        ac!.iconBgGradient
+      )
+  const headerIconStyle: CSSProperties | undefined = wa.isCustom && cs
+    ? { ...cs.projectsHeaderIconBox, boxShadow: cs.projectsHeaderIconBoxShadow }
+    : undefined
 
   return (
-    <motion.div
-      initial={{ opacity: 0 }}
-      animate={{ opacity: 1 }}
-      exit={{ opacity: 0 }}
-      transition={{ duration: 0.15 }}
-      className="absolute z-50 bg-gray-950"
-      style={{ left: 0, top: 0, right: 0, bottom: 0 }}
+    <div
+      className="fixed z-50 bg-gray-950"
+      style={{ left: sidebarWidth, top: 0, right: 0, bottom: 0 }}
     >
-      <div className="flex flex-col h-full overflow-y-auto">
+      <div className="flex flex-col h-full overflow-y-auto pb-12">
+        {/* Top Navigation Bar */}
+        <div className="sticky top-0 z-20 flex items-center justify-between px-6 h-14 flex-shrink-0 bg-gray-950/80 backdrop-blur-md border-b border-gray-800/50">
+          <button
+            onClick={closeOverlay}
+            className="group flex items-center gap-2 text-sm font-medium text-gray-400 hover:text-white transition-colors"
+          >
+            <ArrowLeft className="w-4 h-4 transition-transform group-hover:-translate-x-1" />
+            Back to Workspace
+          </button>
+        </div>
+
         {/* Header */}
-        <div className="sticky top-0 z-10 bg-gray-950/95 backdrop-blur-sm border-b border-gray-800">
-          <div className="max-w-6xl mx-auto px-6 py-6">
-            <div className="flex items-center gap-4">
-              <button
-                onClick={closeOverlay}
-                className="p-2 rounded-lg hover:bg-gray-800 transition-colors text-gray-400 hover:text-white"
-              >
-                <ArrowLeft className="w-5 h-5" />
-              </button>
-              <div className="flex items-center gap-3">
-                <div className="w-12 h-12 rounded-xl flex items-center justify-center" style={{ background: 'linear-gradient(135deg, rgba(255,177,59,0.2), rgba(255,140,0,0.2))' }}>
-                  <FolderOpen className="w-6 h-6" style={{ color: '#FFB13B' }} />
-                </div>
-                <div>
-                  <h1 className="text-2xl font-bold text-white">Projects</h1>
-                  <p className="text-sm text-gray-400">Organise your molecular research campaigns</p>
-                </div>
+        <div className="w-full">
+          <div className="max-w-6xl mx-auto px-6 pt-10 pb-8 flex items-center justify-between">
+            <div className="flex items-center gap-5">
+              <div className={headerIconClass} style={headerIconStyle}>
+                <div className="absolute inset-0 bg-gradient-to-tr from-transparent via-white/5 to-transparent opacity-0 hover:opacity-100 transition-opacity" />
+                <FolderOpen
+                  className={cn('w-7 h-7', !wa.isCustom && ac!.iconColor)}
+                  style={wa.isCustom && cs ? cs.folderIcon : undefined}
+                />
               </div>
-              <div className="flex-1" />
-              <button
-                className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium text-white transition-all hover:opacity-90"
-                style={{ backgroundColor: '#FFB13B' }}
-              >
-                <Plus className="w-4 h-4" />
-                New Project
-              </button>
+              <div>
+                <h1 className="text-3xl font-bold text-white tracking-tight">Projects</h1>
+                <p className="text-sm text-gray-400 mt-1">Organise your molecular research campaigns</p>
+              </div>
             </div>
+
+            <button
+              className={cn(
+                'flex items-center gap-2 px-5 py-2.5 rounded-xl text-sm font-bold text-gray-900 transition-all hover:scale-105',
+                !wa.isCustom &&
+                  `bg-gradient-to-r ${ac!.gradientFrom} ${ac!.gradientTo} ${ac!.gradientHoverFrom} ${ac!.gradientHoverTo} ${ac!.shadowGlow} ${ac!.shadowGlowHover}`
+              )}
+              style={wa.isCustom && cs ? cs.projectsNewButton : undefined}
+              onMouseEnter={(e) => {
+                if (wa.isCustom && cs) Object.assign(e.currentTarget.style, cs.projectsNewButtonHover)
+              }}
+              onMouseLeave={(e) => {
+                if (wa.isCustom && cs) Object.assign(e.currentTarget.style, cs.projectsNewButton)
+              }}
+            >
+              <Plus className="w-4 h-4" />
+              New Project
+            </button>
           </div>
         </div>
 
         {/* Content */}
-        <div className="max-w-6xl mx-auto px-6 py-8 w-full">
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-            {dummyProjects.map((project) => (
+        <div className="max-w-6xl mx-auto px-6 w-full">
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
+            {dummyProjects.map((project, index) => (
               <button
                 key={project.name}
-                className="group relative p-5 rounded-xl text-left transition-all duration-300 bg-gray-900 border border-gray-800 hover:border-transparent hover:shadow-lg"
+                className="group relative p-6 rounded-2xl text-left transition-all duration-300 bg-gray-900/40 border border-gray-800/80 hover:bg-gray-800/50 hover:border-gray-700 backdrop-blur-sm overflow-hidden"
+                onMouseEnter={() => setHoveredCard(index)}
+                onMouseLeave={() => setHoveredCard(null)}
               >
-                {/* Hover glow */}
+                {/* Subtle background glow on hover */}
                 <div
-                  className="absolute inset-0 rounded-xl opacity-0 group-hover:opacity-100 transition-opacity duration-300 pointer-events-none"
-                  style={{ boxShadow: '0 0 30px rgba(255, 177, 59, 0.12)' }}
+                  className={cn(
+                    'absolute inset-0 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-500 bg-gradient-to-br',
+                    !wa.isCustom && ac!.cardGlowGradient
+                  )}
+                  style={wa.isCustom && cs ? cs.cardGlowOverlay : undefined}
                 />
-                {/* Hover border */}
+
+                {/* Border glow */}
                 <div
-                  className="absolute inset-0 rounded-xl opacity-0 group-hover:opacity-100 transition-opacity duration-300 pointer-events-none border-2"
-                  style={{ borderColor: '#FFB13B' }}
+                  className="absolute inset-0 rounded-2xl opacity-0 group-hover:opacity-100 transition-opacity duration-300 pointer-events-none"
+                  style={{ boxShadow: wa.isCustom && cs ? cs.cardBorderGlow : ac!.cardBorderGlow }}
                 />
 
                 <div className="relative flex items-start gap-4">
                   <div
-                    className="w-12 h-12 rounded-lg flex items-center justify-center flex-shrink-0 transition-all duration-300 bg-gray-800"
-                    style={{ color: '#FFB13B' }}
+                    className={cn(
+                      'w-12 h-12 rounded-xl flex items-center justify-center flex-shrink-0 transition-all duration-300 bg-gray-950 border border-gray-800 group-hover:scale-105',
+                      !wa.isCustom && `${ac!.cardIconBorderHover} ${ac!.cardIconHoverShadow}`
+                    )}
+                    style={
+                      wa.isCustom && cs
+                        ? hoveredCard === index
+                          ? { ...cs.cardIconCellHover }
+                          : cs.cardIconCell
+                        : undefined
+                    }
                   >
-                    <FolderOpen className="w-6 h-6" />
+                    <FolderOpen
+                      className={cn(
+                        'w-5 h-5 transition-colors',
+                        !wa.isCustom && 'text-gray-500',
+                        !wa.isCustom && ac!.cardIconColor
+                      )}
+                      style={
+                        wa.isCustom && cs
+                          ? hoveredCard === index
+                            ? cs.cardIconFolderHover
+                            : cs.cardIconFolder
+                          : undefined
+                      }
+                    />
                   </div>
-                  <div className="flex-1 min-w-0">
-                    <h3 className="font-semibold text-white mb-1">{project.name}</h3>
-                    <p className="text-sm text-gray-500 group-hover:text-gray-400 transition-colors line-clamp-2 mb-3">
+                  <div className="flex-1 min-w-0 pt-0.5">
+                    <h3 className="font-semibold text-gray-100 mb-1 group-hover:text-white transition-colors">{project.name}</h3>
+                    <p className="text-sm text-gray-500 group-hover:text-gray-400 transition-colors line-clamp-2 mb-4 leading-relaxed">
                       {project.description}
                     </p>
-                    <div className="flex items-center gap-3 text-xs text-gray-600">
-                      <span>{project.experiments} experiments</span>
+                    <div className="flex items-center gap-2 text-xs font-medium text-gray-600 group-hover:text-gray-500">
+                      <span className="flex items-center gap-1.5"><FolderOpen className="w-3.5 h-3.5" />{project.experiments} experiments</span>
                       <span>·</span>
-                      <span>Updated {project.updated}</span>
+                      <span className="truncate">Updated {project.updated}</span>
                     </div>
                   </div>
                 </div>
@@ -278,27 +397,204 @@ function ProjectsOverlay() {
           </div>
         </div>
       </div>
-    </motion.div>
+    </div>
   )
 }
 
+type ThemeSwatch = { key: string; hex: string; label: string }
+
+function SettingsThemePickerCard({
+  title,
+  description,
+  presets,
+  selectedPresetKey,
+  onSelectPreset,
+  isCustom,
+  customHex,
+  onApplyCustomHex,
+  colorInputId,
+}: {
+  title: string
+  description: string
+  presets: ThemeSwatch[]
+  selectedPresetKey: string
+  onSelectPreset: (key: string) => void
+  isCustom: boolean
+  customHex: string
+  onApplyCustomHex: (hex: string) => void
+  colorInputId: string
+}) {
+  const [hexDraft, setHexDraft] = useState(customHex)
+  useEffect(() => {
+    setHexDraft(customHex)
+  }, [customHex])
+
+  const pickerValue = /^#[0-9A-Fa-f]{6}$/.test(customHex) ? customHex : '#6b7280'
+
+  return (
+    <div className="rounded-2xl border border-gray-700/50 bg-gray-800/20 p-5 sm:p-6">
+      <h3 className="text-sm font-semibold text-gray-100 tracking-tight">{title}</h3>
+      <p className="text-xs text-gray-500 mt-1.5 leading-relaxed max-w-lg">{description}</p>
+
+      <div className="mt-5 flex flex-wrap items-center gap-3">
+        {presets.map(({ key, hex, label }) => (
+          <button
+            key={key}
+            type="button"
+            title={label}
+            onClick={() => onSelectPreset(key)}
+            className={cn(
+              'h-10 w-10 shrink-0 rounded-full border-2 transition-all outline-none',
+              'focus-visible:ring-2 focus-visible:ring-white/35 focus-visible:ring-offset-2 focus-visible:ring-offset-gray-950',
+              !isCustom && selectedPresetKey === key
+                ? 'scale-110 border-white shadow-lg shadow-black/25'
+                : 'border-transparent opacity-80 hover:opacity-100'
+            )}
+            style={{ backgroundColor: hex }}
+          />
+        ))}
+
+        <label
+          htmlFor={colorInputId}
+          className={cn(
+            'relative flex h-10 w-10 shrink-0 cursor-pointer items-center justify-center rounded-full border-2 transition-all outline-none',
+            'focus-within:ring-2 focus-within:ring-white/30 focus-within:ring-offset-2 focus-within:ring-offset-gray-950',
+            isCustom
+              ? 'scale-110 border-white shadow-lg shadow-black/25 ring-1 ring-white/10'
+              : 'border-dashed border-gray-500 bg-gray-950/80 hover:border-gray-400'
+          )}
+          style={isCustom ? { backgroundColor: pickerValue } : undefined}
+          title="Custom colour"
+        >
+          <input
+            id={colorInputId}
+            type="color"
+            value={pickerValue}
+            onChange={(e) => onApplyCustomHex(e.target.value)}
+            className="absolute inset-0 h-full w-full cursor-pointer opacity-0 rounded-full"
+            aria-label="Pick custom colour"
+          />
+          {!isCustom && <Palette className="pointer-events-none h-4 w-4 text-gray-500" strokeWidth={1.75} />}
+        </label>
+      </div>
+
+      <div
+        className={cn(
+          'mt-4 flex min-w-0 items-center gap-3 rounded-xl border px-3 py-2.5 transition-colors',
+          isCustom ? 'border-gray-600/70 bg-gray-900/55' : 'border-gray-800/70 bg-gray-900/30'
+        )}
+      >
+        <span className="shrink-0 text-[10px] font-semibold uppercase tracking-widest text-gray-500">Hex</span>
+        <input
+          type="text"
+          value={hexDraft}
+          spellCheck={false}
+          autoCapitalize="off"
+          autoCorrect="off"
+          placeholder="#000000"
+          maxLength={7}
+          onChange={(e) => {
+            const v = e.target.value
+            setHexDraft(v)
+            if (/^#[0-9A-Fa-f]{6}$/i.test(v)) onApplyCustomHex(v)
+          }}
+          onBlur={() => {
+            if (/^#[0-9A-Fa-f]{6}$/i.test(hexDraft)) onApplyCustomHex(hexDraft)
+            else setHexDraft(customHex)
+          }}
+          className="min-w-0 flex-1 bg-transparent font-mono text-sm text-gray-200 placeholder:text-gray-600 focus:outline-none"
+        />
+      </div>
+    </div>
+  )
+}
 
 function SettingsOverlay() {
+  const {
+    baseColor,
+    setBaseColor,
+    customColorMode,
+    customColorHex,
+    setCustomColor,
+    warmAccentPreset,
+    setWarmAccentPreset,
+    warmAccentCustomMode,
+    warmAccentCustomHex,
+    setWarmAccentCustomHex,
+  } = usePreferencesStore()
+  const bc_active = useBaseColor()
+  const isCustom = customColorMode
+  const isWarmCustom = warmAccentCustomMode
+
+  const basePresets: ThemeSwatch[] = (Object.keys(baseColorConfigs) as BaseColorName[]).map((name) => ({
+    key: name,
+    hex: baseColorConfigs[name].hexValue,
+    label: BASE_COLOR_LABELS[name],
+  }))
+
+  const warmPresets: ThemeSwatch[] = (Object.keys(warmAccentConfigs) as WarmAccentPreset[]).map((name) => ({
+    key: name,
+    hex: warmAccentConfigs[name].hexValue,
+    label: WARM_ACCENT_LABELS[name],
+  }))
+
   return (
     <OverlayWrapper
       title="Settings"
-      icon={<Settings className="w-6 h-6 text-cyan-400" />}
+      icon={
+        <Settings
+          className={cn('w-6 h-6', !bc_active.isCustom && bc_active.text)}
+          style={bc_active.isCustom ? bc_active.styles?.text : undefined}
+        />
+      }
     >
-      <ComingSoonContent description="Configure your application preferences. This feature is coming soon." />
+      <div className="p-6 space-y-6 max-w-2xl">
+        <SettingsThemePickerCard
+          title="Base colour"
+          description="Curated presets plus a custom swatch. Choosing custom applies it immediately; presets return to the built-in palette."
+          presets={basePresets}
+          selectedPresetKey={baseColor}
+          onSelectPreset={(key) => setBaseColor(key as BaseColorName)}
+          isCustom={isCustom}
+          customHex={customColorHex}
+          onApplyCustomHex={setCustomColor}
+          colorInputId="settings-base-color-input"
+        />
+
+        <SettingsThemePickerCard
+          title="Projects &amp; Library accent"
+          description="Warm accent for the Projects button, Library “Tools” actions, and related highlights."
+          presets={warmPresets}
+          selectedPresetKey={warmAccentPreset}
+          onSelectPreset={(key) => setWarmAccentPreset(key as WarmAccentPreset)}
+          isCustom={isWarmCustom}
+          customHex={warmAccentCustomHex}
+          onApplyCustomHex={setWarmAccentCustomHex}
+          colorInputId="settings-warm-accent-color-input"
+        />
+
+        <div className="rounded-xl border border-gray-700/40 bg-gray-800/25 px-4 py-3">
+          <p className="text-xs text-gray-500 leading-relaxed">
+            Preferences save automatically. The last swatch in each row opens the system colour picker; hex is optional for precise values.
+          </p>
+        </div>
+      </div>
     </OverlayWrapper>
   )
 }
 
 function SupportOverlay() {
+  const bc_active = useBaseColor()
+
   return (
     <OverlayWrapper
       title="Support"
-      icon={<HelpCircle className="w-6 h-6 text-cyan-400" />}
+      icon={
+        <HelpCircle
+          className={cn('w-6 h-6', !bc_active.isCustom && bc_active.text)}
+          style={bc_active.isCustom ? bc_active.styles?.text : undefined}
+        />
+      }
     >
       <ComingSoonContent description="Get help and documentation. This feature is coming soon." />
     </OverlayWrapper>
@@ -318,13 +614,30 @@ function AccountOverlay() {
 }
 
 function NewExperimentOverlay() {
-  const { closeOverlay, setActiveTool, addExperimentTool, sidebarWidth } = useUIStore()
+  const { closeOverlay, setActiveTool, addExperimentTool, addMultipleExperimentTools, sidebarWidth } =
+    useUIStore()
+  const bc_active = useBaseColor()
   const { setPendingInitialState } = useQCStore()
+  const [selectedToolIds, setSelectedToolIds] = useState<Set<string>>(() => new Set())
 
   const handleToolSelect = (toolId: string) => {
-    addExperimentTool(toolId as any)
-    setActiveTool(toolId as any)
+    addExperimentTool(toolId as ToolId)
+    setActiveTool(toolId as ToolId)
     closeOverlay()
+  }
+
+  const handleToolClick = (toolId: string, event: React.MouseEvent<HTMLButtonElement>) => {
+    if (event.ctrlKey || event.metaKey) {
+      event.preventDefault()
+      setSelectedToolIds((prev) => {
+        const next = new Set(prev)
+        if (next.has(toolId)) next.delete(toolId)
+        else next.add(toolId)
+        return next
+      })
+      return
+    }
+    handleToolSelect(toolId)
   }
 
   const handleQCWorkflowSelect = (card: QCWorkflowCard) => {
@@ -336,34 +649,70 @@ function NewExperimentOverlay() {
     closeOverlay()
   }
 
+  const handleQCWorkflowClick = (card: QCWorkflowCard, event: React.MouseEvent<HTMLButtonElement>) => {
+    if (event.ctrlKey || event.metaKey) {
+      event.preventDefault()
+      setSelectedToolIds((prev) => {
+        const next = new Set(prev)
+        if (next.has(card.id)) next.delete(card.id)
+        else next.add(card.id)
+        return next
+      })
+      return
+    }
+    handleQCWorkflowSelect(card)
+  }
+
   return (
-    <motion.div
-      initial={{ opacity: 0 }}
-      animate={{ opacity: 1 }}
-      exit={{ opacity: 0 }}
-      transition={{ duration: 0.15 }}
-      className="absolute z-50 bg-gray-950"
-      style={{ left: 0, top: 0, right: 0, bottom: 0 }}
+    <div
+      className="fixed z-50 bg-gray-950"
+      style={{ left: sidebarWidth, top: 0, right: 0, bottom: 0 }}
     >
-      <div className="flex flex-col h-full overflow-y-auto">
+      <div className="flex flex-col h-full overflow-y-auto pb-12">
+        {/* Top Navigation Bar */}
+        <div className="sticky top-0 z-20 flex items-center justify-between px-6 h-14 flex-shrink-0 bg-gray-950/80 backdrop-blur-md border-b border-gray-800/50">
+          <button
+            onClick={closeOverlay}
+            className="group flex items-center gap-2 text-sm font-medium text-gray-400 hover:text-white transition-colors"
+          >
+            <ArrowLeft className="w-4 h-4 transition-transform group-hover:-translate-x-1" />
+            Back to Workspace
+          </button>
+        </div>
+
         {/* Header */}
-        <div className="sticky top-0 z-10 bg-gray-950/95 backdrop-blur-sm border-b border-gray-800">
-          <div className="max-w-6xl mx-auto px-6 py-6">
-            <div className="flex items-center gap-4">
-              <button
-                onClick={closeOverlay}
-                className="p-2 rounded-lg hover:bg-gray-800 transition-colors text-gray-400 hover:text-white"
+        <div className="w-full">
+          <div className="max-w-6xl mx-auto px-6 pt-10 pb-8">
+            <div className="flex items-center gap-5">
+              <div
+                className={cn(
+                  'w-14 h-14 rounded-2xl flex items-center justify-center border relative overflow-hidden',
+                  !bc_active.isCustom && `bg-gradient-to-br ${bc_active.gradientFromLight} to-blue-500/10 ${bc_active.borderLight}`,
+                )}
+                style={
+                  bc_active.isCustom
+                    ? {
+                        background: `linear-gradient(to bottom right, rgba(${bc_active.rgbString}, 0.2), rgba(59, 130, 246, 0.1))`,
+                        borderColor: `rgba(${bc_active.rgbString}, 0.2)`,
+                        boxShadow: `0 0 30px rgba(${bc_active.rgbString}, 0.15)`,
+                      }
+                    : { boxShadow: `0 0 30px rgba(${bc_active.rgbString}, 0.15)` }
+                }
               >
-                <ArrowLeft className="w-5 h-5" />
-              </button>
-              <div className="flex items-center gap-3">
-                <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-cyan-500/20 to-blue-500/20 flex items-center justify-center">
-                  <FlaskConical className="w-6 h-6 text-cyan-400" />
-                </div>
-                <div>
-                  <h1 className="text-2xl font-bold text-white">New Experiment</h1>
+                <div className="absolute inset-0 bg-gradient-to-tr from-transparent via-white/5 to-transparent opacity-0 hover:opacity-100 transition-opacity" />
+                <FlaskConical
+                  className={cn('w-7 h-7', !bc_active.isCustom && bc_active.text)}
+                  style={bc_active.isCustom ? bc_active.styles?.text : undefined}
+                />
+              </div>
+              <div>
+                <h1 className="text-3xl font-bold text-white tracking-tight">New Experiment</h1>
+                <div className="space-y-1 mt-1">
                   <p className="text-sm text-gray-400">
                     Choose a computational tool to start your analysis
+                  </p>
+                  <p className="text-xs text-gray-500">
+                    Hold Ctrl and click to select multiple tools
                   </p>
                 </div>
               </div>
@@ -372,7 +721,7 @@ function NewExperimentOverlay() {
         </div>
 
         {/* Tool Categories */}
-        <div className="max-w-6xl mx-auto px-6 py-8 space-y-10">
+        <div className="max-w-6xl mx-auto px-6 space-y-12 w-full">
           {categoryOrder.map((category) => {
             const tools = getToolsByCategory(category)
             if (tools.length === 0) return null
@@ -381,107 +730,156 @@ function NewExperimentOverlay() {
 
             return (
               <section key={category}>
-                <div className="mb-4">
-                  <h2 className="text-lg font-semibold text-white">{categoryInfo.name}</h2>
-                  <p className="text-sm text-gray-500">{categoryInfo.description}</p>
+                <div className="mb-5">
+                  <h2 className="text-xl font-bold text-white tracking-tight">{categoryInfo.name}</h2>
+                  <p className="text-sm text-gray-500 mt-1">{categoryInfo.description}</p>
                 </div>
 
-                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
                   {tools.flatMap((tool) => {
-                    const cards: { id: string; name: string; description: string; iconName: string; accent: string; onClick: () => void }[] =
+                    const cards: {
+                      id: string
+                      name: string
+                      description: string
+                      iconName: string
+                      accent: string
+                      onClick: (e: React.MouseEvent<HTMLButtonElement>) => void
+                    }[] =
                       tool.id === 'quantum-chemistry'
                         ? QC_WORKFLOW_CARDS.map((card) => ({
-                            id: card.id,
-                            name: card.name,
-                            description: card.description,
-                            iconName: card.iconName,
-                            accent: card.accentColor,
-                            onClick: () => handleQCWorkflowSelect(card),
-                          }))
+                          id: card.id,
+                          name: card.name,
+                          description: card.description,
+                          iconName: card.iconName,
+                          accent: card.accentColor,
+                          onClick: (e) => handleQCWorkflowClick(card, e),
+                        }))
                         : [{
-                            id: tool.id as string,
-                            name: tool.name,
-                            description: tool.description,
-                            iconName: tool.iconName,
-                            accent: tool.accentColor || 'blue',
-                            onClick: () => handleToolSelect(tool.id as string),
-                          }]
+                          id: tool.id as string,
+                          name: tool.name,
+                          description: tool.description,
+                          iconName: tool.iconName,
+                          accent: tool.accentColor || 'blue',
+                          onClick: (e) => handleToolClick(tool.id as string, e),
+                        }]
 
-                    return cards.map(({ id, name, description, iconName, accent, onClick }) => (
+                    return cards.map(({ id, name, description, iconName, accent, onClick }) => {
+                      const accentKey: AccentColor = isAccentColor(accent) ? accent : 'blue'
+                      const ac = accentColorClasses[accentKey]
+                      return (
                       <button
                         key={id}
+                        type="button"
                         onClick={onClick}
                         className={cn(
-                          "group relative p-5 rounded-xl text-left transition-all duration-300",
-                          "bg-gray-900 border border-gray-800",
-                          "hover:border-transparent hover:shadow-lg",
+                          'group relative p-6 rounded-2xl text-left transition-all duration-300',
+                          'bg-gray-900/40 border border-gray-800/80 backdrop-blur-sm overflow-hidden',
+                          'hover:bg-gray-800/50 hover:border-gray-700',
+                          selectedToolIds.has(id) && 'border-2 scale-[1.02]',
+                          selectedToolIds.has(id) && accent === 'purple' && 'border-purple-500/60 shadow-[0_0_20px_rgba(168,85,247,0.3)]',
+                          selectedToolIds.has(id) && accent === 'indigo' && 'border-indigo-500/60 shadow-[0_0_20px_rgba(99,102,241,0.3)]',
+                          selectedToolIds.has(id) && accent === 'green' && 'border-green-500/60 shadow-[0_0_20px_rgba(34,197,94,0.3)]',
+                          selectedToolIds.has(id) && accent === 'orange' && 'border-orange-500/60 shadow-[0_0_20px_rgba(249,115,22,0.3)]',
+                          selectedToolIds.has(id) && accent === 'cyan' && 'border-cyan-500/60 shadow-[0_0_20px_rgba(6,182,212,0.3)]',
+                          selectedToolIds.has(id) && accent === 'teal' && 'border-teal-500/60 shadow-[0_0_20px_rgba(20,184,166,0.3)]',
+                          selectedToolIds.has(id) && accent === 'blue' && 'border-blue-500/60 shadow-[0_0_20px_rgba(59,130,246,0.3)]',
+                          selectedToolIds.has(id) && accent === 'pink' && 'border-pink-500/60 shadow-[0_0_20px_rgba(236,72,153,0.3)]',
+                          selectedToolIds.has(id) && accent === 'amber' && 'border-amber-500/60 shadow-[0_0_20px_rgba(217,119,6,0.3)]',
                         )}
                       >
                         {/* Hover glow effect */}
                         <div
-                          className="absolute inset-0 rounded-xl opacity-0 group-hover:opacity-100 transition-opacity duration-300 pointer-events-none"
+                          className="absolute inset-0 bg-gradient-to-br opacity-0 group-hover:opacity-10 transition-opacity duration-500 pointer-events-none"
                           style={{
-                            boxShadow: accent === 'purple' ? '0 0 30px rgba(168, 85, 247, 0.15)' :
-                              accent === 'indigo' ? '0 0 30px rgba(99, 102, 241, 0.15)' :
-                              accent === 'green' ? '0 0 30px rgba(34, 197, 94, 0.15)' :
-                              accent === 'orange' ? '0 0 30px rgba(249, 115, 22, 0.15)' :
-                              accent === 'cyan' ? '0 0 30px rgba(6, 182, 212, 0.15)' :
-                              accent === 'teal' ? '0 0 30px rgba(20, 184, 166, 0.15)' :
-                              '0 0 30px rgba(59, 130, 246, 0.15)',
+                            backgroundImage: accent === 'purple' ? 'linear-gradient(to bottom right, #a855f7, transparent)' :
+                              accent === 'indigo' ? 'linear-gradient(to bottom right, #6366f1, transparent)' :
+                                accent === 'green' ? 'linear-gradient(to bottom right, #22c55e, transparent)' :
+                                  accent === 'orange' ? 'linear-gradient(to bottom right, #f97316, transparent)' :
+                                    accent === 'pink' ? 'linear-gradient(to bottom right, #ec4899, transparent)' :
+                                      accent === 'cyan' ? 'linear-gradient(to bottom right, #06b6d4, transparent)' :
+                                        accent === 'amber' ? 'linear-gradient(to bottom right, #d97706, transparent)' :
+                                          accent === 'teal' ? 'linear-gradient(to bottom right, #14b8a6, transparent)' :
+                                            'linear-gradient(to bottom right, #3b82f6, transparent)'
                           }}
                         />
 
-                        {/* Hover border */}
+                        {/* Border glow */}
                         <div
                           className={cn(
-                            "absolute inset-0 rounded-xl opacity-0 group-hover:opacity-100 transition-opacity duration-300",
-                            "pointer-events-none border-2",
-                            accent === 'purple' && "border-purple-500",
-                            accent === 'indigo' && "border-indigo-500",
-                            accent === 'green' && "border-green-500",
-                            accent === 'orange' && "border-orange-500",
-                            accent === 'cyan' && "border-cyan-500",
-                            accent === 'teal' && "border-teal-500",
-                            accent === 'blue' && "border-blue-500",
+                            "absolute inset-0 rounded-2xl opacity-0 group-hover:opacity-100 transition-opacity duration-300 pointer-events-none",
                           )}
+                          style={{
+                            boxShadow: accent === 'purple' ? 'inset 0 0 0 1px rgba(168, 85, 247, 0.2)' :
+                              accent === 'indigo' ? 'inset 0 0 0 1px rgba(99, 102, 241, 0.2)' :
+                                accent === 'green' ? 'inset 0 0 0 1px rgba(34, 197, 94, 0.2)' :
+                                  accent === 'orange' ? 'inset 0 0 0 1px rgba(249, 115, 22, 0.2)' :
+                                    accent === 'pink' ? 'inset 0 0 0 1px rgba(236, 72, 153, 0.2)' :
+                                      accent === 'cyan' ? 'inset 0 0 0 1px rgba(6, 182, 212, 0.2)' :
+                                        accent === 'amber' ? 'inset 0 0 0 1px rgba(217, 119, 6, 0.2)' :
+                                          accent === 'teal' ? 'inset 0 0 0 1px rgba(20, 184, 166, 0.2)' :
+                                            'inset 0 0 0 1px rgba(59, 130, 246, 0.2)'
+                          }}
                         />
 
                         <div className="relative flex items-start gap-4">
                           <div
                             className={cn(
-                              "w-12 h-12 rounded-lg flex items-center justify-center flex-shrink-0 transition-all duration-300",
-                              "bg-gray-800 text-gray-400",
-                              accent === 'purple' && "group-hover:bg-purple-500/20 group-hover:text-purple-400",
-                              accent === 'indigo' && "group-hover:bg-indigo-500/20 group-hover:text-indigo-400",
-                              accent === 'green' && "group-hover:bg-green-500/20 group-hover:text-green-400",
-                              accent === 'orange' && "group-hover:bg-orange-500/20 group-hover:text-orange-400",
-                              accent === 'cyan' && "group-hover:bg-cyan-500/20 group-hover:text-cyan-400",
-                              accent === 'teal' && "group-hover:bg-teal-500/20 group-hover:text-teal-400",
-                              accent === 'blue' && "group-hover:bg-blue-500/20 group-hover:text-blue-400",
+                              'w-12 h-12 rounded-xl flex items-center justify-center flex-shrink-0 transition-all duration-300',
+                              'bg-gray-950/90 border border-gray-800/90',
+                              ac.text,
+                              'group-hover:scale-105 group-hover:border-gray-600',
+                              EXPERIMENT_CARD_ICON_HOVER_GLOW[accentKey],
                             )}
                           >
                             {iconMap[iconName]}
                           </div>
 
-                          <div className="flex-1 min-w-0">
-                            <h3 className="font-semibold text-white mb-1 group-hover:text-white transition-colors">
+                          <div className="flex-1 min-w-0 pt-0.5">
+                            <h3 className="font-semibold text-gray-100 mb-1 group-hover:text-white transition-colors">
                               {name}
                             </h3>
-                            <p className="text-sm text-gray-500 group-hover:text-gray-400 transition-colors line-clamp-2">
+                            <p className="text-sm text-gray-500 group-hover:text-gray-400 transition-colors line-clamp-2 leading-relaxed">
                               {description}
                             </p>
                           </div>
                         </div>
                       </button>
-                    ))
+                      )
+                    })
                   })}
                 </div>
               </section>
             )
           })}
         </div>
+
+        {selectedToolIds.size > 0 && (
+          <div className="fixed bottom-6 right-6 z-40">
+            <button
+              type="button"
+              onClick={() => {
+                const { toolIds, qcCardForPending } = resolveExperimentToolsFromSelection(selectedToolIds)
+                if (qcCardForPending?.calculationType) {
+                  setPendingInitialState({
+                    calculationType: qcCardForPending.calculationType,
+                    workflow: qcCardForPending.workflow,
+                  })
+                }
+                addMultipleExperimentTools(toolIds)
+                closeOverlay()
+              }}
+              className={cn(
+                'px-6 py-3 rounded-xl font-semibold transition-all duration-300 text-white border',
+                'hover:scale-105 shadow-lg hover:shadow-xl shadow-blue-500/25',
+                EXPERIMENT_ENTRY_BUTTON_CLASS
+              )}
+            >
+              Load {selectedToolIds.size} Tool{selectedToolIds.size !== 1 ? 's' : ''}
+            </button>
+          </div>
+        )}
       </div>
-    </motion.div>
+    </div>
   )
 }
 
@@ -496,14 +894,10 @@ const overlayComponents: Partial<Record<NonNullable<OverlayId>, React.ComponentT
 export function OverlayPages() {
   const { activeOverlay } = useUIStore()
 
-  return (
-    <AnimatePresence mode="wait">
-      {activeOverlay && overlayComponents[activeOverlay] && (
-        (() => {
-          const Component = overlayComponents[activeOverlay]
-          return <Component key={activeOverlay} />
-        })()
-      )}
-    </AnimatePresence>
-  )
+  if (!activeOverlay) return null
+
+  const Component = overlayComponents[activeOverlay]
+  if (!Component) return null
+
+  return <Component />
 }

@@ -1,12 +1,11 @@
 'use client'
 
-import { useState, useEffect, useMemo, useCallback } from 'react'
-import { Button } from '@/components/ui/button'
+import { useState, useEffect, useMemo, useCallback, useRef } from 'react'
 import { api } from '@/lib/api-client'
 import { useABFEStore } from '@/store/abfe-store'
 import type { ABFEResult, ABFEParsedResults, ABFEJob } from '@/types/abfe-types'
-import { Loader2, TrendingDown, TrendingUp, BarChart3, AlertCircle, CheckCircle, XCircle, Clock, RefreshCw } from 'lucide-react'
-import { UnifiedJobList } from '../shared'
+import { Loader2, TrendingDown, TrendingUp, AlertCircle, CheckCircle, XCircle, Clock, RefreshCw, Flame } from 'lucide-react'
+import { UnifiedJobList, NoJobSelectedState } from '../shared'
 import { useUnifiedResultsStore } from '@/store/unified-results-store'
 import { ABFEProgressDisplay } from './ABFEProgressDisplay'
 import { ABFEDetailedAnalysis } from './ABFEDetailedAnalysis'
@@ -16,8 +15,6 @@ interface ABFEStepResultsProps {
     isRunning?: boolean
     progress?: number
     progressMessage?: string
-    onReset: () => void
-    onNewCalculation: () => void
 }
 
 export function ABFEStepResults({
@@ -25,8 +22,6 @@ export function ABFEStepResults({
     isRunning = false,
     progress = 0,
     progressMessage = '',
-    onReset,
-    onNewCalculation,
 }: ABFEStepResultsProps) {
     const {
         activeJobId,
@@ -59,41 +54,57 @@ export function ABFEStepResults({
 
     const filteredJobs = getFilteredJobs().filter((j: any) => j.service === 'abfe')
 
-    // Handle job selection
+    const fetchControllerRef = useRef<AbortController | null>(null)
+
     const handleSelectJob = useCallback(async (jobId: string | null) => {
+        fetchControllerRef.current?.abort()
         setActiveJob(jobId)
-        if (!jobId) return
+        if (!jobId) {
+            setABFEResult(null)
+            setParsedResults(null)
+            setParseError(null)
+            setIsLoadingResults(false)
+            setIsLoadingParsed(false)
+            return
+        }
+
+        const controller = new AbortController()
+        fetchControllerRef.current = controller
+
         setIsLoadingResults(true)
         setParseError(null)
         setParsedResults(null)
 
         try {
-            const status = await api.getABFEStatus(jobId)
-            // Map 'id' field to 'job_id' for consistency with ABFEResult interface
+            const status = await api.getABFEStatus(jobId, { signal: controller.signal })
+            if (controller.signal.aborted) return
+
             const abfeResult = {
                 ...status,
                 job_id: status.id || jobId
             }
             setABFEResult(abfeResult)
 
-            // If completed, also load parsed results
             if (status.status === 'completed') {
                 try {
-                    const parsed = await api.parseABFEResults(jobId)
+                    const parsed = await api.parseABFEResults(jobId, { signal: controller.signal })
+                    if (controller.signal.aborted) return
                     setParsedResults(parsed)
                     if (parsed.error) {
                         setParseError(parsed.error)
                     }
                 } catch (err) {
+                    if (controller.signal.aborted) return
                     console.error('Error parsing results:', err)
                     setParseError(err instanceof Error ? err.message : 'Failed to parse results')
                 }
             }
         } catch (err) {
+            if (controller.signal.aborted) return
             console.error('Error loading job status:', err)
             setParseError(err instanceof Error ? err.message : 'Failed to load job status')
         } finally {
-            setIsLoadingResults(false)
+            if (!controller.signal.aborted) setIsLoadingResults(false)
         }
     }, [setActiveJob, setIsLoadingResults, setParseError, setParsedResults, setABFEResult])
 
@@ -200,7 +211,7 @@ export function ABFEStepResults({
                 resultsTab={resultsTab}
                 onTabChange={setResultsTab}
                 showServiceBadge={false}
-                accentColor="blue"
+                accentColor="orange"
                 title="ABFE Jobs"
                 maxHeight="160px"
             />
@@ -464,24 +475,12 @@ export function ABFEStepResults({
                         )}
                     </div>
                 ) : (
-                    <div className="flex items-center justify-center h-full text-gray-400">
-                        <div className="text-center">
-                            <BarChart3 className="w-12 h-12 mx-auto mb-4" />
-                            <p>No results available</p>
-                            <p className="text-sm mt-1">Select a job to view results</p>
-                        </div>
-                    </div>
+                    <NoJobSelectedState
+                        icon={Flame}
+                        description="Select a job from the list or run a new ABFE calculation"
+                        className="h-full"
+                    />
                 )}
-            </div>
-
-            {/* Actions */}
-            <div className="p-4 border-t border-gray-700 flex gap-2">
-                <Button onClick={onReset} variant="outline" className="flex-1">
-                    Reset
-                </Button>
-                <Button onClick={onNewCalculation} className="flex-1 bg-blue-600 hover:bg-blue-700">
-                    New Calculation
-                </Button>
             </div>
         </div>
     )

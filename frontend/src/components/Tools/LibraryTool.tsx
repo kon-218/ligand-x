@@ -1,12 +1,17 @@
 'use client'
 
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useRef, useMemo } from 'react'
 import { api } from '@/lib/api-client'
 import { Button } from '@/components/ui/button'
 import { Alert, AlertDescription } from '@/components/ui/alert'
-import { Loader2, AlertCircle, Library, Eye, Trash2, X, Beaker, Download, Pill, ChevronDown, Zap, PenTool, Check, Pencil, GitBranch } from 'lucide-react'
+import { Loader2, AlertCircle, Library, Eye, Trash2, X, Beaker, Download, Pill, ChevronDown, Zap, PenTool, Check, Pencil, GitBranch, Maximize2 } from 'lucide-react'
 import { useMolecularStore } from '@/store/molecular-store'
 import { useUIStore } from '@/store/ui-store'
+import { baseColorConfigs, generateLibraryPropBadgeStyles } from '@/lib/base-color-config'
+import { useBaseColor } from '@/hooks/use-base-color'
+import { useWarmAccent } from '@/hooks/use-warm-accent'
+import type { ADMETResult } from '@/types/molecular'
+import { cn } from '@/lib/utils'
 
 interface Molecule {
   id: number
@@ -16,6 +21,8 @@ interface Molecule {
   canonical_smiles: string
   molecular_weight: number
   logp: number
+  num_atoms?: number
+  num_bonds?: number
 }
 
 export function LibraryTool() {
@@ -33,13 +40,21 @@ export function LibraryTool() {
   const [confirmDeleteId, setConfirmDeleteId] = useState<number | null>(null)
   const editInputRef = useRef<HTMLInputElement>(null)
 
-  const { addStructureTab, setAdmetResults, setIsAdmetRunning, setCurrentStructure, setPendingEditorImport, setPendingTautomerSmiles } = useMolecularStore()
-  const { setActiveTool } = useUIStore()
+  const { addStructureTab, addImageFileTab, setAdmetResults, setIsAdmetRunning, setCurrentStructure, setPendingEditorImport, setPendingTautomerSmiles, libraryLastUpdated, structureTabs, setActiveTab } = useMolecularStore()
+  const { setActiveTool, isSidePanelExpanded, closeOverlay } = useUIStore()
+  const bc_active = useBaseColor()
+  const bcPreset = baseColorConfigs[bc_active.basePreset]
+  const libraryPropBadgeStyles = useMemo(
+    () => (bc_active.isCustom ? generateLibraryPropBadgeStyles(bc_active.hexValue) : null),
+    [bc_active.isCustom, bc_active.hexValue]
+  )
+  const wa = useWarmAccent()
+  const wac = wa.config
 
-  // Fetch molecules on mount
+  // Fetch molecules on mount or when library is updated from elsewhere
   useEffect(() => {
     fetchMolecules()
-  }, [])
+  }, [libraryLastUpdated])
 
   const fetchMolecules = async () => {
     setLoading(true)
@@ -68,15 +83,31 @@ export function LibraryTool() {
       setDeletingId(null)
     }
   }
-
   const handleView3D = async (molecule: Molecule) => {
     try {
+      // Check if a tab for this molecule is already open (priority: ID, fallback: canonical SMILES)
+      // Note: Name is not part of the check since the tab name might differ from library name
+      const existingTab = structureTabs.find(tab =>
+        tab.metadata?.molecule_id === molecule.id ||
+        tab.smiles === molecule.canonical_smiles
+      )
+
+      if (existingTab) {
+        setActiveTab(existingTab.id)
+        closeOverlay()
+        return
+      }
+
       // Convert molfile to a structure and load it in the viewer
-      // We'll use the uploadSmiles endpoint to create a structure
       const structure = await api.uploadSmiles(molecule.canonical_smiles, molecule.name)
+      // Tag with molecule ID for future tab reuse
+      structure.metadata = { ...structure.metadata, molecule_id: molecule.id }
+
       // Add as a new tab instead of replacing current structure
       addStructureTab(structure, molecule.name)
       setViewingMolecule(null)
+      // Switch to viewer: close library overlay
+      closeOverlay()
 
       // You might want to show a toast notification here
       console.log('Molecule loaded in new 3D viewer tab:', molecule.name)
@@ -173,12 +204,14 @@ export function LibraryTool() {
 
     try {
       const result = await api.predictADMET({ smiles: molecule.canonical_smiles })
-      setAdmetResults(result)
+      setAdmetResults(result as ADMETResult)
       setIsAdmetRunning(false)
       setRunningAdmet(null)
 
       // Switch to ADMET tool to show results
+      // Switch to ADMET tool and close library overlay
       setActiveTool('admet')
+      closeOverlay()
     } catch (err: any) {
       console.error('Failed to run ADMET prediction:', err)
       setError(err.response?.data?.error || err.message || 'Failed to run ADMET prediction')
@@ -194,6 +227,7 @@ export function LibraryTool() {
       const structure = await api.uploadSmiles(molecule.canonical_smiles, molecule.name)
       addStructureTab(structure, molecule.name)
       setActiveTool('quantum-chemistry')
+      closeOverlay()
     } catch (err: any) {
       console.error('Failed to load molecule for QC:', err)
       setError(err.response?.data?.error || err.message || 'Failed to load molecule for QC')
@@ -204,6 +238,7 @@ export function LibraryTool() {
     setOpenDropdownId(null)
     setPendingTautomerSmiles(molecule.canonical_smiles)
     setActiveTool('input')
+    closeOverlay()
   }
 
   const handleOpenEditor = async (molecule: Molecule) => {
@@ -214,22 +249,28 @@ export function LibraryTool() {
       addStructureTab(structure, molecule.name)
       setPendingEditorImport(true)
       setActiveTool('editor')
+      closeOverlay()
     } catch (err: any) {
       console.error('Failed to load molecule for editor:', err)
       setError(err.response?.data?.error || err.message || 'Failed to load molecule for editor')
     }
   }
 
-  // Generate image URL for molecule using SMILES
-  const getMoleculeImageUrl = (molecule: Molecule) => {
-    // Use a public SMILES to image service or your backend endpoint
-    // For now, we'll use PubChem's depict service as a fallback
+  // PubChem PNG by SMILES (thumbnail vs viewer tab)
+  const getMoleculeImageUrl = (molecule: Molecule, imageSize: string = '200x200') => {
     const encodedSmiles = encodeURIComponent(molecule.canonical_smiles)
-    return `https://pubchem.ncbi.nlm.nih.gov/rest/pug/compound/smiles/${encodedSmiles}/PNG?image_size=200x200`
+    return `https://pubchem.ncbi.nlm.nih.gov/rest/pug/compound/smiles/${encodedSmiles}/PNG?image_size=${imageSize}`
+  }
+
+  const handleOpen2DInViewer = (molecule: Molecule) => {
+    if (imageErrors.has(molecule.id)) return
+    const url = getMoleculeImageUrl(molecule, '800x800')
+    addImageFileTab(url, `${molecule.name} (2D)`, { libraryMoleculeId: molecule.id })
+    closeOverlay()
   }
 
   return (
-    <div className="space-y-6 h-full flex flex-col px-6 py-6">
+    <div className="space-y-6 h-full flex flex-col px-6 py-6" style={{ backgroundColor: '#0F172A' }}>
       {/* Header */}
       <div className="space-y-3">
         <div className="flex items-start gap-3">
@@ -267,7 +308,10 @@ export function LibraryTool() {
       {loading && molecules.length === 0 && (
         <div className="flex items-center justify-center py-12">
           <div className="text-center space-y-3">
-            <Loader2 className="h-8 w-8 animate-spin text-blue-400 mx-auto" />
+            <Loader2
+              className={`h-8 w-8 animate-spin mx-auto ${!bc_active.isCustom ? bc_active.text : ''}`}
+              style={bc_active.isCustom ? bc_active.styles?.text : undefined}
+            />
             <p className="text-sm text-gray-400">Loading molecules...</p>
           </div>
         </div>
@@ -291,246 +335,395 @@ export function LibraryTool() {
       {/* Molecule Grid */}
       {!loading && molecules.length > 0 && (
         <div className="flex-1 overflow-y-auto pr-1 overflow-x-visible">
-          <div className="grid grid-cols-1 gap-4 pb-4">
+          <div className={`grid gap-4 pb-4 ${isSidePanelExpanded ? 'grid-cols-2' : 'grid-cols-3'}`}>
             {molecules.map((molecule) => (
               <div
                 key={molecule.id}
-                className="bg-gradient-to-br from-gray-800/70 to-gray-800/40 border border-gray-700/60 rounded-xl overflow-visible hover:border-blue-500/40 hover:shadow-lg hover:shadow-blue-500/10 transition-all duration-200"
+                className={`bg-gray-800/50 border border-gray-700/60 rounded-xl overflow-visible hover:shadow-lg transition-all duration-200 flex flex-col`}
+                style={{
+                  borderColor: 'rgb(55, 65, 81)',
+                  '--tw-shadow-color': `rgb(${bc_active.rgbString} / 0.1)`,
+                } as React.CSSProperties & any}
+                onMouseEnter={(e) => {
+                  (e.currentTarget as HTMLElement).style.borderColor = `rgba(${bc_active.rgbString}, 0.4)`
+                }}
+                onMouseLeave={(e) => {
+                  (e.currentTarget as HTMLElement).style.borderColor = 'rgb(55, 65, 81)'
+                }}
               >
-                <div className="p-4">
-                  <div className="flex gap-4">
-                    {/* Molecule Image */}
-                    <div className="flex-shrink-0">
-                      <div className="bg-white rounded-lg overflow-hidden w-28 h-28 flex items-center justify-center shadow-md">
-                        {imageErrors.has(molecule.id) ? (
-                          <div className="flex flex-col items-center justify-center text-gray-400 p-3">
-                            <Beaker className="h-8 w-8 mb-1" />
-                            <p className="text-[10px] text-center">No image</p>
-                          </div>
-                        ) : (
-                          <img
-                            src={getMoleculeImageUrl(molecule)}
-                            alt={molecule.name}
-                            className="w-full h-full object-contain p-1.5"
-                            onError={() => handleImageError(molecule.id)}
-                          />
-                        )}
+                {/* ── Top row: image + name/properties ── */}
+                <div className="flex gap-3 p-3 pb-2">
+                  {/* Left: molecule image */}
+                  <div className="flex-shrink-0">
+                    {imageErrors.has(molecule.id) ? (
+                      <div className="bg-white rounded-lg overflow-hidden h-[90px] w-[90px] flex flex-col items-center justify-center text-gray-400 p-2 shadow-sm border border-gray-200/10">
+                        <Beaker className="h-6 w-6 mb-1" />
+                        <p className="text-[9px] text-center">No image</p>
                       </div>
-                    </div>
-
-                    {/* Molecule Info */}
-                    <div className="flex-1 min-w-0 space-y-3">
-                      {/* Name - Editable */}
-                      <div className="space-y-1 min-w-0">
-                        {editingId === molecule.id ? (
-                          <div className="flex items-center gap-1.5 min-w-0">
-                            <input
-                              ref={editInputRef}
-                              type="text"
-                              value={editingName}
-                              onChange={(e) => setEditingName(e.target.value)}
-                              onKeyDown={(e) => handleKeyDown(e, molecule.id)}
-                              className="flex-1 min-w-0 bg-gray-900 border border-blue-500/50 rounded px-2 py-1 text-sm text-white focus:outline-none focus:border-blue-500"
-                              disabled={savingName}
-                            />
-                            <button
-                              onClick={() => handleSaveName(molecule.id)}
-                              disabled={savingName}
-                              className="p-1 text-green-400 hover:text-green-300 transition-colors"
-                              title="Save"
-                            >
-                              {savingName ? (
-                                <Loader2 className="h-4 w-4 animate-spin" />
-                              ) : (
-                                <Check className="h-4 w-4" />
-                              )}
-                            </button>
-                            <button
-                              onClick={handleCancelEdit}
-                              disabled={savingName}
-                              className="p-1 text-gray-400 hover:text-gray-300 transition-colors"
-                              title="Cancel"
-                            >
-                              <X className="h-4 w-4" />
-                            </button>
-                          </div>
-                        ) : (
-                          <div className="flex items-center gap-1.5 group">
-                            <h4 className="text-sm font-semibold text-white leading-tight truncate flex-1" title={molecule.name}>
-                              {molecule.name}
-                            </h4>
-                            <button
-                              onClick={() => handleStartEdit(molecule)}
-                              className="p-1 text-gray-500 hover:text-blue-400 opacity-0 group-hover:opacity-100 transition-all"
-                              title="Edit name"
-                            >
-                              <Pencil className="h-3.5 w-3.5" />
-                            </button>
-                          </div>
-                        )}
-                        {/* Original Name (from protein) */}
-                        {molecule.original_name && (
-                          <p className="text-xs text-gray-500 truncate" title={`Original: ${molecule.original_name}`}>
-                            {molecule.original_name}
-                          </p>
-                        )}
-                      </div>
-
-                      {/* Properties Row */}
-                      <div className="flex gap-2">
-                        <div className="flex-1 bg-gradient-to-br from-blue-900/40 to-blue-800/20 border border-blue-700/30 rounded-lg px-2.5 py-1.5">
-                          <p className="text-blue-400 text-[9px] uppercase tracking-wider font-semibold mb-0.5">Mol. Weight</p>
-                          <p className="text-white text-xs font-bold">
-                            {molecule.molecular_weight.toFixed(2)}
-                          </p>
-                        </div>
-                        <div className="flex-1 bg-gradient-to-br from-purple-900/40 to-purple-800/20 border border-purple-700/30 rounded-lg px-2.5 py-1.5">
-                          <p className="text-purple-400 text-[9px] uppercase tracking-wider font-semibold mb-0.5">LogP</p>
-                          <p className="text-white text-xs font-bold">
-                            {molecule.logp.toFixed(2)}
-                          </p>
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-
-                  {/* SMILES - Full Width Below */}
-                  <div className="mt-3 bg-gray-900/60 border border-gray-700/50 rounded-lg px-3 py-2">
-                    <p className="text-gray-400 text-[9px] uppercase tracking-wider font-semibold mb-1">SMILES</p>
-                    <p className="text-gray-300 text-[11px] font-mono leading-relaxed break-all" title={molecule.canonical_smiles}>
-                      {molecule.canonical_smiles}
-                    </p>
-                  </div>
-
-                  {/* Action Buttons */}
-                  <div className="flex gap-2 mt-3">
-                    <Button
-                      onClick={() => handleView3D(molecule)}
-                      size="sm"
-                      className="flex-1 bg-gradient-to-r from-blue-600 to-blue-500 hover:from-blue-700 hover:to-blue-600 text-white text-xs font-medium shadow-md h-8"
-                    >
-                      <Eye className="h-3.5 w-3.5 mr-1.5" />
-                      View 3D
-                    </Button>
-                    {/* Tools Dropdown */}
-                    <div className="relative flex-1">
-                      <Button
-                        onClick={() => setOpenDropdownId(openDropdownId === molecule.id ? null : molecule.id)}
-                        size="sm"
-                        disabled={runningAdmet === molecule.id}
-                        className="w-full bg-gradient-to-r from-purple-600 to-pink-600 hover:from-purple-700 hover:to-pink-700 text-white text-xs font-medium shadow-md h-8"
-                        title="Tools"
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={() => handleOpen2DInViewer(molecule)}
+                        title="Open 2D structure in viewer"
+                        className="group relative bg-white rounded-lg overflow-hidden h-[90px] w-[90px] flex items-center justify-center shadow-sm border border-gray-200/10 cursor-pointer transition-[box-shadow,transform] hover:shadow-md hover:scale-[1.02] focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-offset-gray-800 focus-visible:ring-cyan-500/80"
                       >
-                        {runningAdmet === molecule.id ? (
-                          <>
-                            <Loader2 className="h-3.5 w-3.5 mr-1.5 animate-spin" />
-                            Running...
-                          </>
-                        ) : (
-                          <>
-                            <Pill className="h-3.5 w-3.5 mr-1.5" />
-                            Tools
-                            <ChevronDown className="h-3.5 w-3.5 ml-1.5" />
-                          </>
-                        )}
-                      </Button>
-                      {/* Dropdown Menu - Absolute positioning relative to button container */}
-                      {openDropdownId === molecule.id && (
-                        <>
-                          {/* Backdrop to close dropdown */}
-                          <div
-                            className="fixed inset-0 z-[9998]"
-                            onClick={() => setOpenDropdownId(null)}
+                        <img
+                          src={getMoleculeImageUrl(molecule)}
+                          alt={molecule.name}
+                          className="w-full h-full object-contain pointer-events-none"
+                          onError={() => handleImageError(molecule.id)}
+                        />
+                        <span className="absolute inset-0 flex items-center justify-center bg-black/0 group-hover:bg-black/35 transition-colors pointer-events-none">
+                          <Maximize2 className="w-5 h-5 text-white opacity-0 group-hover:opacity-100 drop-shadow-md transition-opacity" aria-hidden />
+                        </span>
+                      </button>
+                    )}
+                  </div>
+
+                  {/* Right: name + properties */}
+                  <div className="flex-1 min-w-0 flex flex-col justify-between py-0.5">
+                    {/* Name */}
+                    <div className="min-w-0">
+                      {editingId === molecule.id ? (
+                        <div className="flex items-center gap-1 min-w-0">
+                          <input
+                            ref={editInputRef}
+                            type="text"
+                            value={editingName}
+                            onChange={(e) => setEditingName(e.target.value)}
+                            onKeyDown={(e) => handleKeyDown(e, molecule.id)}
+                            className={`flex-1 min-w-0 bg-gray-900 border rounded px-2 py-1 text-xs text-white focus:outline-none`}
+                            style={{
+                              borderColor: `rgba(${bc_active.rgbString}, 0.5)`,
+                            }}
+                            onFocus={(e) => {
+                              (e.target as HTMLInputElement).style.borderColor = bc_active.hexValue
+                            }}
+                            onBlur={(e) => {
+                              (e.target as HTMLInputElement).style.borderColor = `rgba(${bc_active.rgbString}, 0.5)`
+                            }}
+                            disabled={savingName}
                           />
-                          {/* Dropdown Menu - Absolute position relative to parent */}
-                          <div
-                            className="absolute top-full left-0 mt-1 w-full bg-gray-800 border border-gray-700 rounded-lg shadow-2xl z-[9999] overflow-hidden"
+                          <button
+                            onClick={() => handleSaveName(molecule.id)}
+                            disabled={savingName}
+                            className="p-1 text-green-400 hover:text-green-300 transition-colors flex-shrink-0"
+                            title="Save"
                           >
-                            <button
-                              onClick={() => handleRunADMET(molecule)}
-                              className="w-full px-3 py-2 text-left text-xs text-gray-300 hover:bg-purple-600/20 hover:text-white flex items-center gap-2 transition-colors whitespace-nowrap"
-                            >
-                              <Pill className="h-3.5 w-3.5" />
-                              ADMET
-                            </button>
-                            <button
-                              onClick={() => handleOpenQC(molecule)}
-                              className="w-full px-3 py-2 text-left text-xs text-gray-300 hover:bg-blue-600/20 hover:text-white flex items-center gap-2 transition-colors whitespace-nowrap"
-                            >
-                              <Zap className="h-3.5 w-3.5" />
-                              QC
-                            </button>
-                            <button
-                              onClick={() => handleOpenEditor(molecule)}
-                              className="w-full px-3 py-2 text-left text-xs text-gray-300 hover:bg-green-600/20 hover:text-white flex items-center gap-2 transition-colors whitespace-nowrap"
-                            >
-                              <PenTool className="h-3.5 w-3.5" />
-                              Edit
-                            </button>
-                            <button
-                              onClick={() => handleExploreTautomers(molecule)}
-                              className="w-full px-3 py-2 text-left text-xs text-gray-300 hover:bg-teal-600/20 hover:text-white flex items-center gap-2 transition-colors whitespace-nowrap"
-                            >
-                              <GitBranch className="h-3.5 w-3.5" />
-                              Explore Tautomers
-                            </button>
-                          </div>
+                            {savingName ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Check className="h-3.5 w-3.5" />}
+                          </button>
+                          <button
+                            onClick={handleCancelEdit}
+                            disabled={savingName}
+                            className="p-1 text-gray-400 hover:text-gray-300 transition-colors flex-shrink-0"
+                            title="Cancel"
+                          >
+                            <X className="h-3.5 w-3.5" />
+                          </button>
+                        </div>
+                      ) : (
+                        <div className="flex items-start gap-1 group">
+                          <h4 className="text-sm font-semibold text-white leading-snug truncate flex-1" title={molecule.name}>
+                            {molecule.name}
+                          </h4>
+                          <button
+                            onClick={() => handleStartEdit(molecule)}
+                            className={`p-0.5 text-gray-600 opacity-0 group-hover:opacity-100 transition-all flex-shrink-0 mt-0.5`}
+                            style={{
+                              color: 'inherit'
+                            }}
+                            onMouseEnter={(e) => {
+                              (e.currentTarget as HTMLElement).style.color = bc_active.hexValue
+                            }}
+                            onMouseLeave={(e) => {
+                              (e.currentTarget as HTMLElement).style.color = '#4b5563'
+                            }}
+                            title="Edit name"
+                          >
+                            <Pencil className="h-3 w-3" />
+                          </button>
+                        </div>
+                      )}
+                      {molecule.original_name && (
+                        <p className="text-[10px] text-gray-500 truncate mt-0.5" title={`Original: ${molecule.original_name}`}>
+                          {molecule.original_name}
+                        </p>
+                      )}
+                    </div>
+
+                    {/* Property badges — 2×2 grid (tinted with base colour) */}
+                    <div className="grid grid-cols-2 gap-1.5 mt-2">
+                      <div
+                        className={cn('rounded-md px-2 py-1', !bc_active.isCustom && bcPreset.libraryPropCell)}
+                        style={bc_active.isCustom && libraryPropBadgeStyles ? libraryPropBadgeStyles.cell : undefined}
+                      >
+                        <p
+                          className={cn('text-[8px] uppercase tracking-wider font-semibold leading-none mb-0.5', !bc_active.isCustom && bcPreset.libraryPropLabel)}
+                          style={bc_active.isCustom && libraryPropBadgeStyles ? libraryPropBadgeStyles.label : undefined}
+                        >
+                          MW
+                        </p>
+                        <p
+                          className={cn('text-[11px] font-bold leading-none', !bc_active.isCustom && bcPreset.libraryPropValue)}
+                          style={bc_active.isCustom && libraryPropBadgeStyles ? libraryPropBadgeStyles.value : undefined}
+                        >
+                          {molecule.molecular_weight.toFixed(1)}
+                        </p>
+                      </div>
+                      <div
+                        className={cn('rounded-md px-2 py-1', !bc_active.isCustom && bcPreset.libraryPropCell)}
+                        style={bc_active.isCustom && libraryPropBadgeStyles ? libraryPropBadgeStyles.cell : undefined}
+                      >
+                        <p
+                          className={cn('text-[8px] uppercase tracking-wider font-semibold leading-none mb-0.5', !bc_active.isCustom && bcPreset.libraryPropLabel)}
+                          style={bc_active.isCustom && libraryPropBadgeStyles ? libraryPropBadgeStyles.label : undefined}
+                        >
+                          LogP
+                        </p>
+                        <p
+                          className={cn('text-[11px] font-bold leading-none', !bc_active.isCustom && bcPreset.libraryPropValue)}
+                          style={bc_active.isCustom && libraryPropBadgeStyles ? libraryPropBadgeStyles.value : undefined}
+                        >
+                          {molecule.logp.toFixed(2)}
+                        </p>
+                      </div>
+                      <div
+                        className={cn('rounded-md px-2 py-1', !bc_active.isCustom && bcPreset.libraryPropCell)}
+                        style={bc_active.isCustom && libraryPropBadgeStyles ? libraryPropBadgeStyles.cell : undefined}
+                      >
+                        <p
+                          className={cn('text-[8px] uppercase tracking-wider font-semibold leading-none mb-0.5', !bc_active.isCustom && bcPreset.libraryPropLabel)}
+                          style={bc_active.isCustom && libraryPropBadgeStyles ? libraryPropBadgeStyles.label : undefined}
+                        >
+                          Atoms
+                        </p>
+                        <p
+                          className={cn('text-[11px] font-bold leading-none', !bc_active.isCustom && bcPreset.libraryPropValue)}
+                          style={bc_active.isCustom && libraryPropBadgeStyles ? libraryPropBadgeStyles.value : undefined}
+                        >
+                          {molecule.num_atoms ?? '—'}
+                        </p>
+                      </div>
+                      <div
+                        className={cn('rounded-md px-2 py-1', !bc_active.isCustom && bcPreset.libraryPropCell)}
+                        style={bc_active.isCustom && libraryPropBadgeStyles ? libraryPropBadgeStyles.cell : undefined}
+                      >
+                        <p
+                          className={cn('text-[8px] uppercase tracking-wider font-semibold leading-none mb-0.5', !bc_active.isCustom && bcPreset.libraryPropLabel)}
+                          style={bc_active.isCustom && libraryPropBadgeStyles ? libraryPropBadgeStyles.label : undefined}
+                        >
+                          Bonds
+                        </p>
+                        <p
+                          className={cn('text-[11px] font-bold leading-none', !bc_active.isCustom && bcPreset.libraryPropValue)}
+                          style={bc_active.isCustom && libraryPropBadgeStyles ? libraryPropBadgeStyles.value : undefined}
+                        >
+                          {molecule.num_bonds ?? '—'}
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                {/* ── Divider ── */}
+                <div className="mx-3 border-t border-gray-700/50" />
+
+                {/* ── SMILES ── */}
+                <div className="px-3 py-2">
+                  <p className="text-gray-500 text-[8px] uppercase tracking-wider font-semibold mb-0.5">SMILES</p>
+                  <p
+                    className="text-gray-400 text-[10px] font-mono leading-relaxed break-all line-clamp-2"
+                    title={molecule.canonical_smiles}
+                  >
+                    {molecule.canonical_smiles}
+                  </p>
+                </div>
+
+                {/* ── Divider ── */}
+                <div className="mx-3 border-t border-gray-700/50" />
+
+                {/* ── Action buttons ── */}
+                <div className="p-3 pt-2 flex gap-1.5 mt-auto">
+                  <Button
+                    onClick={() => handleView3D(molecule)}
+                    size="sm"
+                    className={`flex-1 text-white text-xs font-medium h-7 px-2 ${!bc_active.isCustom ? `${bc_active.buttonBg} ${bc_active.buttonBgHover}` : ''}`}
+                    style={bc_active.isCustom ? {
+                      backgroundColor: bc_active.hexValue,
+                    } : undefined}
+                    onMouseEnter={(e) => {
+                      if (bc_active.isCustom) {
+                        (e.target as HTMLElement).style.backgroundColor = `rgba(${bc_active.rgbString}, 0.8)`
+                      }
+                    }}
+                    onMouseLeave={(e) => {
+                      if (bc_active.isCustom) {
+                        (e.target as HTMLElement).style.backgroundColor = bc_active.hexValue
+                      }
+                    }}
+                  >
+                    <Eye className="h-3 w-3 mr-1" />
+                    View 3D
+                  </Button>
+
+                  {/* Tools Dropdown */}
+                  <div className="relative flex-1">
+                    <Button
+                      onClick={() => setOpenDropdownId(openDropdownId === molecule.id ? null : molecule.id)}
+                      size="sm"
+                      disabled={runningAdmet === molecule.id}
+                      className={cn(
+                        'w-full text-white text-xs font-medium h-7 px-2',
+                        !wa.isCustom && wac && `${wac.buttonBg} ${wac.buttonBgHover}`
+                      )}
+                      style={wa.isCustom && wa.customStyles ? wa.customStyles.libraryToolsButton : undefined}
+                      onMouseEnter={(e) => {
+                        if (wa.isCustom) {
+                          (e.currentTarget as HTMLElement).style.backgroundColor = `rgba(${wa.rgbString}, 0.85)`
+                        }
+                      }}
+                      onMouseLeave={(e) => {
+                        if (wa.isCustom && wa.customStyles) {
+                          (e.currentTarget as HTMLElement).style.backgroundColor = wa.customStyles.hexValue
+                        }
+                      }}
+                      title="Tools"
+                    >
+                      {runningAdmet === molecule.id ? (
+                        <>
+                          <Loader2 className="h-3 w-3 mr-1 animate-spin" />
+                          Running...
+                        </>
+                      ) : (
+                        <>
+                          <Pill className="h-3 w-3 mr-1" />
+                          Tools
+                          <ChevronDown className="h-3 w-3 ml-1" />
                         </>
                       )}
-                    </div>
-                    <Button
-                      onClick={() => handleDownloadSDF(molecule)}
-                      size="sm"
-                      variant="outline"
-                      className="px-3 bg-gray-800/80 border-gray-600 hover:bg-green-900/60 hover:border-green-600 text-gray-300 hover:text-green-400 h-8"
-                      title="Download as SDF"
-                    >
-                      <Download className="h-3.5 w-3.5" />
                     </Button>
-                    <Button
-                      onClick={() => setConfirmDeleteId(molecule.id)}
-                      size="sm"
-                      variant="outline"
-                      disabled={deletingId === molecule.id}
-                      className="px-3 bg-gray-800/80 border-gray-600 hover:bg-red-900/60 hover:border-red-600 text-gray-300 hover:text-red-400 h-8"
-                    >
-                      {deletingId === molecule.id ? (
-                        <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                      ) : (
-                        <Trash2 className="h-3.5 w-3.5" />
-                      )}
-                    </Button>
+                    {openDropdownId === molecule.id && (
+                      <>
+                        <div className="fixed inset-0 z-[9998]" onClick={() => setOpenDropdownId(null)} />
+                        <div className="absolute top-full left-0 mt-1 w-40 bg-gray-800 border border-gray-700 rounded-lg shadow-2xl z-[9999] overflow-hidden">
+                          <button
+                            onClick={() => handleRunADMET(molecule)}
+                            className={cn(
+                              'w-full px-3 py-2 text-left text-xs text-gray-300 hover:text-white flex items-center gap-2 transition-colors',
+                              !wa.isCustom && wac && wac.menuItemHoverClass
+                            )}
+                            onMouseEnter={(e) => {
+                              if (wa.isCustom) e.currentTarget.style.backgroundColor = `rgba(${wa.rgbString}, 0.2)`
+                            }}
+                            onMouseLeave={(e) => {
+                              if (wa.isCustom) e.currentTarget.style.backgroundColor = 'transparent'
+                            }}
+                          >
+                            <Pill className="h-3.5 w-3.5" /> ADMET
+                          </button>
+                          <button
+                            onClick={() => handleOpenQC(molecule)}
+                            className={cn(
+                              'w-full px-3 py-2 text-left text-xs text-gray-300 hover:text-white flex items-center gap-2 transition-colors',
+                              !wa.isCustom && wac && wac.menuItemHoverClass
+                            )}
+                            onMouseEnter={(e) => {
+                              if (wa.isCustom) e.currentTarget.style.backgroundColor = `rgba(${wa.rgbString}, 0.2)`
+                            }}
+                            onMouseLeave={(e) => {
+                              if (wa.isCustom) e.currentTarget.style.backgroundColor = 'transparent'
+                            }}
+                          >
+                            <Zap className="h-3.5 w-3.5" /> QC
+                          </button>
+                          <button
+                            onClick={() => handleOpenEditor(molecule)}
+                            className={cn(
+                              'w-full px-3 py-2 text-left text-xs text-gray-300 hover:text-white flex items-center gap-2 transition-colors',
+                              !wa.isCustom && wac && wac.menuItemHoverClass
+                            )}
+                            onMouseEnter={(e) => {
+                              if (wa.isCustom) e.currentTarget.style.backgroundColor = `rgba(${wa.rgbString}, 0.2)`
+                            }}
+                            onMouseLeave={(e) => {
+                              if (wa.isCustom) e.currentTarget.style.backgroundColor = 'transparent'
+                            }}
+                          >
+                            <PenTool className="h-3.5 w-3.5" /> Edit
+                          </button>
+                          <button
+                            onClick={() => handleExploreTautomers(molecule)}
+                            className={cn(
+                              'w-full px-3 py-2 text-left text-xs text-gray-300 hover:text-white flex items-center gap-2 transition-colors',
+                              !wa.isCustom && wac && wac.menuItemHoverClass
+                            )}
+                            onMouseEnter={(e) => {
+                              if (wa.isCustom) e.currentTarget.style.backgroundColor = `rgba(${wa.rgbString}, 0.2)`
+                            }}
+                            onMouseLeave={(e) => {
+                              if (wa.isCustom) e.currentTarget.style.backgroundColor = 'transparent'
+                            }}
+                          >
+                            <GitBranch className="h-3.5 w-3.5" /> Explore Tautomers
+                          </button>
+                        </div>
+                      </>
+                    )}
                   </div>
 
-                  {/* Inline delete confirmation */}
-                  {confirmDeleteId === molecule.id && (
-                    <div className="mt-3 flex items-center justify-between gap-2 bg-red-950/50 border border-red-700/50 rounded-lg px-3 py-2">
-                      <p className="text-xs text-red-300">Delete this molecule?</p>
-                      <div className="flex gap-2">
-                        <Button
-                          onClick={() => setConfirmDeleteId(null)}
-                          size="sm"
-                          variant="outline"
-                          className="h-7 px-3 text-xs bg-gray-800 border-gray-600 hover:bg-gray-700 text-gray-300"
-                        >
-                          Cancel
-                        </Button>
-                        <Button
-                          onClick={() => handleDelete(molecule.id)}
-                          size="sm"
-                          className="h-7 px-3 text-xs bg-red-600 hover:bg-red-700 text-white border-0"
-                        >
-                          Delete
-                        </Button>
-                      </div>
-                    </div>
-                  )}
+                  <Button
+                    onClick={() => handleDownloadSDF(molecule)}
+                    size="sm"
+                    variant="outline"
+                    className="px-2 bg-transparent border-gray-600 hover:bg-green-900/40 hover:border-green-600 text-gray-400 hover:text-green-400 h-7"
+                    title="Download as SDF"
+                  >
+                    <Download className="h-3 w-3" />
+                  </Button>
+                  <Button
+                    onClick={() => setConfirmDeleteId(molecule.id)}
+                    size="sm"
+                    variant="outline"
+                    disabled={deletingId === molecule.id}
+                    className="px-2 bg-transparent border-gray-600 hover:bg-red-900/40 hover:border-red-600 text-gray-400 hover:text-red-400 h-7"
+                  >
+                    {deletingId === molecule.id ? (
+                      <Loader2 className="h-3 w-3 animate-spin" />
+                    ) : (
+                      <Trash2 className="h-3 w-3" />
+                    )}
+                  </Button>
                 </div>
+
+                {/* Inline delete confirmation */}
+                {confirmDeleteId === molecule.id && (
+                  <div className="mx-3 mb-3 flex items-center justify-between gap-2 bg-red-950/50 border border-red-800/50 rounded-lg px-3 py-2">
+                    <p className="text-xs text-red-300">Delete this molecule?</p>
+                    <div className="flex gap-2">
+                      <Button
+                        onClick={() => setConfirmDeleteId(null)}
+                        size="sm"
+                        variant="outline"
+                        className="h-7 px-3 text-xs bg-gray-800 border-gray-600 hover:bg-gray-700 text-gray-300"
+                      >
+                        Cancel
+                      </Button>
+                      <Button
+                        onClick={() => handleDelete(molecule.id)}
+                        size="sm"
+                        className="h-7 px-3 text-xs bg-red-600 hover:bg-red-700 text-white border-0"
+                      >
+                        Delete
+                      </Button>
+                    </div>
+                  </div>
+                )}
               </div>
             ))}
           </div>
         </div>
       )}
+
 
       {/* 3D View Modal */}
       {viewingMolecule && (

@@ -43,7 +43,7 @@ function parseSmilesInput(input: string): string[] {
 
 export function ADMETTool() {
   const { currentStructure, isAdmetRunning, setIsAdmetRunning } = useMolecularStore()
-  const colors = accentColorClasses['teal']
+  const colors = accentColorClasses['pink']
 
   const [activeTab, setActiveTab] = useState<'predict' | 'history'>('predict')
 
@@ -254,7 +254,7 @@ export function ADMETTool() {
 
       await fetchStoredResults()
       setActiveTab('history')
-      
+
     } catch (err: any) {
       console.error('ADMET prediction error:', err)
       setError(err.response?.data?.error || err.message || 'Failed to predict ADMET properties')
@@ -329,7 +329,7 @@ export function ADMETTool() {
       good: 'bg-green-500',
       warning: 'bg-yellow-500',
       bad: 'bg-red-500',
-      neutral: 'bg-teal-500',
+      neutral: 'bg-pink-500',
     }
     const statusTextColors = {
       good: 'text-green-400',
@@ -368,7 +368,7 @@ export function ADMETTool() {
     const smiles = results._metadata?.canonical_smiles
 
     return (
-      <div className="mt-4 space-y-4 pl-4 border-l-2 border-teal-500/30">
+      <div className="mt-4 space-y-4 pl-4 border-l-2 border-pink-500/30">
         {smiles && (
           <div className="flex justify-center mb-6">
             <div className="bg-white p-2 rounded-lg shadow-lg">
@@ -391,7 +391,7 @@ export function ADMETTool() {
 
           return (
             <div key={groupName} className="space-y-1">
-              <h5 className="text-sm font-medium text-teal-400 mb-2">{groupName}</h5>
+              <h5 className="text-sm font-medium text-pink-400 mb-2">{groupName}</h5>
               <div className="bg-gray-800/40 rounded-lg px-3">
                 {Object.entries(group).map(([key, value]) => renderPropertyRow(key, value))}
               </div>
@@ -406,17 +406,16 @@ export function ADMETTool() {
     <div className="relative space-y-6 h-full flex flex-col px-6 py-6">
 
       {/* Tabs */}
-      <div className="flex gap-2 border-b border-gray-700">
+      <div className="flex gap-2 border-b border-gray-800/50">
         <button
           onClick={() => {
             setActiveTab('predict')
             setError(null)
           }}
-          className={`px-4 py-2 text-sm font-medium transition-colors relative ${
-            activeTab === 'predict'
-              ? 'text-teal-400 border-b-2 border-teal-400'
-              : 'text-gray-400 hover:text-gray-300'
-          }`}
+          className={`px-4 py-2 text-sm font-medium transition-colors relative ${activeTab === 'predict'
+            ? 'text-pink-400 border-b-2 border-pink-400'
+            : 'text-gray-400 hover:text-gray-300'
+            }`}
         >
           <div className="flex items-center gap-2">
             <Beaker className="h-4 w-4" />
@@ -425,17 +424,16 @@ export function ADMETTool() {
         </button>
         <button
           onClick={() => setActiveTab('history')}
-          className={`px-4 py-2 text-sm font-medium transition-colors relative ${
-            activeTab === 'history'
-              ? 'text-teal-400 border-b-2 border-teal-400'
-              : 'text-gray-400 hover:text-gray-300'
-          }`}
+          className={`px-4 py-2 text-sm font-medium transition-colors relative ${activeTab === 'history'
+            ? 'text-pink-400 border-b-2 border-pink-400'
+            : 'text-gray-400 hover:text-gray-300'
+            }`}
         >
           <div className="flex items-center gap-2">
             <History className="h-4 w-4" />
             Stored Results
             {storedResults.length > 0 && (
-              <span className="text-xs bg-teal-500/20 text-teal-400 px-1.5 py-0.5 rounded">
+              <span className="text-xs bg-pink-500/20 text-pink-400 px-1.5 py-0.5 rounded">
                 {storedResults.length}
               </span>
             )}
@@ -449,16 +447,17 @@ export function ADMETTool() {
           <div className="space-y-6 pb-20">
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-2">
-                <Switch 
-                  checked={isBatchMode} 
+                <Switch
+                  checked={isBatchMode}
                   onCheckedChange={setIsBatchMode}
                   id="batch-mode"
+                  accentColor="pink"
                 />
                 <label htmlFor="batch-mode" className="text-sm font-medium text-gray-200 cursor-pointer">
                   Batch Mode
                 </label>
               </div>
-              
+
               {isBatchMode && (
                 <div className="text-sm text-gray-400">
                   {batchMolecules.size} selected
@@ -468,7 +467,7 @@ export function ADMETTool() {
 
             {isBatchMode ? (
               <div className="space-y-4">
-                <div className="p-3 bg-blue-900/20 border border-blue-500/30 rounded-lg text-xs text-blue-300">
+                <div className="p-3 bg-pink-900/20 border border-pink-500/30 rounded-lg text-xs text-pink-300">
                   <strong>SMILES Format:</strong> Enter one or more SMILES separated by commas, semicolons, newlines, or spaces. Duplicates are automatically removed.
                 </div>
                 <div className="flex gap-2">
@@ -479,17 +478,17 @@ export function ADMETTool() {
                     className="flex-1 bg-gray-800 border-gray-700"
                     onKeyDown={(e) => e.key === 'Enter' && handleAddSmiles()}
                   />
-                  <Button onClick={handleAddSmiles} variant="secondary" size="icon">
+                  <Button onClick={handleAddSmiles} variant="secondary" className="px-2">
                     <Plus className="h-4 w-4" />
                   </Button>
                 </div>
 
                 <div className="border border-gray-700 rounded-lg bg-gray-900/30 overflow-hidden">
-                  <div className="p-3 border-b border-gray-700 bg-gray-800/50 flex items-center justify-between">
+                  <div className="p-3 border-b border-gray-800/50 bg-gray-900/50 flex items-center justify-between">
                     <h3 className="text-sm font-medium text-gray-300">Available Molecules</h3>
-                    <Button 
-                      variant="ghost" 
-                      size="sm" 
+                    <Button
+                      variant="ghost"
+                      size="sm"
                       onClick={handleSelectAll}
                       className="h-8 text-xs"
                     >
@@ -503,13 +502,13 @@ export function ADMETTool() {
                       </div>
                     ) : (
                       availableMolecules.map(mol => (
-                        <div 
+                        <div
                           key={mol.id}
-                          className={`flex items-center gap-3 p-2 rounded hover:bg-gray-800 cursor-pointer ${batchMolecules.has(mol.id) ? 'bg-teal-900/20 border border-teal-500/30' : ''}`}
+                          className={`flex items-center gap-3 p-2 rounded hover:bg-gray-800 cursor-pointer ${batchMolecules.has(mol.id) ? 'bg-pink-900/20 border border-pink-500/30' : ''}`}
                           onClick={() => handleBatchSelection(mol.id)}
                         >
                           {batchMolecules.has(mol.id) ? (
-                            <CheckSquare className="h-4 w-4 text-teal-400 shrink-0" />
+                            <CheckSquare className="h-4 w-4 text-pink-400 shrink-0" />
                           ) : (
                             <Square className="h-4 w-4 text-gray-500 shrink-0" />
                           )}
@@ -531,7 +530,7 @@ export function ADMETTool() {
             ) : (
               <StructureSelector
                 selectedProtein={null}
-                onProteinSelect={() => {}}
+                onProteinSelect={() => { }}
                 showProteinStatus={false}
                 selectedLigand={selectedMolecule}
                 onLigandSelect={(id: string | null) => setSelectedMolecule(id || '')}
@@ -539,7 +538,7 @@ export function ADMETTool() {
                 ligandLabel="Select Molecule"
                 ligandDescription="Choose from structure ligands or library molecules"
                 onRefresh={fetchAvailableMolecules}
-                accentColor="teal"
+                accentColor="pink"
               />
             )}
 
@@ -563,7 +562,7 @@ export function ADMETTool() {
                 `Run ${isBatchMode ? 'Batch ' : ''}ADMET Prediction`
               )}
             </Button>
-            
+
             <InfoBox variant="info" title="About ADMET">
               <p>
                 ADMET analysis predicts Absorption, Distribution, Metabolism, Excretion,
@@ -590,7 +589,7 @@ export function ADMETTool() {
 
             {loadingHistory ? (
               <div className="flex items-center justify-center py-8">
-                <Loader2 className="w-6 h-6 text-teal-400 animate-spin" />
+                <Loader2 className="w-6 h-6 text-pink-400 animate-spin" />
               </div>
             ) : storedResults.length === 0 ? (
               <div className="text-center py-8 text-gray-400">
@@ -601,7 +600,7 @@ export function ADMETTool() {
                 {storedResults.map((result) => (
                   <div
                     key={result.id}
-                    className="p-4 bg-gray-800/50 border border-gray-700 rounded-lg"
+                    className="p-4 bg-gray-900/30 border border-gray-800/50 rounded-lg"
                   >
                     <div className="flex items-center justify-between">
                       <button
@@ -609,9 +608,9 @@ export function ADMETTool() {
                         className="flex items-center gap-2 text-left flex-1"
                       >
                         {loadingResult === result.id ? (
-                          <Loader2 className="w-4 h-4 text-teal-400 animate-spin" />
+                          <Loader2 className="w-4 h-4 text-pink-400 animate-spin" />
                         ) : expandedResults[result.id] ? (
-                          <ChevronDown className="w-4 h-4 text-teal-400" />
+                          <ChevronDown className="w-4 h-4 text-pink-400" />
                         ) : (
                           <ChevronRight className="w-4 h-4 text-gray-400" />
                         )}

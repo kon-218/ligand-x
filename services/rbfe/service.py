@@ -17,10 +17,13 @@ from dataclasses import dataclass, asdict
 logger = logging.getLogger(__name__)
 
 
-def emit_progress(progress: int, status: str) -> None:
+def emit_progress(progress: int, status: str, result: Optional[Dict[str, Any]] = None) -> None:
     """Emit a progress update parsed by the Celery task runner (same format as MD service)."""
+    payload = {'progress': progress, 'status': status}
+    if result is not None:
+        payload['result'] = result
     print(
-        f"MD_PROGRESS:{json.dumps({'progress': progress, 'status': status})}",
+        f"MD_PROGRESS:{json.dumps(payload)}",
         file=sys.stderr,
         flush=True,
     )
@@ -73,6 +76,14 @@ try:
 except ImportError:
     KARTOGRAF_AVAILABLE = False
     logger.warning("kartograf not available. Will fallback to RDKit MCS alignment.")
+
+# Meeko for PDBQT handling (preserves bond orders/aromaticity during PDBQT round-trip)
+try:
+    from meeko import PDBQTMolecule, RDKitMolCreate
+    MEEKO_AVAILABLE = True
+except ImportError:
+    MEEKO_AVAILABLE = False
+    logger.warning("Meeko not available. PDBQT conversion will use fallback PDB parsing.")
 
 from .network_planner import NetworkPlanner, LigandNetworkData
 
@@ -277,37 +288,152 @@ class RBFEService:
             logger.error(traceback.format_exc())
             return []
     
+    def _build_template_mol(
+        self,
+        ligand_data: str,
+        ligand_format: str,
+        ligand_id: str
+    ) -> Optional['Chem.Mol']:
+        """
+        Build an RDKit template molecule with trusted bond orders.
+
+        This template is used to re-assign chemistry when coordinates are parsed
+        from pose formats that may lose bond-order/aromatic information (PDB/PDBQT).
+        """
+        if not ligand_data:
+            return None
+
+        try:
+            fmt = (ligand_format or "").lower()
+            if fmt in ["sdf", "mol"]:
+                return Chem.MolFromMolBlock(ligand_data, removeHs=False)
+            if fmt == "pdb":
+                return Chem.MolFromPDBBlock(ligand_data, removeHs=False)
+            if fmt in ["smi", "smiles"]:
+                return Chem.AddHs(Chem.MolFromSmiles(ligand_data))
+        except Exception as e:
+            logger.warning(f"Failed to build template molecule for {ligand_id}: {e}")
+            return None
+
+        return None
+
+    def _restore_bond_orders_from_template(
+        self,
+        target_mol: 'Chem.Mol',
+        template_mol: Optional['Chem.Mol'],
+        ligand_id: str
+    ) -> 'Chem.Mol':
+        """
+        Restore bond orders/aromaticity on a coordinate-only molecule.
+
+        Tries direct matching first, then falls back to heavy-atom-only matching
+        (handles PDBQT round-trips that strip non-polar hydrogens).
+        """
+        if template_mol is None:
+            return target_mol
+
+        # Strategy 1: Direct match (same atom count)
+        try:
+            restored = AllChem.AssignBondOrdersFromTemplate(template_mol, target_mol)
+            logger.info(f"Restored bond orders for {ligand_id} from template")
+            return restored
+        except Exception as e:
+            logger.debug(f"Direct bond order restore failed for {ligand_id}: {e}")
+
+        # Strategy 2: Heavy-atom-only match (handles H count mismatch from PDBQT)
+        try:
+            target_noH = AllChem.RemoveHs(target_mol)
+            template_noH = AllChem.RemoveHs(template_mol)
+            restored_noH = AllChem.AssignBondOrdersFromTemplate(template_noH, target_noH)
+            Chem.SanitizeMol(restored_noH)
+            restored = Chem.AddHs(restored_noH, addCoords=True)
+            logger.info(f"Restored bond orders for {ligand_id} via heavy-atom matching")
+            return restored
+        except Exception as e:
+            logger.warning(f"Could not restore bond orders for {ligand_id}: {e}")
+            return target_mol
+
+    def _extract_first_pdbqt_model(self, poses_pdbqt: str) -> str:
+        """Extract the first MODEL block from a multi-model PDBQT string."""
+        lines = poses_pdbqt.strip().split('\n')
+        best_pose_lines = []
+        in_model = False
+
+        for line in lines:
+            if line.startswith('MODEL'):
+                if in_model:
+                    break
+                in_model = True
+                best_pose_lines.append(line)
+                continue
+            elif line.startswith('ENDMDL'):
+                best_pose_lines.append(line)
+                break
+            elif in_model:
+                best_pose_lines.append(line)
+
+        if not best_pose_lines:
+            return poses_pdbqt
+        return '\n'.join(best_pose_lines)
+
     def extract_best_pose_from_pdbqt(
         self,
         poses_pdbqt: str,
-        ligand_id: str
+        ligand_id: str,
+        template_mol: Optional['Chem.Mol'] = None
     ) -> Optional[str]:
         """
         Extract the best (first) pose from PDBQT output and convert to SDF.
-        
-        The best pose is the first MODEL in the PDBQT file (lowest energy).
-        
+
+        Uses Meeko for accurate PDBQT→RDKit conversion (preserves bond orders
+        and aromaticity from the torsion tree). Falls back to manual PDB parsing
+        with template-based bond order restoration if Meeko is unavailable.
+
         Args:
             poses_pdbqt: Multi-model PDBQT string from docking
             ligand_id: Ligand identifier for logging
-            
+            template_mol: Original RDKit mol with correct bond orders (used by fallback)
+
         Returns:
             SDF format string of the best pose, or None if extraction failed
         """
         if not RDKIT_AVAILABLE:
             logger.error("RDKit not available - cannot convert PDBQT to SDF")
             return None
-        
+
+        # --- Primary path: Meeko (preserves bond orders from PDBQT torsion tree) ---
+        if MEEKO_AVAILABLE:
+            try:
+                first_model = self._extract_first_pdbqt_model(poses_pdbqt)
+                pdbqt_mol = PDBQTMolecule(first_model, is_dlg=False, skip_typing=True)
+                for pose in pdbqt_mol:
+                    result = RDKitMolCreate.from_pdbqt_mol(pose)
+                    if isinstance(result, list):
+                        mol = next((m for m in result if m is not None), None)
+                    else:
+                        mol = result
+                    if mol is not None:
+                        try:
+                            Chem.SanitizeMol(mol)
+                        except Exception:
+                            pass
+                        sdf_block = Chem.MolToMolBlock(mol)
+                        logger.info(f"Extracted best docked pose for {ligand_id} via Meeko")
+                        return sdf_block
+                    break
+                logger.warning(f"Meeko returned no valid mol for {ligand_id}, trying fallback")
+            except Exception as e:
+                logger.warning(f"Meeko PDBQT conversion failed for {ligand_id}: {e}, trying fallback")
+
+        # --- Fallback: manual PDBQT→PDB strip + template bond-order restoration ---
         try:
-            # Extract first MODEL from PDBQT (best pose)
             lines = poses_pdbqt.strip().split('\n')
             best_pose_lines = []
             in_model = False
-            
+
             for line in lines:
                 if line.startswith('MODEL'):
                     if in_model:
-                        # Already got first model, stop
                         break
                     in_model = True
                     continue
@@ -315,53 +441,41 @@ class RBFEService:
                     break
                 elif in_model:
                     best_pose_lines.append(line)
-            
+
             if not best_pose_lines:
-                # No MODEL tags, use entire content
                 best_pose_lines = [l for l in lines if not l.startswith('REMARK')]
-            
-            # Convert PDBQT to PDB format (strip PDBQT-specific columns)
+
             pdb_lines = []
             for line in best_pose_lines:
                 if line.startswith('ATOM') or line.startswith('HETATM'):
-                    # PDBQT format: standard PDB + partial charge + atom type
-                    # We need to truncate to standard PDB format (first 66 chars)
                     pdb_line = line[:66] if len(line) >= 66 else line
                     pdb_lines.append(pdb_line)
-                elif line.startswith('CONECT') or line.startswith('ROOT') or line.startswith('BRANCH') or line.startswith('ENDBRANCH') or line.startswith('ENDROOT') or line.startswith('TORSDOF'):
-                    # Skip PDBQT-specific keywords
+                elif line.startswith(('CONECT', 'ROOT', 'BRANCH', 'ENDBRANCH', 'ENDROOT', 'TORSDOF')):
                     continue
                 else:
                     pdb_lines.append(line)
-            
+
             pdb_lines.append('END')
             pdb_block = '\n'.join(pdb_lines)
-            
-            # Parse with RDKit
+
             mol = Chem.MolFromPDBBlock(pdb_block, removeHs=False, sanitize=False)
-            
             if mol is None:
-                logger.warning(f"Could not parse docked pose for {ligand_id}, trying alternative approach")
-                # Try parsing without hydrogens
                 mol = Chem.MolFromPDBBlock(pdb_block, removeHs=True, sanitize=False)
-            
             if mol is None:
                 logger.error(f"Failed to parse docked pose for {ligand_id}")
                 return None
-            
-            # Try to sanitize
+
+            mol = self._restore_bond_orders_from_template(mol, template_mol, ligand_id)
+
             try:
                 Chem.SanitizeMol(mol)
             except Exception as e:
                 logger.warning(f"Could not sanitize molecule {ligand_id}: {e}")
-                # Continue anyway - coordinates are still valid
-            
-            # Convert to SDF
+
             sdf_block = Chem.MolToMolBlock(mol)
-            
             logger.info(f"Extracted best docked pose for {ligand_id}")
             return sdf_block
-            
+
         except Exception as e:
             logger.error(f"Error extracting best pose for {ligand_id}: {e}")
             logger.error(traceback.format_exc())
@@ -1336,101 +1450,78 @@ class RBFEService:
         simulation_settings: Optional[Dict[str, Any]] = None
     ) -> RelativeHybridTopologyProtocol:
         """
-        Set up RBFE protocol with custom settings.
+        Set up RBFE protocol with user-customizable settings.
 
-        Settings priority (highest to lowest):
-        1. Explicit values in simulation_settings (e.g., production_length_ns)
-        2. OpenFE defaults
+        All settings are optional — OpenFE defaults are used when not specified.
 
         Args:
-            simulation_settings: Optional custom settings for the protocol.
-                                Key parameters:
-                                - equilibration_length_ns / equilibration_ns (float): Equilibration time
-                                - production_length_ns / production_ns (float): Production time
-                                - lambda_windows (int): Number of lambda windows
-                                - timestep_fs (float): Integration timestep (default: 4.0 with HMR)
-                                - hydrogen_mass (float): Hydrogen mass for HMR (default: 3.0)
-                                - minimization_steps (int): Number of minimization steps
-                                - protocol_repeats (int): Number of independent repeats
-                                - compute_platform (str): OpenMM platform (CUDA, OpenCL, CPU)
-                                - ligand_forcefield (str): Small molecule forcefield
+            simulation_settings: Optional dict with any of:
+                Core: equilibration_length_ns, production_length_ns, lambda_windows,
+                      protocol_repeats
+                Ligand: ligand_forcefield, charge_method
+                Environment: temperature, pressure, solvent_model, box_shape,
+                             solvent_padding_nm
+                Advanced: timestep_fs, hydrogen_mass, minimization_steps,
+                          compute_platform
 
         Returns:
             Configured RelativeHybridTopologyProtocol
         """
         settings = RelativeHybridTopologyProtocol.default_settings()
+        cfg = simulation_settings or {}
 
-        # HMR defaults — standard OpenFE best practice
-        # 4 fs timestep with 3 amu hydrogen mass is the standard for alchemical FE
-        default_hydrogen_mass = 3.0
-        default_timestep = 4.0 * unit.femtosecond
-        default_minimization_steps = 10000  # Generous for hybrid topologies
+        # --- Simulation lengths ---
+        eq_ns = cfg.get('equilibration_length_ns', cfg.get('equilibration_ns'))
+        prod_ns = cfg.get('production_length_ns', cfg.get('production_ns'))
+        if eq_ns is not None:
+            settings.simulation_settings.equilibration_length = float(eq_ns) * unit.nanosecond
+        if prod_ns is not None:
+            settings.simulation_settings.production_length = float(prod_ns) * unit.nanosecond
 
-        if simulation_settings:
-            # --- Simulation lengths ---
-            # Accept both 'equilibration_ns' and 'equilibration_length_ns' key names
-            eq_ns = simulation_settings.get(
-                'equilibration_length_ns',
-                simulation_settings.get('equilibration_ns', None)
-            )
-            prod_ns = simulation_settings.get(
-                'production_length_ns',
-                simulation_settings.get('production_ns', None)
-            )
+        # --- Lambda windows ---
+        if 'lambda_windows' in cfg:
+            settings.lambda_settings.lambda_windows = int(cfg['lambda_windows'])
 
-            if eq_ns is not None:
-                settings.simulation_settings.equilibration_length = float(eq_ns) * unit.nanosecond
-            if prod_ns is not None:
-                settings.simulation_settings.production_length = float(prod_ns) * unit.nanosecond
+        # --- Protocol repeats ---
+        if 'protocol_repeats' in cfg:
+            settings.protocol_repeats = int(cfg['protocol_repeats'])
 
-            # --- Lambda windows ---
-            if 'lambda_windows' in simulation_settings:
-                n_windows = int(simulation_settings['lambda_windows'])
-                settings.lambda_settings.lambda_windows = n_windows
+        # --- Ligand forcefield ---
+        if 'ligand_forcefield' in cfg:
+            settings.forcefield_settings.small_molecule_forcefield = cfg['ligand_forcefield']
 
-            # --- Protocol repeats ---
-            if 'protocol_repeats' in simulation_settings:
-                settings.protocol_repeats = int(simulation_settings['protocol_repeats'])
+        # --- Environment: temperature & pressure ---
+        if 'temperature' in cfg:
+            settings.thermo_settings.temperature = float(cfg['temperature']) * unit.kelvin
+        if 'pressure' in cfg:
+            settings.thermo_settings.pressure = float(cfg['pressure']) * unit.bar
 
-            # --- Compute platform ---
-            if 'compute_platform' in simulation_settings:
-                settings.engine_settings.compute_platform = simulation_settings['compute_platform']
+        # --- Environment: solvent model & box shape ---
+        solvent_model = cfg.get('solvent_model')
+        box_shape = cfg.get('box_shape')
+        solvent_padding_nm = cfg.get('solvent_padding_nm')
+        if solvent_model:
+            settings.solvation_settings.solvent_model = solvent_model
+        if box_shape:
+            settings.solvation_settings.box_shape = box_shape
+        if solvent_padding_nm is not None:
+            settings.solvation_settings.solvent_padding = float(solvent_padding_nm) * unit.nanometer
 
-            # --- Ligand forcefield ---
-            if 'ligand_forcefield' in simulation_settings:
-                ff_name = simulation_settings['ligand_forcefield']
-                settings.forcefield_settings.small_molecule_forcefield = ff_name
-                logger.info(f"  Ligand forcefield: {ff_name}")
+        # --- Compute platform ---
+        if 'compute_platform' in cfg:
+            settings.engine_settings.compute_platform = cfg['compute_platform']
 
-            # --- Hydrogen mass ---
-            if 'hydrogen_mass' in simulation_settings:
-                try:
-                    h_mass = float(simulation_settings['hydrogen_mass'])
-                    if h_mass > 0:
-                        default_hydrogen_mass = h_mass
-                except (ValueError, TypeError):
-                    pass
+        # --- HMR and integrator ---
+        h_mass = float(cfg.get('hydrogen_mass', 3.0))
+        ts_fs = float(cfg.get('timestep_fs', 4.0))
+        min_steps = int(cfg.get('minimization_steps', 10000))
 
-            # --- Timestep ---
-            if 'timestep_fs' in simulation_settings:
-                try:
-                    ts_fs = float(simulation_settings['timestep_fs'])
-                    if ts_fs > 0:
-                        default_timestep = ts_fs * unit.femtosecond
-                except (ValueError, TypeError):
-                    pass
-
-            # --- Minimization steps ---
-            if 'minimization_steps' in simulation_settings:
-                try:
-                    min_steps = int(simulation_settings['minimization_steps'])
-                    if min_steps > 0:
-                        default_minimization_steps = min_steps
-                except (ValueError, TypeError):
-                    pass
+        settings.forcefield_settings.hydrogen_mass = h_mass
+        settings.integrator_settings.timestep = ts_fs * unit.femtosecond
+        settings.simulation_settings.minimization_steps = min_steps
 
         # Auto-detect compute platform if not explicitly set
-        if not (simulation_settings and 'compute_platform' in simulation_settings):
+        if 'compute_platform' not in cfg:
             try:
                 import openmm
                 available_platforms = [
@@ -1444,24 +1535,22 @@ class RBFEService:
                     logger.warning("No CUDA GPU found, falling back to OpenCL platform")
                 else:
                     settings.engine_settings.compute_platform = 'CPU'
-                    logger.warning("No GPU found, falling back to CPU platform (calculations will be slow)")
-                logger.info(f"  Auto-selected compute platform: {settings.engine_settings.compute_platform}")
-            except Exception:
-                pass  # Let OpenFE pick the default
+                    logger.warning("No GPU found, falling back to CPU platform")
+            except Exception as e:
+                logger.warning("GPU platform detection failed: %s", e)
 
-        # Apply HMR and integrator settings
-        settings.forcefield_settings.hydrogen_mass = default_hydrogen_mass
-        settings.integrator_settings.timestep = default_timestep
-        settings.simulation_settings.minimization_steps = default_minimization_steps
-
+        # --- Log final configuration ---
         logger.info("RBFE protocol configured:")
         logger.info(f"  Production: {settings.simulation_settings.production_length}")
         logger.info(f"  Equilibration: {settings.simulation_settings.equilibration_length}")
         logger.info(f"  Lambda windows: {settings.lambda_settings.lambda_windows}")
-        logger.info(f"  Minimization steps: {default_minimization_steps}")
-        logger.info(f"  Timestep: {default_timestep}")
-        logger.info(f"  Hydrogen mass: {default_hydrogen_mass} amu")
+        logger.info(f"  Minimization steps: {min_steps}")
+        logger.info(f"  Timestep: {ts_fs} fs, Hydrogen mass: {h_mass} amu")
         logger.info(f"  Protocol repeats: {settings.protocol_repeats}")
+        logger.info(f"  Temperature: {settings.thermo_settings.temperature}, Pressure: {settings.thermo_settings.pressure}")
+        logger.info(f"  Solvent: {settings.solvation_settings.solvent_model}, Box: {settings.solvation_settings.box_shape}")
+        logger.info(f"  Ligand FF: {settings.forcefield_settings.small_molecule_forcefield}")
+        logger.info(f"  Platform: {settings.engine_settings.compute_platform}")
 
         return RelativeHybridTopologyProtocol(settings=settings)
     
@@ -1554,20 +1643,25 @@ class RBFEService:
     ) -> None:
         """Update job status in file-based tracking."""
         job_file = self.jobs_dir / f"{job_id}.json"
-        
+
         current_status = {}
         if job_file.exists():
             try:
                 with open(job_file, 'r') as f:
                     current_status = json.load(f)
-            except Exception:
-                pass
-        
+            except Exception as e:
+                logger.warning("Job status file corrupt for %s: %s", job_id, e)
+
         current_status.update(status_update)
-        
-        with open(job_file, 'w') as f:
-            json.dump(current_status, f, indent=2, default=str)
-        
+
+        # Atomic write: write to tempfile, then replace
+        with tempfile.NamedTemporaryFile(
+            'w', dir=self.jobs_dir, delete=False, suffix='.tmp'
+        ) as tmp:
+            json.dump(current_status, tmp, indent=2, default=str)
+            tmp_path = tmp.name
+        os.replace(tmp_path, str(job_file))
+
         # Also update in-memory cache
         self.jobs[job_id] = current_status
     
@@ -1583,7 +1677,18 @@ class RBFEService:
                 logger.error(f"Error reading job status: {e}")
         
         return {'status': 'not_found', 'job_id': job_id}
-    
+
+    def parse_results_from_job(self, job_id: str) -> Dict[str, Any]:
+        """Read completed RBFE results from disk for job recovery."""
+        results_file = self.output_dir / job_id / "results.json"
+        if not results_file.exists():
+            return {'error': f'No results.json found for job {job_id}'}
+        try:
+            with open(results_file, 'r') as f:
+                return json.load(f)
+        except Exception as e:
+            return {'error': f'Failed to read results: {e}'}
+
     def list_jobs(self) -> List[Dict[str, Any]]:
         """List all RBFE jobs."""
         jobs = []
@@ -1710,7 +1815,276 @@ class RBFEService:
                 logger.warning(f"Error checking job file {job_file}: {e}")
         
         return stale_jobs
-    
+
+    def _load_reference_from_pdb_string(
+        self,
+        pdb_string: str,
+        ligand_id: str,
+        template_ligand_data: Optional[str] = None,
+        template_ligand_format: str = "sdf"
+    ) -> Optional['openfe.SmallMoleculeComponent']:
+        """
+        Load a reference ligand from PDB string (e.g., cocrystal structure).
+
+        Args:
+            pdb_string: PDB format string containing HETATM records for the ligand
+            ligand_id: Identifier for the ligand
+
+        Returns:
+            OpenFE SmallMoleculeComponent, or None if parsing failed
+        """
+        try:
+            mol = Chem.MolFromPDBBlock(pdb_string, removeHs=False)
+            if mol is None:
+                logger.error(f"Failed to parse reference ligand {ligand_id} from PDB")
+                return None
+
+            template_mol = self._build_template_mol(
+                ligand_data=template_ligand_data or "",
+                ligand_format=template_ligand_format,
+                ligand_id=ligand_id,
+            )
+            mol = self._restore_bond_orders_from_template(mol, template_mol, ligand_id)
+
+            # Generate 3D coordinates if needed
+            try:
+                if mol.GetNumConformers() == 0:
+                    AllChem.EmbedMolecule(mol, randomSeed=42)
+            except Exception as e:
+                logger.warning(f"Could not embed reference ligand {ligand_id}: {e}")
+
+            component = openfe.SmallMoleculeComponent.from_rdkit(mol, name=ligand_id)
+            logger.info(f"Loaded reference ligand {ligand_id} from PDB")
+            return component
+
+        except Exception as e:
+            logger.error(f"Error loading reference ligand {ligand_id}: {e}")
+            return None
+
+    def _dock_single_ligand_via_vina(
+        self,
+        protein_pdb: str,
+        ligand_id: str,
+        ligand_data: str,
+        ligand_format: str,
+        exhaustiveness: int = 8,
+        grid_box: Optional[Dict[str, Any]] = None,
+    ) -> Optional[Dict[str, Any]]:
+        """
+        Dock a single ligand using the docking service.
+
+        Args:
+            protein_pdb: Protein PDB data
+            ligand_id: Ligand identifier
+            ligand_data: Ligand structure data
+            ligand_format: Format of ligand data (sdf, mol, smiles)
+            exhaustiveness: Docking exhaustiveness parameter
+            grid_box: Optional docking grid box override
+
+        Returns:
+            Dict with 'docked_sdf', 'affinity', or None if docking failed
+        """
+        try:
+            template_mol = self._build_template_mol(
+                ligand_data=ligand_data,
+                ligand_format=ligand_format,
+                ligand_id=ligand_id,
+            )
+
+            # Use dock_ligands_batch for single ligand
+            results = self.dock_ligands_batch(
+                protein_pdb=protein_pdb,
+                ligands_data=[{
+                    'id': ligand_id,
+                    'data': ligand_data,
+                    'format': ligand_format
+                }],
+                grid_box=grid_box,
+                exhaustiveness=exhaustiveness,
+                num_poses=1
+            )
+
+            if not results:
+                logger.error(f"Docking failed for reference ligand {ligand_id}")
+                return None
+
+            result = results[0]
+            if not result.get('success'):
+                logger.error(f"Docking failed for {ligand_id}: {result.get('error')}")
+                return None
+
+            # Extract best pose from PDBQT
+            poses_pdbqt = result.get('poses_pdbqt', '')
+            best_affinity = result.get('best_score', result.get('best_affinity', 0.0))
+
+            docked_sdf = self.extract_best_pose_from_pdbqt(
+                poses_pdbqt=poses_pdbqt,
+                ligand_id=ligand_id,
+                template_mol=template_mol,
+            )
+            if not docked_sdf:
+                logger.error(f"Failed to extract docked pose for {ligand_id}")
+                return None
+
+            logger.info(f"Successfully docked {ligand_id}: affinity={best_affinity:.2f} kcal/mol")
+            return {
+                'docked_sdf': docked_sdf,
+                'affinity': best_affinity,
+                'ligand_id': ligand_id
+            }
+
+        except Exception as e:
+            logger.error(f"Error docking reference ligand {ligand_id}: {e}")
+            logger.error(traceback.format_exc())
+            return None
+
+    def _build_docked_poses_payload(
+        self,
+        ligands: List['openfe.SmallMoleculeComponent'],
+        ligand_ids: List[str],
+        protein_pdb: str,
+        job_dir: Path
+    ) -> List[Dict[str, Any]]:
+        """
+        Build DockedPoseInfo payload with PDB files for all ligands.
+
+        Args:
+            ligands: List of prepared OpenFE ligands
+            ligand_ids: Corresponding ligand IDs
+            protein_pdb: Protein PDB data
+            job_dir: Output directory
+
+        Returns:
+            List of DockedPoseInfo dicts
+        """
+        docked_poses_dir = job_dir / "docked_poses"
+        docked_poses_dir.mkdir(parents=True, exist_ok=True)
+
+        # Save protein PDB
+        protein_pdb_path = docked_poses_dir / "protein.pdb"
+        with open(protein_pdb_path, 'w') as f:
+            f.write(protein_pdb)
+
+        docked_poses = []
+
+        for ligand, lig_id in zip(ligands, ligand_ids):
+            try:
+                # Convert OpenFE ligand to RDKit mol and then PDB
+                mol = ligand.to_rdkit()
+                ligand_pdb = Chem.MolToPDBBlock(mol)
+                ligand_sdf = Chem.MolToMolBlock(mol)
+
+                # Save ligand PDB
+                ligand_pdb_path = docked_poses_dir / f"{lig_id}_docked.pdb"
+                with open(ligand_pdb_path, 'w') as f:
+                    f.write(ligand_pdb)
+
+                # Save ligand SDF as canonical resume source (preserves bond orders/aromaticity)
+                ligand_sdf_path = docked_poses_dir / f"{lig_id}_docked.sdf"
+                with open(ligand_sdf_path, 'w') as f:
+                    f.write(ligand_sdf)
+
+                # Create complex PDB
+                complex_pdb_path = docked_poses_dir / f"{lig_id}_complex.pdb"
+                with open(complex_pdb_path, 'w') as f:
+                    protein_lines = protein_pdb.strip().split('\n')
+                    for line in protein_lines:
+                        if not line.startswith('END'):
+                            f.write(line + '\n')
+                    f.write('TER\n')
+
+                    ligand_lines = ligand_pdb.strip().split('\n')
+                    for line in ligand_lines:
+                        if line.startswith('ATOM') or line.startswith('HETATM'):
+                            if line.startswith('ATOM'):
+                                line = 'HETATM' + line[6:]
+                            f.write(line + '\n')
+                        elif line.startswith('CONECT'):
+                            f.write(line + '\n')
+                    f.write('END\n')
+
+                pose_info = {
+                    'ligand_id': lig_id,
+                    'affinity_kcal_mol': 0.0,
+                    'pose_pdb_path': str(ligand_pdb_path.relative_to(job_dir)),
+                    'complex_pdb_path': str(complex_pdb_path.relative_to(job_dir))
+                }
+
+                docked_poses.append(pose_info)
+                logger.info(f"Generated pose files for {lig_id}")
+
+            except Exception as e:
+                logger.error(f"Error generating pose files for {lig_id}: {e}")
+                continue
+
+        return docked_poses
+
+    def _load_aligned_poses_from_disk(
+        self,
+        job_id: str,
+        ligand_ids: List[str]
+    ) -> Optional[List['openfe.SmallMoleculeComponent']]:
+        """
+        Load pre-aligned ligand structures from disk (for job resumption).
+
+        Args:
+            job_id: Job identifier
+            ligand_ids: List of ligand IDs to load
+
+        Returns:
+            List of OpenFE SmallMoleculeComponent, or None if loading failed
+        """
+        try:
+            docked_poses_dir = self.output_dir / job_id / "docked_poses"
+            if not docked_poses_dir.exists():
+                logger.warning(f"Docked poses directory not found for job {job_id}")
+                return None
+
+            ligands = []
+            for lig_id in ligand_ids:
+                ligand_sdf_path = docked_poses_dir / f"{lig_id}_docked.sdf"
+                ligand_pdb_path = docked_poses_dir / f"{lig_id}_docked.pdb"
+
+                mol = None
+                # Prefer SDF: PDB round-tripping can lose chemistry perception (bond orders/aromaticity)
+                # and later break FF parameterization.
+                if ligand_sdf_path.exists():
+                    with open(ligand_sdf_path, 'r') as f:
+                        sdf_data = f.read()
+                    mol = Chem.MolFromMolBlock(sdf_data, removeHs=False)
+                    if mol is not None:
+                        # Validate: detect corrupted SDFs (e.g. all single bonds, radical carbons)
+                        try:
+                            Chem.SanitizeMol(mol)
+                        except Exception as e:
+                            logger.warning(f"SDF for {lig_id} has invalid chemistry ({e}), discarding")
+                            mol = None
+                    if mol is None:
+                        logger.warning(f"Failed to parse ligand {lig_id} from SDF, falling back to PDB")
+
+                # Backward-compat fallback for older jobs that only have PDB files
+                if mol is None:
+                    if not ligand_pdb_path.exists():
+                        logger.warning(f"Ligand pose file not found (SDF/PDB) for {lig_id}")
+                        return None
+                    with open(ligand_pdb_path, 'r') as f:
+                        pdb_data = f.read()
+                    mol = Chem.MolFromPDBBlock(pdb_data, removeHs=False)
+                    if mol is None:
+                        logger.error(f"Failed to parse ligand {lig_id} from {ligand_pdb_path}")
+                        return None
+
+                component = openfe.SmallMoleculeComponent.from_rdkit(mol, name=lig_id)
+                ligands.append(component)
+
+            logger.info(f"Loaded {len(ligands)} pre-aligned poses for job {job_id}")
+            return ligands
+
+        except Exception as e:
+            logger.error(f"Error loading aligned poses for job {job_id}: {e}")
+            logger.error(traceback.format_exc())
+            return None
+
     def run_rbfe_calculation(
         self,
         protein_pdb: str,
@@ -1773,6 +2147,23 @@ class RBFEService:
 
         try:
             # Initialize job status
+            # Extract SMILES for each ligand upfront so they survive beyond this session
+            ligand_smiles: Dict[str, str] = {}
+            for lig in ligands_data:
+                lig_id = lig.get('id', '')
+                fmt = lig.get('format', 'sdf')
+                data = lig.get('data', '')
+                try:
+                    if fmt == 'smiles':
+                        ligand_smiles[lig_id] = data.strip()
+                    else:
+                        from rdkit import Chem
+                        mol = Chem.MolFromMolBlock(data, removeHs=True)
+                        if mol is not None:
+                            ligand_smiles[lig_id] = Chem.MolToSmiles(mol)
+                except Exception as e:
+                    logger.debug("SMILES extraction from MOL block failed: %s", e)
+
             self._update_job_status(job_id, {
                 'job_id': job_id,
                 'status': 'preparing',
@@ -1780,7 +2171,8 @@ class RBFEService:
                 'num_ligands': len(ligands_data),
                 'network_topology': network_topology,
                 'job_dir': str(job_dir),
-                'created_at': datetime.now().isoformat()
+                'created_at': datetime.now().isoformat(),
+                'ligand_smiles': ligand_smiles,
             })
 
             # Step 1: Prepare ligands with charges and 3D coordinates
@@ -1805,6 +2197,173 @@ class RBFEService:
                 'message': f'Prepared {len(ligands)} ligands'
             })
             emit_progress(10, f'✓ Prepared {len(ligands)} ligands')
+
+            # PHASE 1: Reference Ligand Docking/Alignment (Optional)
+            # If reference_ligand_id is specified, handle docking and alignment workflow
+            reference_ligand_id = simulation_settings.get('reference_ligand_id') if simulation_settings else None
+            reference_pose_source = simulation_settings.get('reference_pose_source') if simulation_settings else None
+            docking_acknowledged = simulation_settings.get('docking_acknowledged', False) if simulation_settings else False
+
+            if reference_ligand_id and reference_pose_source:
+                # Check if we're resuming from docking_ready checkpoint
+                if docking_acknowledged:
+                    logger.info("Resuming from docking_ready checkpoint, loading pre-aligned poses...")
+                    emit_progress(15, 'Loading pre-aligned poses...')
+
+                    ligand_ids = [lig.get('id') for lig in ligands_data]
+                    resumed_ligands = self._load_aligned_poses_from_disk(job_id, ligand_ids)
+
+                    if resumed_ligands:
+                        ligands = resumed_ligands
+                        logger.info(f"Loaded {len(ligands)} pre-aligned poses from disk")
+                        emit_progress(16, f'Loaded {len(ligands)} pre-aligned poses')
+                    else:
+                        logger.error("Failed to load pre-aligned poses, proceeding with newly prepared ligands")
+                else:
+                    logger.info(f"Phase 1: Reference ligand workflow (source={reference_pose_source})...")
+                    emit_progress(12, f'Handling reference ligand ({reference_pose_source})...')
+
+                    # Extract reference ligand from ligands list
+                    ref_ligand = None
+                    ref_ligand_data = None
+                    for lig_dict in ligands_data:
+                        if lig_dict.get('id') == reference_ligand_id:
+                            ref_ligand_data = lig_dict
+                            break
+
+                    if not ref_ligand_data:
+                        logger.error(f"Reference ligand {reference_ligand_id} not found in ligands_data")
+                        raise ValueError(f"Reference ligand {reference_ligand_id} not found")
+
+                    # Handle different reference pose sources
+                    if reference_pose_source == 'cocrystal':
+                        # Reference pose from cocrystal (PDB string)
+                        reference_pose_pdb = simulation_settings.get('reference_pose_pdb') if simulation_settings else None
+                        if not reference_pose_pdb:
+                            raise ValueError("reference_pose_pdb required for cocrystal source")
+
+                        logger.info(f"Loading reference ligand {reference_ligand_id} from cocrystal PDB...")
+                        ref_ligand = self._load_reference_from_pdb_string(
+                            reference_pose_pdb,
+                            reference_ligand_id,
+                            template_ligand_data=ref_ligand_data.get('data', ''),
+                            template_ligand_format=ref_ligand_data.get('format', 'sdf'),
+                        )
+                        if not ref_ligand:
+                            raise ValueError(f"Failed to load reference ligand from cocrystal PDB")
+
+                        emit_progress(13, 'Loaded reference ligand from cocrystal')
+
+                    elif reference_pose_source == 'vina':
+                        # Dock reference ligand using Vina
+                        logger.info(f"Docking reference ligand {reference_ligand_id} with Vina...")
+                        exhaustiveness = simulation_settings.get('vina_exhaustiveness', 8) if simulation_settings else 8
+                        grid_box = simulation_settings.get('vina_grid_box') if simulation_settings else None
+
+                        docking_result = self._dock_single_ligand_via_vina(
+                            protein_pdb=protein_pdb,
+                            ligand_id=reference_ligand_id,
+                            ligand_data=ref_ligand_data.get('data', ''),
+                            ligand_format=ref_ligand_data.get('format', 'sdf'),
+                            exhaustiveness=exhaustiveness,
+                            grid_box=grid_box,
+                        )
+
+                        if not docking_result:
+                            raise ValueError(f"Failed to dock reference ligand {reference_ligand_id}")
+
+                        emit_progress(13, f'Docked reference ligand: affinity={docking_result["affinity"]:.2f} kcal/mol')
+
+                        # Create OpenFE component from docked SDF
+                        docked_sdf = docking_result['docked_sdf']
+                        mol = Chem.MolFromMolBlock(docked_sdf, removeHs=False)
+                        if not mol:
+                            raise ValueError(f"Failed to parse docked SDF for {reference_ligand_id}")
+                        ref_ligand = openfe.SmallMoleculeComponent.from_rdkit(mol, name=reference_ligand_id)
+
+                    elif reference_pose_source == 'prior_job':
+                        # Reference pose from prior docking job
+                        reference_pose_pdb = simulation_settings.get('reference_pose_pdb') if simulation_settings else None
+                        if not reference_pose_pdb:
+                            raise ValueError("reference_pose_pdb required for prior_job source")
+
+                        logger.info(f"Loading reference ligand {reference_ligand_id} from prior job...")
+                        ref_ligand = self._load_reference_from_pdb_string(
+                            reference_pose_pdb,
+                            reference_ligand_id,
+                            template_ligand_data=ref_ligand_data.get('data', ''),
+                            template_ligand_format=ref_ligand_data.get('format', 'sdf'),
+                        )
+                        if not ref_ligand:
+                            raise ValueError(f"Failed to load reference ligand from prior job PDB")
+
+                        emit_progress(13, 'Loaded reference ligand from prior job')
+
+                    else:
+                        raise ValueError(f"Unknown reference_pose_source: {reference_pose_source}")
+
+                    # Now align all non-reference ligands to the reference
+                    logger.info(f"Aligning {len(ligands) - 1} ligands to reference {reference_ligand_id}...")
+                    emit_progress(14, f'Aligning ligands to reference...')
+
+                    aligned_ligands = []
+                    failed_ligands = []
+
+                    for i, ligand in enumerate(ligands):
+                        if ligand.name == reference_ligand_id:
+                            # Keep the reference entry in-sync with the selected pose
+                            # source (cocrystal / vina / prior_job), not the originally
+                            # prepared coordinates.
+                            aligned_ligands.append(ref_ligand)
+                            logger.info(f"Using selected reference pose for {reference_ligand_id}")
+                        else:
+                            # Align to reference using MCS-based constrained embedding
+                            aligned = self._align_ligand_to_reference(ligand, ref_ligand)
+                            if aligned:
+                                aligned_ligands.append(aligned)
+                            else:
+                                # If alignment fails, use original (will likely fail at atom mapping stage)
+                                logger.warning(f"Alignment failed for {ligand.name}, using original coordinates")
+                                aligned_ligands.append(ligand)
+
+                    # Update ligands list with aligned structures
+                    ligands = aligned_ligands
+
+                    # Build docked poses info and save PDB files
+                    logger.info("Generating aligned pose PDB files...")
+                    emit_progress(15, 'Saving aligned pose files...')
+
+                    ligand_ids = [lig.name for lig in ligands]
+                    docked_poses = self._build_docked_poses_payload(
+                        ligands=ligands,
+                        ligand_ids=ligand_ids,
+                        protein_pdb=protein_pdb,
+                        job_dir=job_dir
+                    )
+
+                    # Emit docking_ready checkpoint
+                    logger.info(f"Phase 1 complete: {len(docked_poses)} aligned poses ready for FE calculations")
+
+                    docking_ready_payload = {
+                        'docked_poses': docked_poses,
+                        'alignment_info': {
+                            'reference_ligand': reference_ligand_id,
+                            'aligned_ligands': [{'id': lig.name, 'is_reference': lig.name == reference_ligand_id}
+                                                for lig in ligands],
+                            'failed_ligands': [],
+                            'alignment_method': 'mcs_constrained_embedding'
+                        }
+                    }
+
+                    self._update_job_status(job_id, {
+                        'status': 'docking_ready',
+                        'message': f'Reference ligand and alignment complete. {len(docked_poses)} poses ready.',
+                        'docked_poses': docked_poses,
+                        'alignment_info': docking_ready_payload['alignment_info']
+                    })
+
+                    emit_progress(15, 'docking_ready', result=docking_ready_payload)
+                    return self.get_job_status(job_id)
 
             # Step 2: Load protein
             logger.info("Step 2: Loading protein...")
@@ -1931,84 +2490,24 @@ class RBFEService:
                     estimate = result.get_estimate()
                     uncertainty = result.get_uncertainty()
 
-                    # Extract overlap matrix from result object
-                    # Multiple approaches to try since OpenFE API varies by version
-                    overlap_matrix = None
-                    try:
-                        # Approach 1: Try result object attributes directly
-                        for attr_name in ['mbar_overlap_matrix', 'overlap_matrix', 'matrix']:
-                            if hasattr(result, attr_name):
-                                raw_matrix = getattr(result, attr_name)
-                                if raw_matrix is not None and hasattr(raw_matrix, 'ndim'):
-                                    avg = raw_matrix.mean(axis=0) if raw_matrix.ndim == 3 else raw_matrix
-                                    overlap_matrix = [[float(v) for v in row] for row in avg.tolist()]
-                                    logger.debug(f"Extracted overlap matrix from result.{attr_name}")
-                                    break
+                    # Extract MBAR overlap matrix using documented OpenFE API + layered fallbacks
+                    overlap_matrix, om_source = self._extract_rbfe_overlap_matrix(
+                        result, dag_result, shared_dir
+                    )
+                    if overlap_matrix is not None:
+                        logger.debug(
+                            f"Overlap matrix for {transformation.name} extracted from: {om_source}"
+                        )
+                    else:
+                        logger.warning(
+                            f"Could not extract overlap matrix for {transformation.name} "
+                            f"— tried get_overlap_matrices(), legacy attrs, rglob YAML/NPY"
+                        )
 
-                        # Approach 2: Try result.data dict
-                        if overlap_matrix is None and hasattr(result, 'data') and isinstance(result.data, dict):
-                            for key in ['mbar_overlap_matrix', 'overlap_matrix', 'matrix']:
-                                if key in result.data:
-                                    raw_matrix = result.data[key]
-                                    if raw_matrix is not None and hasattr(raw_matrix, 'ndim'):
-                                        avg = raw_matrix.mean(axis=0) if raw_matrix.ndim == 3 else raw_matrix
-                                        overlap_matrix = [[float(v) for v in row] for row in avg.tolist()]
-                                        logger.debug(f"Extracted overlap matrix from result.data['{key}']")
-                                        break
-
-                        # Approach 3: Try dag_result object
-                        if overlap_matrix is None and hasattr(dag_result, 'to_dict'):
-                            dag_dict = dag_result.to_dict() if callable(dag_result.to_dict) else dag_result.to_dict
-                            if isinstance(dag_dict, dict) and 'mbar_overlap_matrix' in dag_dict:
-                                raw_matrix = dag_dict['mbar_overlap_matrix']
-                                if raw_matrix is not None and hasattr(raw_matrix, 'ndim'):
-                                    avg = raw_matrix.mean(axis=0) if raw_matrix.ndim == 3 else raw_matrix
-                                    overlap_matrix = [[float(v) for v in row] for row in avg.tolist()]
-                                    logger.debug("Extracted overlap matrix from dag_result")
-                    except Exception as om_err:
-                        logger.warning(f"Could not extract overlap matrix from result object for {transformation.name}: {om_err}")
-                        logger.debug(f"Result type: {type(result)}, dag_result type: {type(dag_result)}")
-                        # Log all attributes for debugging
-                        try:
-                            result_attrs = {k: type(getattr(result, k)).__name__ for k in dir(result) if not k.startswith('_')}
-                            logger.debug(f"Result attributes: {result_attrs}")
-                        except:
-                            pass
-
-                    # Fallback: Try to find overlap matrix in shared directory files
-                    if overlap_matrix is None:
-                        try:
-                            # Look for MBAR analysis YAML files which may contain numerical data
-                            yaml_files = list(shared_dir.glob('*analysis*.yaml')) + list(shared_dir.glob('*mbar*.yaml'))
-                            if yaml_files and NUMPY_AVAILABLE:
-                                try:
-                                    import yaml
-                                    for yaml_file in yaml_files:
-                                        with open(yaml_file, 'r') as f:
-                                            data = yaml.safe_load(f)
-                                        if isinstance(data, dict) and 'overlap_matrix' in data:
-                                            raw_matrix = np.array(data['overlap_matrix'])
-                                            overlap_matrix = [[float(v) for v in row] for row in raw_matrix.tolist()]
-                                            logger.debug(f"Extracted overlap matrix from YAML: {yaml_file.name}")
-                                            break
-                                except Exception as yaml_err:
-                                    logger.debug(f"Could not parse YAML file: {yaml_err}")
-
-                            # Try numpy binary files as last resort
-                            if overlap_matrix is None and NUMPY_AVAILABLE:
-                                npy_files = list(shared_dir.glob('*overlap*.npy')) + list(shared_dir.glob('*mbar*.npy'))
-                                for npy_file in npy_files:
-                                    try:
-                                        raw_matrix = np.load(npy_file)
-                                        if raw_matrix.ndim >= 2:
-                                            avg = raw_matrix.mean(axis=0) if raw_matrix.ndim == 3 else raw_matrix
-                                            overlap_matrix = [[float(v) for v in row] for row in avg.tolist()]
-                                            logger.debug(f"Extracted overlap matrix from numpy file: {npy_file.name}")
-                                            break
-                                    except Exception as npy_err:
-                                        logger.debug(f"Could not parse numpy file {npy_file.name}: {npy_err}")
-                        except Exception as fb_err:
-                            logger.debug(f"Fallback file search failed: {fb_err}")
+                    # Persist canonical PNG and resolve serving URL (always set both fields)
+                    overlap_matrix_path = self._get_or_generate_overlap_matrix(
+                        shared_dir, job_id, transformation.name, leg, overlap_matrix
+                    )
 
                     results.append({
                         'name': transformation.name,
@@ -2020,6 +2519,7 @@ class RBFEService:
                         'status': 'completed',
                         'validation_warnings': validation.get('warnings', []),
                         'overlap_matrix': overlap_matrix,
+                        'overlap_matrix_path': overlap_matrix_path,
                     })
 
                     successful_transformations += 1
@@ -2237,29 +2737,40 @@ class RBFEService:
                     'uncertainty_kcal_mol': uncertainty
                 })
         
-        # Compute relative affinities (simple path traversal from first ligand)
+        # Compute relative affinities via BFS from reference ligand
         relative_affinities = {}
-        if network_data.get('nodes') and len(network_data['nodes']) > 0:
-            reference = network_data['nodes'][0]
+        nodes = network_data.get('nodes', [])
+        if nodes:
+            # Use central_ligand (star topology hub) if available, else first node
+            reference = network_data.get('central_ligand') or nodes[0]
+            if reference not in nodes:
+                reference = nodes[0]
             relative_affinities[reference] = 0.0
-            
-            # Simple assignment for connected ligands
-            for ddg_val in ddg_values:
-                if ddg_val['ligand_a'] in relative_affinities:
-                    relative_affinities[ddg_val['ligand_b']] = (
-                        relative_affinities[ddg_val['ligand_a']] + ddg_val['ddg_kcal_mol']
-                    )
-                elif ddg_val['ligand_b'] in relative_affinities:
-                    relative_affinities[ddg_val['ligand_a']] = (
-                        relative_affinities[ddg_val['ligand_b']] - ddg_val['ddg_kcal_mol']
-                    )
+
+            # BFS over ddg_values edges until no more nodes can be resolved
+            remaining = list(ddg_values)
+            changed = True
+            while changed and remaining:
+                changed = False
+                next_remaining = []
+                for ddg_val in remaining:
+                    a, b = ddg_val['ligand_a'], ddg_val['ligand_b']
+                    if a in relative_affinities and b not in relative_affinities:
+                        relative_affinities[b] = relative_affinities[a] + ddg_val['ddg_kcal_mol']
+                        changed = True
+                    elif b in relative_affinities and a not in relative_affinities:
+                        relative_affinities[a] = relative_affinities[b] - ddg_val['ddg_kcal_mol']
+                        changed = True
+                    else:
+                        next_remaining.append(ddg_val)
+                remaining = next_remaining
         
         # Build comprehensive results including alignment data
         results_dict = {
             'transformation_results': transformation_results,
             'ddg_values': ddg_values,
             'relative_affinities': relative_affinities,
-            'reference_ligand': network_data.get('nodes', [None])[0] if network_data.get('nodes') else None
+            'reference_ligand': network_data.get('central_ligand') or (network_data.get('nodes', [None])[0] if network_data.get('nodes') else None)
         }
         
         # Add alignment information if provided
@@ -2299,7 +2810,202 @@ class RBFEService:
             }
         
         return results_dict
-    
+
+    def _extract_rbfe_overlap_matrix(
+        self, result, dag_result, shared_dir: Path
+    ) -> tuple:
+        """Extract MBAR overlap matrix from an OpenFE protocol result object.
+
+        Returns (matrix_or_None, source_description_str).  Priority order:
+        1. result.get_overlap_matrices()  — documented OpenFE >=1.2 API
+        2. Legacy attribute probes on result / result.data / dag_result.to_dict()
+        3. Recursive file search under shared_dir (YAML, .npy)
+        """
+        if not NUMPY_AVAILABLE:
+            return None, "numpy_unavailable"
+
+        # ------------------------------------------------------------------ #
+        # 1. Primary: documented OpenFE API                                   #
+        # ------------------------------------------------------------------ #
+        try:
+            get_om = getattr(result, "get_overlap_matrices", None)
+            if callable(get_om):
+                om_list = get_om()  # list[dict[str, numpy.ndarray]]
+                if om_list:
+                    matrices = []
+                    for repeat_dict in om_list:
+                        mat = repeat_dict.get("matrix")
+                        if mat is None:
+                            # fallback: first ndim==2 array found in dict values
+                            for v in repeat_dict.values():
+                                if hasattr(v, "ndim") and v.ndim == 2:
+                                    mat = v
+                                    break
+                        if mat is not None and hasattr(mat, "ndim") and mat.ndim == 2:
+                            matrices.append(mat)
+                    if matrices:
+                        avg = (
+                            np.mean(np.stack(matrices), axis=0)
+                            if len(matrices) > 1
+                            else matrices[0]
+                        )
+                        return [[float(v) for v in row] for row in avg.tolist()], "get_overlap_matrices()"
+                    logger.debug("get_overlap_matrices() returned non-empty list but no valid matrices")
+        except Exception as e:
+            logger.debug(f"get_overlap_matrices() call failed: {e}")
+
+        # ------------------------------------------------------------------ #
+        # 2. Legacy attribute / result.data / dag_result probes               #
+        # ------------------------------------------------------------------ #
+        try:
+            for attr_name in ['mbar_overlap_matrix', 'overlap_matrix', 'matrix']:
+                raw = getattr(result, attr_name, None)
+                if raw is not None and hasattr(raw, 'ndim') and raw.ndim >= 2:
+                    avg = raw.mean(axis=0) if raw.ndim == 3 else raw
+                    return [[float(v) for v in row] for row in avg.tolist()], f"result.{attr_name}"
+
+            if hasattr(result, 'data') and isinstance(result.data, dict):
+                for key in ['mbar_overlap_matrix', 'overlap_matrix', 'matrix']:
+                    raw = result.data.get(key)
+                    if raw is not None and hasattr(raw, 'ndim') and raw.ndim >= 2:
+                        avg = raw.mean(axis=0) if raw.ndim == 3 else raw
+                        return [[float(v) for v in row] for row in avg.tolist()], f"result.data['{key}']"
+
+            if hasattr(dag_result, 'to_dict'):
+                dag_dict = (
+                    dag_result.to_dict()
+                    if callable(dag_result.to_dict)
+                    else dag_result.to_dict
+                )
+                if isinstance(dag_dict, dict):
+                    for key in ['mbar_overlap_matrix', 'overlap_matrix', 'matrix']:
+                        raw = dag_dict.get(key)
+                        if raw is not None and hasattr(raw, 'ndim') and raw.ndim >= 2:
+                            avg = raw.mean(axis=0) if raw.ndim == 3 else raw
+                            return [[float(v) for v in row] for row in avg.tolist()], f"dag_result.to_dict()['{key}']"
+        except Exception as e:
+            logger.debug(f"Legacy attribute probe failed: {e}")
+
+        # ------------------------------------------------------------------ #
+        # 3. Recursive file fallbacks under shared_dir                        #
+        # ------------------------------------------------------------------ #
+        try:
+            # YAML files — real_time_analysis is a list; mbar_analysis dicts
+            yaml_candidates = (
+                list(shared_dir.rglob('*_real_time_analysis.yaml'))
+                + list(shared_dir.rglob('*analysis*.yaml'))
+                + list(shared_dir.rglob('*mbar*.yaml'))
+            )
+            for yaml_file in yaml_candidates:
+                try:
+                    import yaml as _yaml
+                    with open(yaml_file) as f:
+                        data = _yaml.safe_load(f)
+                    overlap = None
+                    if isinstance(data, list) and data:
+                        latest = data[-1]
+                        overlap = (
+                            (latest.get('mbar_analysis') or {}).get('overlap_matrix')
+                            or latest.get('overlap_matrix')
+                        )
+                    elif isinstance(data, dict):
+                        overlap = (
+                            (data.get('mbar_analysis') or {}).get('overlap_matrix')
+                            or data.get('overlap_matrix')
+                        )
+                    if overlap is not None:
+                        raw = np.array(overlap)
+                        if raw.ndim >= 2:
+                            avg = raw.mean(axis=0) if raw.ndim == 3 else raw
+                            return [[float(v) for v in row] for row in avg.tolist()], f"yaml:{yaml_file.name}"
+                except Exception:
+                    continue
+
+            # NumPy binary files
+            npy_candidates = (
+                list(shared_dir.rglob('*overlap*.npy'))
+                + list(shared_dir.rglob('*mbar*.npy'))
+            )
+            for npy_file in npy_candidates:
+                try:
+                    raw = np.load(npy_file)
+                    if raw.ndim >= 2:
+                        avg = raw.mean(axis=0) if raw.ndim == 3 else raw
+                        return [[float(v) for v in row] for row in avg.tolist()], f"npy:{npy_file.name}"
+                except Exception:
+                    continue
+        except Exception as e:
+            logger.debug(f"File fallback search failed: {e}")
+
+        return None, "not_found"
+
+    def _render_overlap_matrix_png(
+        self, matrix_nested: list, png_path: Path, transformation_name: str, leg: str
+    ) -> bool:
+        """Render a nested-list overlap matrix to a PNG file.  Returns True on success."""
+        try:
+            import matplotlib
+            matplotlib.use('Agg')
+            import matplotlib.pyplot as plt
+
+            arr = np.array(matrix_nested)
+            try:
+                from alchemlyb.visualisation import plot_mbar_overlap_matrix
+                ax = plot_mbar_overlap_matrix(arr)
+                fig = ax.get_figure()
+            except (ImportError, Exception):
+                n = len(arr)
+                fig, ax = plt.subplots(figsize=(max(4, n), max(4, n)))
+                im = ax.imshow(arr, cmap='Blues', vmin=0, vmax=1)
+                fig.colorbar(im, ax=ax)
+                ax.set_title(f'MBAR Overlap\n{transformation_name} ({leg})')
+                ax.set_xlabel('Lambda state')
+                ax.set_ylabel('Lambda state')
+
+            fig.savefig(str(png_path), dpi=150, bbox_inches='tight')
+            plt.close(fig)
+            return True
+        except Exception as e:
+            logger.warning(f"Could not render overlap matrix PNG for {transformation_name}/{leg}: {e}")
+            return False
+
+    def _get_or_generate_overlap_matrix(
+        self,
+        shared_dir: Path,
+        job_id: str,
+        transformation_name: str,
+        leg: str,
+        matrix_nested: Optional[list] = None,
+    ) -> Optional[str]:
+        """Return a /api/rbfe/files/… URL for the MBAR overlap PNG.
+
+        If *matrix_nested* is provided it is rendered into the canonical
+        shared_dir/mbar_overlap_matrix.png (overwriting if stale).
+        Otherwise, any existing PNG is found recursively under shared_dir.
+        """
+        # Sanitize transformation_name before embedding in URL path
+        safe_name = transformation_name.replace('..', '').replace('/', '_').replace('\\', '_')
+        canonical_png = shared_dir / 'mbar_overlap_matrix.png'
+
+        # If we have numerical matrix data, render PNG now
+        if matrix_nested is not None:
+            self._render_overlap_matrix_png(matrix_nested, canonical_png, transformation_name, leg)
+
+        # Prefer the canonical path first, then any PNG found recursively
+        if canonical_png.exists():
+            rel = f"{safe_name}/shared/mbar_overlap_matrix.png"
+            return f"/api/rbfe/files/{job_id}/{rel}"
+
+        # Recursive search for any pre-generated overlap PNG (e.g. written by OpenFE itself)
+        for png_file in shared_dir.rglob('mbar_overlap_matrix.png'):
+            try:
+                rel = str(png_file.relative_to(self.output_dir / job_id)).replace('\\', '/')
+                return f"/api/rbfe/files/{job_id}/{rel}"
+            except ValueError:
+                continue
+
+        return None
+
     def get_job_files(self, job_id: str) -> List[Dict[str, Any]]:
         """List files in a job directory."""
         job_dir = self.output_dir / job_id

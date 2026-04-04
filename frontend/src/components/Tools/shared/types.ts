@@ -30,7 +30,7 @@ export interface WorkflowConfig {
   description: string
   icon: React.ReactNode
   steps: WorkflowStep[]
-  accentColor: 'blue' | 'green' | 'purple' | 'orange' | 'pink'
+  accentColor: 'cyan' | 'green' | 'purple' | 'orange' | 'pink'
 }
 
 export type AccentColor = 'blue' | 'green' | 'purple' | 'orange' | 'pink' | 'teal' | 'indigo' | 'cyan' | 'amber'
@@ -41,6 +41,7 @@ export const accentColorClasses: Record<AccentColor, {
   bgLight: string
   text: string
   border: string
+  borderLight: string
   gradient: string
 }> = {
   blue: {
@@ -49,6 +50,7 @@ export const accentColorClasses: Record<AccentColor, {
     bgLight: 'bg-blue-500/20',
     text: 'text-blue-400',
     border: 'border-blue-500',
+    borderLight: 'border-blue-700/40',
     gradient: 'from-blue-500/20 to-cyan-500/20',
   },
   green: {
@@ -57,6 +59,7 @@ export const accentColorClasses: Record<AccentColor, {
     bgLight: 'bg-green-500/20',
     text: 'text-green-400',
     border: 'border-green-500',
+    borderLight: 'border-green-700/40',
     gradient: 'from-green-500/20 to-emerald-500/20',
   },
   purple: {
@@ -65,6 +68,7 @@ export const accentColorClasses: Record<AccentColor, {
     bgLight: 'bg-purple-500/20',
     text: 'text-purple-400',
     border: 'border-purple-500',
+    borderLight: 'border-purple-700/40',
     gradient: 'from-purple-500/20 to-pink-500/20',
   },
   orange: {
@@ -73,6 +77,7 @@ export const accentColorClasses: Record<AccentColor, {
     bgLight: 'bg-orange-500/20',
     text: 'text-orange-400',
     border: 'border-orange-500',
+    borderLight: 'border-orange-700/40',
     gradient: 'from-orange-500/20 to-amber-500/20',
   },
   pink: {
@@ -81,6 +86,7 @@ export const accentColorClasses: Record<AccentColor, {
     bgLight: 'bg-pink-500/20',
     text: 'text-pink-400',
     border: 'border-pink-500',
+    borderLight: 'border-pink-700/40',
     gradient: 'from-pink-500/20 to-rose-500/20',
   },
   teal: {
@@ -89,6 +95,7 @@ export const accentColorClasses: Record<AccentColor, {
     bgLight: 'bg-teal-500/20',
     text: 'text-teal-400',
     border: 'border-teal-500',
+    borderLight: 'border-teal-700/40',
     gradient: 'from-teal-500/20 to-cyan-500/20',
   },
   indigo: {
@@ -97,6 +104,7 @@ export const accentColorClasses: Record<AccentColor, {
     bgLight: 'bg-indigo-500/20',
     text: 'text-indigo-400',
     border: 'border-indigo-500',
+    borderLight: 'border-indigo-700/40',
     gradient: 'from-indigo-500/20 to-violet-500/20',
   },
   cyan: {
@@ -105,6 +113,7 @@ export const accentColorClasses: Record<AccentColor, {
     bgLight: 'bg-cyan-500/20',
     text: 'text-cyan-400',
     border: 'border-cyan-500',
+    borderLight: 'border-cyan-700/40',
     gradient: 'from-cyan-500/20 to-sky-500/20',
   },
   amber: {
@@ -113,6 +122,7 @@ export const accentColorClasses: Record<AccentColor, {
     bgLight: 'bg-amber-500/20',
     text: 'text-amber-400',
     border: 'border-amber-500',
+    borderLight: 'border-amber-700/40',
     gradient: 'from-amber-500/20 to-yellow-500/20',
   },
 }

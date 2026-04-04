@@ -57,7 +57,7 @@ export function WorkflowContainer({
   isRunning = false,
   executeLabel = 'Start',
   showExecuteOnStep,
-  accentColor = 'blue',
+  accentColor = 'cyan',
   children,
   error,
 }: WorkflowContainerProps) {
@@ -67,13 +67,13 @@ export function WorkflowContainer({
     <div className="h-full flex flex-col px-6 py-6">
       {/* Header */}
       {showHeader && (
-        <div className="flex items-start gap-3 mb-6">
-          <div className={`p-2.5 bg-gradient-to-br ${colors.gradient} rounded-lg`}>
-            {icon}
+        <div className="flex items-center gap-3 h-14 mb-6 border-b border-gray-800/50 -mx-6 px-6 bg-gray-950">
+          <div className={`p-2 bg-gradient-to-br ${colors.gradient} rounded-lg flex-shrink-0`}>
+            <div className="scale-75 origin-center">{icon}</div>
           </div>
-          <div className="flex-1">
-            <h3 className="text-lg font-semibold text-white mb-1">{title}</h3>
-            <p className="text-sm text-gray-400 leading-relaxed">{description}</p>
+          <div className="flex-1 min-w-0">
+            <h3 className="text-base font-semibold text-white truncate">{title}</h3>
+            <p className="text-[10px] text-gray-500 uppercase tracking-wider truncate">{description}</p>
           </div>
         </div>
       )}
@@ -88,7 +88,7 @@ export function WorkflowContainer({
       />
 
       {/* Content */}
-      <div className="flex-1 overflow-y-auto min-h-0 pr-3">
+      <div className="flex-1 overflow-y-auto min-h-0 pr-3 pb-4">
         {children}
       </div>
 

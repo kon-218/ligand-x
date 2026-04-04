@@ -3,6 +3,9 @@ channels:
   - conda-forge
   - defaults
 dependencies:
+  # Python 3.11 is required for orca-pi (quantum chemistry integration).
+  # Other services remain on Python 3.10 to minimize environment rebuild size.
+  # This divergence is intentional and documented here for maintainability.
   - python=3.11
   - pip  # Required for pip-installed packages
   

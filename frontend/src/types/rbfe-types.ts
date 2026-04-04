@@ -58,6 +58,14 @@ export interface RBFEParameters {
   reference_pose_source?: 'cocrystal' | 'vina' | 'prior_job'
   reference_pose_pdb?: string | null
   vina_exhaustiveness?: number
+  vina_grid_box?: {
+    center_x: number
+    center_y: number
+    center_z: number
+    size_x: number
+    size_y: number
+    size_z: number
+  }
 
   // Compute settings
   compute_platform?: 'CUDA' | 'OpenCL' | 'CPU'

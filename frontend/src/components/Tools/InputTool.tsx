@@ -4,10 +4,12 @@ import { useState, useEffect } from 'react'
 import { Loader2, Copy, Check, FlaskConical } from 'lucide-react'
 import { useMolecularStore } from '@/store/molecular-store'
 import { useUIStore } from '@/store/ui-store'
+import { useBaseColor } from '@/hooks/use-base-color'
 import { api } from '@/lib/api-client'
-import { isValidPdbId, isValidSmiles } from '@/lib/utils'
+import { isValidPdbId, isValidSmiles, cn } from '@/lib/utils'
 import { saveLigandsToLibrary } from '@/lib/structure-utils'
 import { FileUpload } from '@/components/ui/FileUpload'
+import { Button } from '@/components/ui/button'
 
 const API_BASE_URL = typeof window !== 'undefined' ? (process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000') : ''
 
@@ -26,6 +28,7 @@ export function InputTool() {
   const [using, setUsing] = useState<string | null>(null)
   const { currentStructure, addStructureTab, setCurrentStructure, setIsLoading, setError, structureTabs, setActiveTab: setViewerActiveTab, pendingTautomerSmiles, setPendingTautomerSmiles } = useMolecularStore()
   const { addNotification, recentPdbIds, addRecentPdbId } = useUIStore()
+  const bc_active = useBaseColor()
 
   // Consume pendingTautomerSmiles set by LibraryTool
   useEffect(() => {
@@ -201,7 +204,7 @@ export function InputTool() {
       const structure = await api.fetchLigandByHETID(hetid.toUpperCase())
       const sourcePdbId = (structure as any).source_pdb_id || 'Unknown'
       const structureName = `${hetid.toUpperCase()} (from ${sourcePdbId})`
-      
+
       addStructureTab(structure, structureName)
       addNotification('success', `Fetched structure with HET ID ${hetid.toUpperCase()} from PDB ${sourcePdbId}`)
 
@@ -266,15 +269,19 @@ export function InputTool() {
   return (
     <div className="p-4 space-y-4">
       {/* Tabs */}
-      <div className="flex gap-2 border-b border-gray-700">
+      <div className="flex gap-2 border-b border-gray-800/50">
         {(['pdb', 'upload', 'smiles', 'hetid'] as const).map((tab) => (
           <button
             key={tab}
             onClick={() => setActiveTab(tab)}
-            className={`px-4 py-2 text-sm font-medium transition-colors ${activeTab === tab
-              ? 'text-blue-400 border-b-2 border-blue-400'
-              : 'text-gray-400 hover:text-gray-300'
-              }`}
+            className={cn(
+              'px-4 py-2 text-sm font-medium transition-colors border-b-2 border-transparent',
+              activeTab !== tab && 'text-gray-400 hover:text-gray-300',
+            )}
+            style={activeTab === tab ? {
+              color: bc_active.hexValue,
+              borderBottomColor: bc_active.hexValue,
+            } : undefined}
           >
             {tab === 'hetid' ? 'HET ID' : tab.toUpperCase()}
           </button>
@@ -299,7 +306,8 @@ export function InputTool() {
                 type="checkbox"
                 checked={cleanAndKeepLigands}
                 onChange={(e) => setCleanAndKeepLigands(e.target.checked)}
-                className="w-4 h-4 rounded border-gray-600 bg-gray-800 text-blue-600 focus:ring-blue-500 focus:ring-offset-gray-900"
+                className="w-4 h-4 rounded border-gray-600 bg-gray-800 focus:ring-offset-gray-900"
+                style={{ accentColor: bc_active.hexValue }}
               />
               Clean Protein + Keep Ligands
             </label>
@@ -320,19 +328,40 @@ export function InputTool() {
                       setPdbId(id)
                       handleFetchPDB(id)
                     }}
-                    className="px-2 py-1 text-xs bg-gray-800 hover:bg-gray-700 border border-gray-700 hover:border-blue-500/50 text-blue-400 rounded transition-all"
+                    className="px-2 py-1 text-xs bg-gray-800 hover:bg-gray-700 border rounded transition-all"
+                    style={{
+                      color: bc_active.hexValue,
+                      borderColor: `rgba(${bc_active.rgbString}, 0.3)`,
+                    }}
+                    onMouseEnter={(e) => {
+                      (e.currentTarget).style.borderColor = `rgba(${bc_active.rgbString}, 0.5)`
+                    }}
+                    onMouseLeave={(e) => {
+                      (e.currentTarget).style.borderColor = `rgba(${bc_active.rgbString}, 0.3)`
+                    }}
                   >
                     {id}
                   </button>
                 ))}
               </div>
             )}
-            <button
+            <Button
+              variant="primary"
               onClick={() => handleFetchPDB()}
-              className="w-full px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded transition-colors"
+              className="w-full"
+              style={{
+                backgroundColor: bc_active.hexValue,
+                color: 'white',
+              }}
+              onMouseEnter={(e) => {
+                e.currentTarget.style.backgroundColor = `rgba(${bc_active.rgbString}, 0.85)`
+              }}
+              onMouseLeave={(e) => {
+                e.currentTarget.style.backgroundColor = bc_active.hexValue
+              }}
             >
               Fetch Structure
-            </button>
+            </Button>
           </div>
         )}
 
@@ -363,22 +392,36 @@ export function InputTool() {
               onKeyDown={(e) => e.key === 'Enter' && handleSMILES()}
             />
             <div className="flex gap-2">
-              <button
+              <Button
+                variant="primary"
                 onClick={handleSMILES}
-                className="flex-1 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded transition-colors"
+                className="flex-1"
+                style={{
+                  backgroundColor: bc_active.hexValue,
+                  color: 'white',
+                }}
+                onMouseEnter={(e) => {
+                  e.currentTarget.style.backgroundColor = `rgba(${bc_active.rgbString}, 0.85)`
+                }}
+                onMouseLeave={(e) => {
+                  e.currentTarget.style.backgroundColor = bc_active.hexValue
+                }}
               >
                 Generate 3D Structure
-              </button>
-              <button
+              </Button>
+              <Button
+                variant="secondary"
                 onClick={handleEnumerateTautomers}
                 disabled={!smiles.trim() || tautomerLoading}
-                className="flex-1 flex items-center justify-center gap-2 px-4 py-2 bg-gray-700 hover:bg-gray-600 disabled:opacity-50 text-white rounded transition-colors"
+                className="flex-1"
               >
-                {tautomerLoading
-                  ? <Loader2 className="w-4 h-4 animate-spin" />
-                  : <FlaskConical className="w-4 h-4" />}
+                {tautomerLoading ? (
+                  <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                ) : (
+                  <FlaskConical className="w-4 h-4 mr-2" />
+                )}
                 Enumerate Tautomers
-              </button>
+              </Button>
             </div>
 
             {tautomerError && (
@@ -424,7 +467,17 @@ export function InputTool() {
                       <button
                         onClick={() => handleUseTautomer(t)}
                         disabled={using === t.smiles}
-                        className="w-full flex items-center justify-center gap-1 px-3 py-1.5 text-xs border border-gray-600 hover:border-blue-500 hover:text-blue-300 text-gray-300 rounded transition-colors disabled:opacity-50"
+                        className="w-full flex items-center justify-center gap-1 px-3 py-1.5 text-xs border border-gray-600 rounded transition-colors disabled:opacity-50 text-gray-300"
+                        onMouseEnter={(e) => {
+                          const el = e.currentTarget
+                          el.style.borderColor = `rgba(${bc_active.rgbString}, 0.8)`
+                          el.style.color = bc_active.hexValue
+                        }}
+                        onMouseLeave={(e) => {
+                          const el = e.currentTarget
+                          el.style.borderColor = '#4b5563'
+                          el.style.color = '#d1d5db'
+                        }}
                       >
                         {using === t.smiles && <Loader2 className="w-3 h-3 animate-spin" />}
                         Use This Tautomer
@@ -456,12 +509,23 @@ export function InputTool() {
                 {hetidError}
               </div>
             )}
-            <button
+            <Button
+              variant="primary"
               onClick={handleHETID}
-              className="w-full px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded transition-colors"
+              className="w-full"
+              style={{
+                backgroundColor: bc_active.hexValue,
+                color: 'white',
+              }}
+              onMouseEnter={(e) => {
+                e.currentTarget.style.backgroundColor = `rgba(${bc_active.rgbString}, 0.85)`
+              }}
+              onMouseLeave={(e) => {
+                e.currentTarget.style.backgroundColor = bc_active.hexValue
+              }}
             >
               Fetch Structure
-            </button>
+            </Button>
           </div>
         )}
       </div>

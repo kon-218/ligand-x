@@ -8,6 +8,7 @@ import type {
   DockingMode,
   MappingPreviewResult,
 } from '@/types/rbfe-types'
+import type { GridBox } from '@/types/docking'
 import { mergeJobs } from '@/lib/job-utils'
 
 // Helper to check if a job status indicates it's still running/in-progress
@@ -63,6 +64,7 @@ interface RBFEStore {
   referencePoseSource: 'cocrystal' | 'vina' | 'prior_job' | null
   referencePosePdb: string | null
   vinaExhaustiveness: number
+  vinaGridBox: GridBox | null
 
   // Results
   rbfeResult: RBFEJob | null
@@ -115,6 +117,7 @@ interface RBFEStore {
   setReferencePoseSource: (source: 'cocrystal' | 'vina' | 'prior_job' | null) => void
   setReferencePosePdb: (pdb: string | null) => void
   setVinaExhaustiveness: (exhaustiveness: number) => void
+  setVinaGridBox: (box: GridBox | null) => void
 
   // Actions - Execution
   setIsRunning: (running: boolean) => void
@@ -183,6 +186,7 @@ export const useRBFEStore = create<RBFEStore>((set, get) => ({
   referencePoseSource: null,
   referencePosePdb: null,
   vinaExhaustiveness: 8,
+  vinaGridBox: null,
 
   rbfeResult: null,
   isRunning: false,
@@ -272,6 +276,8 @@ export const useRBFEStore = create<RBFEStore>((set, get) => ({
 
   setVinaExhaustiveness: (exhaustiveness) => set({ vinaExhaustiveness: exhaustiveness }),
 
+  setVinaGridBox: (box) => set({ vinaGridBox: box }),
+
   // Parameter actions
   setRBFEParameters: (params) =>
     set((state) => ({
@@ -355,6 +361,7 @@ export const useRBFEStore = create<RBFEStore>((set, get) => ({
       referencePoseSource: null,
       referencePosePdb: null,
       vinaExhaustiveness: 8,
+      vinaGridBox: null,
       rbfeParameters: initialRBFEParameters,
       rbfeResult: null,
       isRunning: false,

@@ -8,7 +8,7 @@ import logging
 import json
 from typing import Dict, Any, Optional, List
 from fastapi import APIRouter, HTTPException, UploadFile, File, Form
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, Response
 from pydantic import BaseModel, Field
 from pathlib import Path
 
@@ -210,6 +210,7 @@ class RBFEStatusResponse(BaseModel):
     output_files: Optional[Dict[str, str]] = None
     reference_ligand: Optional[str] = None
     error: Optional[str] = None
+    ligand_smiles: Optional[Dict[str, str]] = None
 
 
 class RBFENetworkPreviewRequest(BaseModel):
@@ -483,7 +484,8 @@ async def get_calculation_status(job_id: str):
             docking_log=job_info.get('docking_log'),
             output_files=job_info.get('output_files'),
             reference_ligand=job_info.get('reference_ligand'),
-            error=job_info.get('error')
+            error=job_info.get('error'),
+            ligand_smiles=job_info.get('ligand_smiles'),
         )
         
     except HTTPException:
@@ -767,6 +769,8 @@ async def get_job_file(job_id: str, filename: str):
             '.sdf': 'chemical/x-mdl-sdfile',
             '.log': 'text/plain',
             '.txt': 'text/plain',
+            '.png': 'image/png',
+            '.svg': 'image/svg+xml',
         }
         media_type = media_types.get(suffix, 'application/octet-stream')
         
@@ -978,6 +982,27 @@ async def get_job_diagnostics(job_id: str):
     except Exception as e:
         logger.error(f"Error getting diagnostics: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/ligand-image")
+async def get_ligand_image(smiles: str):
+    """Render a 2D ligand image from SMILES using RDKit and return as PNG."""
+    import io
+    try:
+        from rdkit import Chem
+        from rdkit.Chem import Draw
+    except ImportError:
+        raise HTTPException(status_code=500, detail="RDKit not available")
+
+    mol = Chem.MolFromSmiles(smiles)
+    if mol is None:
+        raise HTTPException(status_code=400, detail="Invalid SMILES string")
+
+    img = Draw.MolToImage(mol, size=(200, 200))
+    buf = io.BytesIO()
+    img.save(buf, format="PNG")
+    return Response(content=buf.getvalue(), media_type="image/png")
+
 
 
 

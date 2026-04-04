@@ -1,16 +1,16 @@
 'use client'
 
-import { useState, useEffect, useMemo, useCallback } from 'react'
+import { useState, useEffect, useMemo, useCallback, useRef } from 'react'
 import { Button } from '@/components/ui/button'
 import { Alert, AlertDescription } from '@/components/ui/alert'
-import { CheckCircle2, AlertCircle, Loader2, Download, TrendingDown, Activity, Save, Eye, Database, Clock, RefreshCw } from 'lucide-react'
+import { CheckCircle2, AlertCircle, Loader2, Download, TrendingDown, Activity, Save, Eye, Database, Clock, RefreshCw, Sparkles } from 'lucide-react'
 import { useBoltz2Store, Boltz2MSAOptions, Boltz2BatchLigandResult } from '@/store/boltz2-store'
 import { useMolecularStore } from '@/store/molecular-store'
 import { useMDStore } from '@/store/md-store'
 import { useUIStore } from '@/store/ui-store'
 import { api } from '@/lib/api-client'
 import { downloadCSV } from '@/lib/csv-export'
-import { ResultsContainer, ResultMetric, ResultsTable, InfoBox, UnifiedJobList } from '../shared'
+import { ResultsContainer, ResultMetric, ResultsTable, InfoBox, UnifiedJobList, NoJobSelectedState } from '../shared'
 import type { Boltz2Result, Boltz2Pose, Boltz2Job } from '@/store/boltz2-store'
 import type { MolecularStructure } from '@/types/molecular'
 import { useUnifiedResultsStore } from '@/store/unified-results-store'
@@ -64,11 +64,22 @@ export function Boltz2StepResults({
 
   const filteredJobs = getFilteredJobs().filter((j: UnifiedJob) => j.service === 'boltz2')
 
+  const fetchControllerRef = useRef<AbortController | null>(null)
+
   const handleSelectJob = async (jobId: string | null) => {
+    fetchControllerRef.current?.abort()
     boltzStore.setActiveJob(jobId)
-    if (!jobId) return
+    if (!jobId) {
+      boltzStore.setResult(null)
+      return
+    }
+
+    const controller = new AbortController()
+    fetchControllerRef.current = controller
+
     try {
-      const job = await api.getBoltz2Job(jobId) as any
+      const job = await api.getBoltz2Job(jobId, { signal: controller.signal }) as any
+      if (controller.signal.aborted) return
       console.log('[Boltz2StepResults] Job loaded:', job)
 
       // Handle both 'result' (PostgreSQL format) and 'results' (legacy format)
@@ -97,7 +108,8 @@ export function Boltz2StepResults({
         boltzStore.setResult(null)
         boltzStore.setIsRunning(false)
       }
-    } catch (error) {
+    } catch (error: any) {
+      if (controller.signal.aborted) return
       console.error('Failed to load job details:', error)
     }
   }
@@ -236,6 +248,7 @@ export function Boltz2StepResults({
         { key: 'delta_g', label: 'Delta G (kcal/mol)' },
         { key: 'probability', label: 'Probability' },
         { key: 'confidence', label: 'Confidence' },
+        { key: 'plddt', label: 'pLDDT' },
       ],
       result.results.map(r => ({
         ligand_id: r.ligand_id,
@@ -244,7 +257,8 @@ export function Boltz2StepResults({
         affinity: r.affinity_pred_value ?? 'N/A',
         delta_g: r.binding_free_energy ?? 'N/A',
         probability: r.affinity_probability_binary ?? 'N/A',
-        confidence: r.prediction_confidence ?? 'N/A',
+        confidence: r.confidence_score ?? r.prediction_confidence ?? 'N/A',
+        plddt: r.complex_plddt ?? 'N/A',
       })),
       `boltz2_batch_${result.job_id}_results.csv`
     )
@@ -415,13 +429,10 @@ export function Boltz2StepResults({
 
             {/* Empty state */}
             {!result && (
-              <div className="flex items-center justify-center h-64">
-                <div className="text-center text-gray-400">
-                  <Activity className="h-12 w-12 mx-auto mb-3 opacity-50" />
-                  <p>No job selected</p>
-                  <p className="text-sm mt-1">Select a job from the list or run a new prediction</p>
-                </div>
-              </div>
+              <NoJobSelectedState
+                icon={Sparkles}
+                description="Select a job from the list or run a new prediction"
+              />
             )}
           </>
         )}

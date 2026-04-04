@@ -428,6 +428,7 @@ class EquilibrationRunner:
         skip_minimization: bool = False,
         nvt_steps: int = 25000,
         npt_steps: int = 175000,
+        heating_steps_per_stage: int = 2500,
         report_interval: int = 1000,
         production_steps: int = 0,
         production_report_interval: int = 2500,
@@ -452,6 +453,7 @@ class EquilibrationRunner:
             skip_minimization: Whether to skip minimization (e.g. when resuming)
             nvt_steps: Number of NVT steps
             npt_steps: Number of NPT steps
+            heating_steps_per_stage: Number of heating MD steps per temperature stage
             report_interval: Reporting interval
             production_steps: Number of production MD steps (0 = skip)
             production_report_interval: DCD frame save interval for production
@@ -567,6 +569,7 @@ class EquilibrationRunner:
             heating_result = self._run_thermal_heating(
                 simulation, unit,
                 target_temperature=temperature,
+                steps_per_stage=heating_steps_per_stage,
                 progress_start=ranges['heating'][0],
                 progress_end=ranges['heating'][1],
             )

@@ -25,17 +25,6 @@ elif [ "$COMMAND" = "worker-qc" ]; then
         --concurrency=$CONCURRENCY \
         --loglevel=info
 
-elif [ "$COMMAND" = "worker-gpu" ]; then
-    # Legacy: GPU worker for all GPU tasks (deprecated, use worker-gpu-short/long)
-    CONCURRENCY=${CELERY_CONCURRENCY:-2}
-    QUEUES=${CELERY_QUEUES:-gpu-short,gpu-long}
-    echo "Starting GPU Celery Worker (concurrency=$CONCURRENCY, queues=$QUEUES)..."
-    exec celery -A lib.tasks.gpu_tasks worker \
-        --hostname=worker-gpu@%h \
-        --queues=$QUEUES \
-        --concurrency=$CONCURRENCY \
-        --loglevel=info
-
 elif [ "$COMMAND" = "worker-gpu-short" ]; then
     CONCURRENCY=${CELERY_CONCURRENCY:-2}
     echo "Starting GPU Short Worker (concurrency=$CONCURRENCY, queue=gpu-short)..."

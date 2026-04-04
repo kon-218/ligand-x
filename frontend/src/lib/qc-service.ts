@@ -143,9 +143,9 @@ class QCService {
   /**
    * Get results of a completed job
    */
-  async getJobResults(jobId: string): Promise<JobResultsResponse> {
+  async getJobResults(jobId: string, options?: { signal?: AbortSignal }): Promise<JobResultsResponse> {
     try {
-      const response = await fetch(`${API_BASE}/api/qc/jobs/results/${jobId}`)
+      const response = await fetch(`${API_BASE}/api/qc/jobs/results/${jobId}`, { signal: options?.signal })
       if (!response.ok) {
         throw new Error(`HTTP error! status: ${response.status}`)
       }

@@ -225,7 +225,10 @@ export class AlphaOrbitalsExample {
     }
 }
 
-(window as any).AlphaOrbitalsExample = new AlphaOrbitalsExample();
-(window as any).AlphaOrbitalsExample.setDebugMode = setDebugMode;
-(window as any).AlphaOrbitalsExample.setTimingMode = setTimingMode;
-(window as any).AlphaOrbitalsExample.consoleStats = consoleStats;
+// Debug hooks available in development mode
+if (process.env.NODE_ENV === 'development') {
+    (window as any).AlphaOrbitalsExample = new AlphaOrbitalsExample();
+    (window as any).AlphaOrbitalsExample.setDebugMode = setDebugMode;
+    (window as any).AlphaOrbitalsExample.setTimingMode = setTimingMode;
+    (window as any).AlphaOrbitalsExample.consoleStats = consoleStats;
+}

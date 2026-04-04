@@ -1,13 +1,20 @@
 'use client'
 
-import { useMemo } from 'react'
-import type { MappingPairResult, NetworkTopology } from '@/types/rbfe-types'
+import { useMemo, useState, useEffect, useRef, useCallback } from 'react'
+import type {
+  MappingPairResult,
+  NetworkTopology,
+  LigandSelection,
+  RBFENetworkData,
+} from '@/types/rbfe-types'
+import { computeNetworkGraphLayout } from '@/lib/rbfe-network-layout'
 
 interface NetworkPreviewProps {
   pairs: MappingPairResult[]
   topology: NetworkTopology
   centralLigand: string | null
   ligandNames: string[]
+  availableLigands?: LigandSelection[]
 }
 
 interface NetworkEdge extends MappingPairResult {}
@@ -100,9 +107,7 @@ function computeNetwork(
 
 // ─── SVG network graph ────────────────────────────────────────────────────────
 
-const WIDTH = 320
-const HEIGHT = 220
-const NODE_R = 18
+const NODE_R = 32
 const FONT_SIZE = 10
 
 function edgeColor(score: number): string {
@@ -112,47 +117,73 @@ function edgeColor(score: number): string {
   return '#f87171'                     // red-400
 }
 
-function circularLayout(names: string[]): Record<string, { x: number; y: number }> {
-  const cx = WIDTH / 2
-  const cy = HEIGHT / 2
-  const r = Math.min(cx, cy) - NODE_R - 8
-  const positions: Record<string, { x: number; y: number }> = {}
-  names.forEach((name, i) => {
-    const angle = (2 * Math.PI * i) / names.length - Math.PI / 2
-    positions[name] = {
-      x: cx + r * Math.cos(angle),
-      y: cy + r * Math.sin(angle),
-    }
-  })
-  return positions
-}
-
-function truncate(s: string, max = 8): string {
+function truncate(s: string, max = 14): string {
   return s.length > max ? s.slice(0, max - 1) + '…' : s
 }
 
 function NetworkGraphSVG({
   edges,
   nodes,
+  topology,
+  centralLigand,
   unscored = false,
+  imageUrls = new Map(),
+  containerWidth = 300,
 }: {
   edges: NetworkEdge[] | StructuralEdge[]
   nodes: string[]
+  topology: NetworkTopology
+  centralLigand: string | null
   unscored?: boolean
+  imageUrls?: Map<string, string>
+  containerWidth?: number
 }) {
-  const positions = circularLayout(nodes)
+  // Square canvas sized to the container so the graph always fills the available space
+  const W = Math.max(containerWidth, 200)
+  const H = W
+
+  const layout = useMemo(() => {
+    const nw: RBFENetworkData = {
+      nodes,
+      edges: edges.map((e) => ({
+        ligand_a: e.ligand_a,
+        ligand_b: e.ligand_b,
+        score: unscored ? 0 : (e as NetworkEdge).score,
+      })),
+      topology,
+      central_ligand: centralLigand ?? undefined,
+    }
+    return computeNetworkGraphLayout(nw, W, H, NODE_R)
+  }, [nodes, edges, topology, centralLigand, unscored, W, H])
+
+  const posByNode = useMemo(() => {
+    const m = new Map<string, { x: number; y: number; index: number }>()
+    for (const p of layout) {
+      m.set(p.node, { x: p.x, y: p.y, index: p.index })
+    }
+    return m
+  }, [layout])
 
   return (
     <svg
-      width={WIDTH}
-      height={HEIGHT}
-      viewBox={`0 0 ${WIDTH} ${HEIGHT}`}
-      className="w-full max-w-xs mx-auto"
+      width={W}
+      height={H}
+      viewBox={`0 0 ${W} ${H}`}
+      className="w-full"
+      style={{ display: 'block' }}
     >
+      <defs>
+        {layout.map((p) => (
+          <clipPath key={p.index} id={`np-clip-${p.index}`}>
+            <circle cx={p.x} cy={p.y} r={NODE_R - 2} />
+          </clipPath>
+        ))}
+      </defs>
+
       {/* Edges */}
       {edges.map((edge, i) => {
-        const a = positions[edge.ligand_a]
-        const b = positions[edge.ligand_b]
+        const a = posByNode.get(edge.ligand_a)
+        const b = posByNode.get(edge.ligand_b)
         if (!a || !b) return null
         const scored = !unscored && 'score' in edge
         return (
@@ -183,29 +214,89 @@ function NetworkGraphSVG({
       })}
 
       {/* Nodes */}
-      {nodes.map((name) => {
-        const pos = positions[name]
-        if (!pos) return null
+      {layout.map((p) => {
+        const imgUrl = imageUrls.get(p.node)
+        const cx = W / 2
+        const cy = H / 2
+        const isHub =
+          topology === 'radial' &&
+          Math.abs(p.x - cx) < 0.01 &&
+          Math.abs(p.y - cy) < 0.01
+
+        const hubLabel = truncate(p.node, 18)
+        const hubEstWidth = Math.max(hubLabel.length * 7 + 8, 30)
         return (
-          <g key={name}>
+          <g key={p.node}>
             <circle
-              cx={pos.x}
-              cy={pos.y}
+              cx={p.x}
+              cy={p.y}
               r={NODE_R}
-              fill="#1e3a5f"
+              fill={imgUrl ? 'white' : '#1e3a5f'}
               stroke="#60a5fa"
               strokeWidth={1.5}
             />
-            <text
-              x={pos.x}
-              y={pos.y + FONT_SIZE / 3}
-              textAnchor="middle"
-              fontSize={FONT_SIZE}
-              fill="#e2e8f0"
-              fontWeight="500"
-            >
-              {truncate(name)}
-            </text>
+            {imgUrl ? (
+              <image
+                href={imgUrl}
+                x={p.x - (isHub ? (NODE_R - 2) * 2 * 0.85 : (NODE_R - 2) * 2) / 2}
+                y={
+                  p.y -
+                  (isHub ? (NODE_R - 2) * 2 * 0.85 : (NODE_R - 2) * 2) / 2 -
+                  (isHub ? 6 : 0)
+                }
+                width={isHub ? (NODE_R - 2) * 2 * 0.85 : (NODE_R - 2) * 2}
+                height={isHub ? (NODE_R - 2) * 2 * 0.85 : (NODE_R - 2) * 2}
+                clipPath={`url(#np-clip-${p.index})`}
+              />
+            ) : (
+              <text
+                x={p.x}
+                y={p.y + FONT_SIZE / 3}
+                textAnchor="middle"
+                fontSize={FONT_SIZE}
+                fill="#e2e8f0"
+                fontWeight="500"
+              >
+                {truncate(p.node)}
+              </text>
+            )}
+            {isHub ? (
+              <>
+                <rect
+                  x={p.x - hubEstWidth / 2}
+                  y={p.y + 10}
+                  width={hubEstWidth}
+                  height={15}
+                  fill="white"
+                  fillOpacity={0.85}
+                  rx={3}
+                />
+                <text
+                  x={p.x}
+                  y={p.y + 18}
+                  textAnchor="middle"
+                  dominantBaseline="middle"
+                  fontSize={FONT_SIZE}
+                  fill="#111827"
+                  fontWeight="600"
+                  fontFamily="system-ui, -apple-system, sans-serif"
+                  className="select-none"
+                >
+                  {hubLabel}
+                </text>
+              </>
+            ) : (
+              <text
+                x={p.x}
+                y={p.y + NODE_R + FONT_SIZE + 4}
+                textAnchor="middle"
+                fontSize={FONT_SIZE}
+                fill="#cbd5e1"
+                fontWeight="500"
+              >
+                {truncate(p.node, 18)}
+              </text>
+            )}
           </g>
         )
       })}
@@ -229,8 +320,55 @@ export function NetworkPreview({
   topology,
   centralLigand,
   ligandNames,
+  availableLigands = [],
 }: NetworkPreviewProps) {
   const isUnscored = pairs.length === 0
+  const [imageUrls, setImageUrls] = useState<Map<string, string>>(new Map())
+  const containerRef = useRef<HTMLDivElement>(null)
+  const [containerWidth, setContainerWidth] = useState(300)
+
+  const updateWidth = useCallback(() => {
+    if (containerRef.current) {
+      setContainerWidth(containerRef.current.clientWidth)
+    }
+  }, [])
+
+  useEffect(() => {
+    updateWidth()
+    const ro = new ResizeObserver(updateWidth)
+    if (containerRef.current) ro.observe(containerRef.current)
+    return () => ro.disconnect()
+  }, [updateWidth])
+
+  useEffect(() => {
+    if (availableLigands.length === 0) return
+    let cancelled = false
+    const load = async () => {
+      const entries = await Promise.all(
+        ligandNames.map(async (name) => {
+          const ligand = availableLigands.find(
+            (l) => l.name === name || l.id === name
+          )
+          const smiles = ligand?.smiles
+          if (!smiles) return [name, null] as const
+          try {
+            const baseUrl = process.env.NEXT_PUBLIC_API_URL || ''
+            const res = await fetch(`${baseUrl}/api/rbfe/ligand-image?smiles=${encodeURIComponent(smiles)}`)
+            if (!res.ok) return [name, null] as const
+            const blob = await res.blob()
+            return [name, URL.createObjectURL(blob)] as const
+          } catch {
+            return [name, null] as const
+          }
+        })
+      )
+      if (!cancelled) {
+        setImageUrls(new Map(entries.filter(([, url]) => url !== null) as [string, string][]))
+      }
+    }
+    load()
+    return () => { cancelled = true }
+  }, [ligandNames, availableLigands])
 
   const scoredEdges = useMemo(
     () => computeNetwork(pairs, topology, centralLigand),
@@ -278,8 +416,16 @@ export function NetworkPreview({
       )}
 
       {/* Graph */}
-      <div className="rounded-lg border border-gray-700 bg-gray-900/50 p-3">
-        <NetworkGraphSVG edges={edges} nodes={allNodes} unscored={isUnscored} />
+      <div ref={containerRef} className="rounded-lg border border-gray-700 bg-gray-900/50 p-3 overflow-hidden">
+        <NetworkGraphSVG
+          edges={edges}
+          nodes={allNodes}
+          topology={topology}
+          centralLigand={centralLigand}
+          unscored={isUnscored}
+          imageUrls={imageUrls}
+          containerWidth={containerWidth - 24}
+        />
       </div>
 
       {/* Summary */}

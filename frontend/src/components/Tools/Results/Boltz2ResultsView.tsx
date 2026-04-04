@@ -28,29 +28,32 @@ export function Boltz2ResultsView({ jobId }: Boltz2ResultsViewProps) {
     const mdStore = useMDStore()
 
     useEffect(() => {
+        const controller = new AbortController()
+
         const fetchJob = async () => {
             try {
                 setLoading(true)
-                const data = await api.getBoltz2Job(jobId)
+                const data = await api.getBoltz2Job(jobId, { signal: controller.signal })
                 console.log('[Boltz2ResultsView] Job data received:', data)
                 setJob(data)
                 setError(null)
 
-                // Auto-select first pose if available (for non-batch jobs)
                 const result = data.result || (data as any).results || {}
                 const poses = result.poses || []
                 if (poses.length > 0) {
                     setSelectedPoseIndex(0)
                 }
             } catch (err: any) {
+                if (controller.signal.aborted) return
                 console.error('Failed to fetch Boltz2 job:', err)
                 setError(err.message || 'Failed to load Boltz2 results')
             } finally {
-                setLoading(false)
+                if (!controller.signal.aborted) setLoading(false)
             }
         }
 
         fetchJob()
+        return () => controller.abort()
     }, [jobId])
 
     if (loading) {
@@ -126,7 +129,7 @@ export function Boltz2ResultsView({ jobId }: Boltz2ResultsViewProps) {
                         }
                     }}
                     onExportResults={() => {
-                        const headers = ['Ligand ID', 'Ligand Name', 'Status', 'Affinity (log IC50)', 'Delta G (kcal/mol)', 'Probability', 'Confidence']
+                        const headers = ['Ligand ID', 'Ligand Name', 'Status', 'Affinity (log IC50)', 'Delta G (kcal/mol)', 'Probability', 'Confidence', 'pLDDT']
                         const csvContent = [
                             headers.join(','),
                             ...batchResults.map(r => [
@@ -136,7 +139,8 @@ export function Boltz2ResultsView({ jobId }: Boltz2ResultsViewProps) {
                                 r.affinity_pred_value ?? 'N/A',
                                 r.binding_free_energy ?? 'N/A',
                                 r.affinity_probability_binary ?? 'N/A',
-                                r.prediction_confidence ?? 'N/A'
+                                r.confidence_score ?? r.prediction_confidence ?? 'N/A',
+                                r.complex_plddt ?? 'N/A'
                             ].join(','))
                         ].join('\n')
 

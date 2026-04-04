@@ -123,8 +123,13 @@ export const useUnifiedResultsStore = create<UnifiedResultsStore>((set, get) => 
             // Use unified PostgreSQL endpoint for all jobs
             const result = await api.listAllJobs()
             
+            // Filter out internal/transient job types like rbfe_mapping_preview
+            const filteredJobs = result.jobs.filter(job => 
+                job.service !== 'rbfe_mapping_preview' as ServiceType
+            )
+            
             set({
-                allJobs: result.jobs,
+                allJobs: filteredJobs,
                 isLoading: false,
                 lastLoadTime: Date.now(),
             })
@@ -178,6 +183,11 @@ export const useUnifiedResultsStore = create<UnifiedResultsStore>((set, get) => 
     // --- WebSocket Actions ---
     
     handleJobUpdate: (update: JobUpdate) => {
+        // Ignore internal/transient job types
+        if (update.job_type === 'rbfe_mapping_preview') {
+            return
+        }
+
         const { allJobs } = get()
         
         // Find the job in current state
@@ -238,7 +248,15 @@ export const useUnifiedResultsStore = create<UnifiedResultsStore>((set, get) => 
     getFilteredJobs: () => {
         const { allJobs, activeServiceFilter, resultsTab } = get()
 
-        let filtered = allJobs
+        let filtered = allJobs.filter(job => {
+             // Global filter: exclude internal job types
+             if (job.service === 'rbfe_mapping_preview' as ServiceType) return false
+             
+             // Global filter: exclude RBFE jobs without topology (mislabeled previews)
+             if (job.service === 'rbfe' && !job.metadata?.network_topology) return false
+             
+             return true
+        })
 
         // Filter by service
         if (activeServiceFilter !== 'all') {
@@ -266,7 +284,7 @@ export const useUnifiedResultsStore = create<UnifiedResultsStore>((set, get) => 
     
     hasRunningJobs: () => {
         return get().allJobs.some(job => 
-            job.status === 'running' || job.status === 'pending'
+            job.status === 'running' || job.status === 'submitted' || job.status === 'preparing'
         )
     },
 

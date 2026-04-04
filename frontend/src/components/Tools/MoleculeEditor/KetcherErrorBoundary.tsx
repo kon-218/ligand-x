@@ -86,7 +86,7 @@ export class KetcherErrorBoundary extends Component<Props, State> {
           </p>
           <button
             onClick={() => window.location.reload()}
-            className="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700"
+            className="px-4 py-2 bg-cyan-600 text-white rounded-md hover:bg-cyan-700"
           >
             Reload Page
           </button>

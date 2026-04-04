@@ -187,10 +187,10 @@ export function ADMETTabPredict({
                     {results.Distribution && (
                         <div className="space-y-3">
                             <div className="flex items-center gap-2.5">
-                                <div className="p-1.5 bg-gradient-to-br from-blue-500/20 to-cyan-500/20 rounded-lg">
-                                    <Droplets className="h-4 w-4 text-blue-400" />
+                                <div className="p-1.5 bg-gradient-to-br from-pink-500/20 to-rose-500/20 rounded-lg">
+                                    <Droplets className="h-4 w-4 text-pink-400" />
                                 </div>
-                                <h4 className="text-sm font-semibold text-blue-400">Distribution</h4>
+                                <h4 className="text-sm font-semibold text-pink-400">Distribution</h4>
                             </div>
                             <div className="bg-gradient-to-br from-gray-800/50 to-gray-800/30 border border-gray-700/50 rounded-xl p-4 space-y-3">
                                 {Object.entries(results.Distribution).map(([key, value]) => {
@@ -239,10 +239,10 @@ export function ADMETTabPredict({
                     {results.Excretion && Object.keys(results.Excretion).length > 0 && (
                         <div className="space-y-3">
                             <div className="flex items-center gap-2.5">
-                                <div className="p-1.5 bg-gradient-to-br from-cyan-500/20 to-teal-500/20 rounded-lg">
-                                    <Zap className="h-4 w-4 text-cyan-400" />
+                                <div className="p-1.5 bg-gradient-to-br from-pink-500/20 to-rose-500/20 rounded-lg">
+                                    <Zap className="h-4 w-4 text-pink-400" />
                                 </div>
-                                <h4 className="text-sm font-semibold text-cyan-400">Excretion</h4>
+                                <h4 className="text-sm font-semibold text-pink-400">Excretion</h4>
                             </div>
                             <div className="bg-gradient-to-br from-gray-800/50 to-gray-800/30 border border-gray-700/50 rounded-xl p-4 space-y-3">
                                 {Object.entries(results.Excretion).map(([key, value]) => {

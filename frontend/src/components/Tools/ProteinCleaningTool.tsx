@@ -4,6 +4,8 @@ import { useState, useEffect } from 'react'
 import { Droplets, Check, AlertCircle, Upload, FileBox, Eye, Download } from 'lucide-react'
 import { useMolecularStore } from '@/store/molecular-store'
 import { useUIStore } from '@/store/ui-store'
+import { useBaseColor } from '@/hooks/use-base-color'
+import { cn } from '@/lib/utils'
 import { api } from '@/lib/api-client'
 import { Label } from '@/components/ui/label'
 import {
@@ -16,7 +18,7 @@ import {
   ResultMetric,
   InfoBox,
 } from './shared'
-import type { WorkflowStep } from './shared'
+import type { WorkflowStep, ConfigGroup, AccentColor } from './shared'
 
 interface CleaningStage {
   name: string
@@ -36,7 +38,13 @@ const CLEANING_STEPS: WorkflowStep[] = [
 export function ProteinCleaningTool() {
   const { currentStructure, addStructureTab, setIsLoading, setError } = useMolecularStore()
   const { addNotification } = useUIStore()
-  
+  const bc_active = useBaseColor()
+  /** Preset: follow Settings base colour. Custom: keep "cyan" class names so the injected style overrides still match. */
+  const workflowAccent = (bc_active.isCustom ? 'cyan' : bc_active.basePreset) as AccentColor
+  const themeBg10 = `rgba(${bc_active.rgbString}, 0.1)`
+  const themeBg20 = `rgba(${bc_active.rgbString}, 0.2)`
+  const themeBorder35 = `rgba(${bc_active.rgbString}, 0.35)`
+
   const [currentStep, setCurrentStep] = useState(1)
   const [inputSource, setInputSource] = useState<'current' | 'upload'>('current')
   const [uploadedFile, setUploadedFile] = useState<File | null>(null)
@@ -269,11 +277,6 @@ export function ProteinCleaningTool() {
       case 1:
         return (
           <div className="space-y-6">
-            {/* Header */}
-            <div className="flex items-center justify-between">
-              <h3 className="text-lg font-semibold text-white">Structure Selection</h3>
-            </div>
-
             {/* Protein Structure Status */}
             <div className="space-y-2">
               <Label className="text-gray-300">Protein Structure</Label>
@@ -287,8 +290,8 @@ export function ProteinCleaningTool() {
                 <div className="flex items-center gap-2">
                   {(inputSource === 'current' && currentStructure) || (inputSource === 'upload' && uploadedFile) ? (
                     <>
-                      <div className="p-1 rounded-full bg-teal-500/20">
-                        <Check className="w-4 h-4 text-teal-400" />
+                      <div className="p-1 rounded-full" style={{ backgroundColor: themeBg20 }}>
+                        <Check className="w-4 h-4" style={{ color: bc_active.hexValue }} />
                       </div>
                       <span className="text-gray-300">
                         {inputSource === 'current' 
@@ -324,14 +327,23 @@ export function ProteinCleaningTool() {
                     setStages({})
                     setCleaningError(null)
                   }}
-                  className={`p-3 rounded-lg border transition-all flex flex-col items-center gap-2 ${
-                    inputSource === 'current'
-                      ? 'border-teal-500 bg-teal-500/10'
-                      : 'border-gray-700 bg-gray-800 hover:bg-gray-700'
-                  }`}
+                  className={cn(
+                    'p-3 rounded-lg border-2 transition-all flex flex-col items-center gap-2',
+                    inputSource !== 'current' && 'border-gray-700 bg-gray-800 hover:bg-gray-700',
+                  )}
+                  style={inputSource === 'current' ? {
+                    borderColor: bc_active.hexValue,
+                    backgroundColor: themeBg10,
+                  } : undefined}
                 >
-                  <FileBox className={`w-5 h-5 ${inputSource === 'current' ? 'text-teal-400' : 'text-gray-400'}`} />
-                  <span className={`text-xs ${inputSource === 'current' ? 'text-teal-400' : 'text-gray-400'}`}>
+                  <FileBox
+                    className={cn('w-5 h-5', inputSource !== 'current' && 'text-gray-400')}
+                    style={inputSource === 'current' ? { color: bc_active.hexValue } : undefined}
+                  />
+                  <span
+                    className="text-xs text-gray-400"
+                    style={inputSource === 'current' ? { color: bc_active.hexValue } : undefined}
+                  >
                     Current
                   </span>
                 </button>
@@ -341,14 +353,23 @@ export function ProteinCleaningTool() {
                     setStages({})
                     setCleaningError(null)
                   }}
-                  className={`p-3 rounded-lg border transition-all flex flex-col items-center gap-2 ${
-                    inputSource === 'upload'
-                      ? 'border-teal-500 bg-teal-500/10'
-                      : 'border-gray-700 bg-gray-800 hover:bg-gray-700'
-                  }`}
+                  className={cn(
+                    'p-3 rounded-lg border-2 transition-all flex flex-col items-center gap-2',
+                    inputSource !== 'upload' && 'border-gray-700 bg-gray-800 hover:bg-gray-700',
+                  )}
+                  style={inputSource === 'upload' ? {
+                    borderColor: bc_active.hexValue,
+                    backgroundColor: themeBg10,
+                  } : undefined}
                 >
-                  <Upload className={`w-5 h-5 ${inputSource === 'upload' ? 'text-teal-400' : 'text-gray-400'}`} />
-                  <span className={`text-xs ${inputSource === 'upload' ? 'text-teal-400' : 'text-gray-400'}`}>
+                  <Upload
+                    className={cn('w-5 h-5', inputSource !== 'upload' && 'text-gray-400')}
+                    style={inputSource === 'upload' ? { color: bc_active.hexValue } : undefined}
+                  />
+                  <span
+                    className="text-xs text-gray-400"
+                    style={inputSource === 'upload' ? { color: bc_active.hexValue } : undefined}
+                  >
                     Upload
                   </span>
                 </button>
@@ -369,7 +390,7 @@ export function ProteinCleaningTool() {
                   <div className="p-4 border-2 border-dashed border-gray-700 rounded-lg text-center hover:border-gray-600 transition-colors">
                     <Upload className="w-8 h-8 mx-auto mb-2 text-gray-500" />
                     {uploadedFile ? (
-                      <p className="text-sm text-teal-400">{uploadedFile.name}</p>
+                      <p className="text-sm" style={{ color: bc_active.hexValue }}>{uploadedFile.name}</p>
                     ) : (
                       <p className="text-sm text-gray-400">
                         Click or drag to upload PDB, CIF, or mmCIF file
@@ -401,35 +422,35 @@ export function ProteinCleaningTool() {
                   value={removeHeterogens}
                   onChange={setRemoveHeterogens}
                   description="Remove non-standard residues"
-                  accentColor="teal"
+                  accentColor={workflowAccent}
                 />
                 <ToggleParameter
                   label="Remove Water"
                   value={removeWater}
                   onChange={setRemoveWater}
                   description="Remove water molecules"
-                  accentColor="teal"
+                  accentColor={workflowAccent}
                 />
                 <ToggleParameter
                   label="Find Missing Residues"
                   value={addMissingResidues}
                   onChange={setAddMissingResidues}
                   description="Identify gaps in sequence"
-                  accentColor="teal"
+                  accentColor={workflowAccent}
                 />
                 <ToggleParameter
                   label="Add Missing Atoms"
                   value={addMissingAtoms}
                   onChange={setAddMissingAtoms}
                   description="Fill in missing side chain atoms"
-                  accentColor="teal"
+                  accentColor={workflowAccent}
                 />
                 <ToggleParameter
                   label="Add Missing Hydrogens"
                   value={addMissingHydrogens}
                   onChange={setAddMissingHydrogens}
                   description="Add hydrogen atoms for proper pH"
-                  accentColor="teal"
+                  accentColor={workflowAccent}
                 />
               </div>
             </div>
@@ -446,24 +467,24 @@ export function ProteinCleaningTool() {
                   max={10}
                   step={0.1}
                   description="pH for protonation state"
-                  accentColor="teal"
+                  accentColor={workflowAccent}
                 />
                 <ToggleParameter
                   label="Keep Ligands"
                   value={keepLigands}
                   onChange={setKeepLigands}
                   description="Extract ligands and reinsert after cleaning"
-                  accentColor="teal"
+                  accentColor={workflowAccent}
                 />
                 <ToggleParameter
                   label="Add Solvation"
                   value={addSolvation}
                   onChange={setAddSolvation}
                   description="Add water box around protein"
-                  accentColor="teal"
+                  accentColor={workflowAccent}
                 />
                 {addSolvation && (
-                  <div className="pl-4 pt-2 border-l-2 border-teal-500/30 space-y-3">
+                  <div className="pl-4 pt-2 border-l-2 space-y-3" style={{ borderLeftColor: themeBorder35 }}>
                     <NumberParameter
                       label="Box Size"
                       value={solvationBoxSize}
@@ -479,22 +500,30 @@ export function ProteinCleaningTool() {
                       <div className="grid grid-cols-2 gap-2">
                         <button
                           onClick={() => setSolvationBoxShape('cubic')}
-                          className={`p-2 rounded-lg border text-xs transition-all ${
-                            solvationBoxShape === 'cubic'
-                              ? 'border-teal-500 bg-teal-500/10 text-teal-400'
-                              : 'border-gray-700 bg-gray-800 text-gray-400 hover:bg-gray-700'
-                          }`}
+                          className={cn(
+                            'p-2 rounded-lg border text-xs transition-all',
+                            solvationBoxShape !== 'cubic' && 'border-gray-700 bg-gray-800 text-gray-400 hover:bg-gray-700',
+                          )}
+                          style={solvationBoxShape === 'cubic' ? {
+                            borderColor: bc_active.hexValue,
+                            backgroundColor: themeBg10,
+                            color: bc_active.hexValue,
+                          } : undefined}
                         >
                           <div className="font-medium">Cubic</div>
                           <div className="text-gray-500 mt-0.5">Rectangular box</div>
                         </button>
                         <button
                           onClick={() => setSolvationBoxShape('octahedral')}
-                          className={`p-2 rounded-lg border text-xs transition-all ${
-                            solvationBoxShape === 'octahedral'
-                              ? 'border-teal-500 bg-teal-500/10 text-teal-400'
-                              : 'border-gray-700 bg-gray-800 text-gray-400 hover:bg-gray-700'
-                          }`}
+                          className={cn(
+                            'p-2 rounded-lg border text-xs transition-all',
+                            solvationBoxShape !== 'octahedral' && 'border-gray-700 bg-gray-800 text-gray-400 hover:bg-gray-700',
+                          )}
+                          style={solvationBoxShape === 'octahedral' ? {
+                            borderColor: bc_active.hexValue,
+                            backgroundColor: themeBg10,
+                            color: bc_active.hexValue,
+                          } : undefined}
                         >
                           <div className="font-medium">Octahedral</div>
                           <div className="text-gray-500 mt-0.5">~24% fewer waters</div>
@@ -508,23 +537,36 @@ export function ProteinCleaningTool() {
           </div>
         )
 
-      case 3:
+      case 3: {
+        const cleaningConfigGroups: ConfigGroup[] = [
+          {
+            title: 'Structure',
+            items: [
+              { label: 'Protein', value: getCurrentStructureName() },
+            ],
+          },
+          {
+            title: 'Cleaning Options',
+            items: [
+              { label: 'Remove Heterogens', value: removeHeterogens ? 'Yes' : 'No' },
+              { label: 'Remove Water', value: removeWater ? 'Yes' : 'No' },
+              { label: 'Add Hydrogens', value: addMissingHydrogens ? 'Yes' : 'No' },
+              { label: 'pH', value: ph.toString() },
+            ],
+          },
+        ]
+
         return (
           <ExecutionPanel
             isRunning={isCleaning}
             progress={cleaningProgress}
             progressMessage={cleaningStatus}
             error={cleaningError}
-            accentColor="teal"
-            configSummary={[
-              { label: 'Protein', value: getCurrentStructureName() },
-              { label: 'Remove Heterogens', value: removeHeterogens ? 'Yes' : 'No' },
-              { label: 'Remove Water', value: removeWater ? 'Yes' : 'No' },
-              { label: 'Add Hydrogens', value: addMissingHydrogens ? 'Yes' : 'No' },
-              { label: 'pH', value: ph.toString() },
-            ]}
+            accentColor={workflowAccent}
+            configGroups={cleaningConfigGroups}
           />
         )
+      }
 
       case 4:
         const status = isCleaning ? 'running' :
@@ -536,7 +578,7 @@ export function ProteinCleaningTool() {
             status={status}
             subtitle={`${Object.keys(stages).length} cleaning stages generated`}
             onNewCalculation={handleReset}
-            accentColor="teal"
+            accentColor={workflowAccent}
           >
             {Object.keys(stages).length > 0 && (
               <div className="space-y-4">
@@ -545,13 +587,13 @@ export function ProteinCleaningTool() {
                     label="Stages Generated"
                     value={Object.keys(stages).length}
                     status="neutral"
-                    accentColor="teal"
+                    accentColor={workflowAccent}
                   />
                   <ResultMetric
                     label="Ligands Preserved"
                     value={Object.keys(preservedLigands).length}
                     status={Object.keys(preservedLigands).length > 0 ? 'good' : 'neutral'}
-                    accentColor="teal"
+                    accentColor={workflowAccent}
                   />
                 </div>
 
@@ -570,8 +612,20 @@ export function ProteinCleaningTool() {
                         </div>
                         <div className="flex gap-2">
                           <button
+                            type="button"
                             onClick={() => handleViewStage(stage.name)}
-                            className="px-3 py-1.5 text-sm bg-teal-900/30 border border-teal-700/50 hover:bg-teal-900/50 hover:border-teal-600 rounded-lg transition-colors flex items-center gap-1.5"
+                            className="px-3 py-1.5 text-sm rounded-lg transition-colors flex items-center gap-1.5 border"
+                            style={{
+                              backgroundColor: `rgba(${bc_active.rgbString}, 0.12)`,
+                              borderColor: themeBorder35,
+                              color: bc_active.hexValue,
+                            }}
+                            onMouseEnter={(e) => {
+                              e.currentTarget.style.backgroundColor = `rgba(${bc_active.rgbString}, 0.2)`
+                            }}
+                            onMouseLeave={(e) => {
+                              e.currentTarget.style.backgroundColor = `rgba(${bc_active.rgbString}, 0.12)`
+                            }}
                           >
                             <Eye className="w-4 h-4" />
                             View
@@ -599,27 +653,57 @@ export function ProteinCleaningTool() {
   }
 
   return (
-    <WorkflowContainer
-      title="Protein Cleaning"
-      description="Prepare protein structures for computational workflows"
-      icon={<Droplets className="h-5 w-5 text-teal-400" />}
-      showHeader={false}
-      steps={CLEANING_STEPS}
-      currentStep={currentStep}
-      onStepClick={(step: number) => !isCleaning && setCurrentStep(step)}
-      onBack={() => setCurrentStep(Math.max(1, currentStep - 1))}
-      onNext={() => setCurrentStep(Math.min(4, currentStep + 1))}
-      onReset={handleReset}
-      onExecute={currentStep === 3 ? handleCleanProtein : undefined}
-      canProceed={canProceed()}
-      isRunning={isCleaning}
-      executeLabel="Clean Protein"
-      showExecuteOnStep={3}
-      accentColor="teal"
-      error={cleaningError}
-    >
-      {renderStepContent()}
-    </WorkflowContainer>
+    <div className="contents" style={bc_active.isCustom ? {
+      // Override cyan Tailwind classes with custom colour inline styles
+      // This applies to all descendants
+      colorScheme: 'light',
+    } as React.CSSProperties : undefined}>
+      <style>{bc_active.isCustom ? `
+        /* Solid backgrounds */
+        :where([class*="bg-cyan-600"]) { background-color: ${bc_active.hexValue} !important; }
+        :where([class*="bg-cyan-700"]) { background-color: rgba(${bc_active.rgbString}, 0.85) !important; }
+        :where([class*="bg-cyan-500"]) { background-color: rgba(${bc_active.rgbString}, 0.6) !important; }
+        /* Translucent backgrounds - preserve opacity */
+        :where([class*="bg-cyan"]:not([class*="/"])) { background-color: ${bc_active.hexValue} !important; }
+        :where([class*="bg-cyan-500/10"]) { background-color: rgba(${bc_active.rgbString}, 0.1) !important; }
+        :where([class*="bg-cyan-500/20"]) { background-color: rgba(${bc_active.rgbString}, 0.2) !important; }
+        :where([class*="bg-cyan-500/30"]) { background-color: rgba(${bc_active.rgbString}, 0.3) !important; }
+        /* Text colors */
+        :where([class*="text-cyan"]) { color: ${bc_active.hexValue} !important; }
+        /* Border colors */
+        :where([class*="border-cyan"]) { border-color: ${bc_active.hexValue} !important; }
+        :where([class*="border-cyan-500/20"]) { border-color: rgba(${bc_active.rgbString}, 0.2) !important; }
+        /* Hover states */
+        :where([class*="hover:bg-cyan"]) { background-color: ${bc_active.hexValue} !important; }
+        :where([class*="hover:text-cyan"]) { color: ${bc_active.hexValue} !important; }
+        /* Shadows - using --tw-shadow-color CSS variable */
+        :where([class*="shadow-cyan"]) {
+          --tw-shadow-color: rgba(${bc_active.rgbString}, 0.3);
+          box-shadow: var(--tw-ring-offset-shadow, 0 0 #0000), var(--tw-ring-shadow, 0 0 #0000), var(--tw-shadow) !important;
+        }
+      ` : ''}</style>
+      <WorkflowContainer
+        title="Protein Cleaning"
+        description="Prepare protein structures for computational workflows"
+        icon={<Droplets className={`h-5 w-5 ${!bc_active.isCustom ? bc_active.text : ''}`} style={bc_active.isCustom ? { color: bc_active.hexValue } : undefined} />}
+        showHeader={false}
+        steps={CLEANING_STEPS}
+        currentStep={currentStep}
+        onStepClick={(step: number) => !isCleaning && setCurrentStep(step)}
+        onBack={() => setCurrentStep(Math.max(1, currentStep - 1))}
+        onNext={() => setCurrentStep(Math.min(4, currentStep + 1))}
+        onReset={handleReset}
+        onExecute={currentStep === 3 ? handleCleanProtein : undefined}
+        canProceed={canProceed()}
+        isRunning={isCleaning}
+        executeLabel="Clean Protein"
+        showExecuteOnStep={3}
+        accentColor={workflowAccent}
+        error={cleaningError}
+      >
+        {renderStepContent()}
+      </WorkflowContainer>
+    </div>
   )
 }
 

@@ -159,6 +159,10 @@ interface UnifiedJobListProps {
     resultsTab: ResultsTab
     onTabChange: (tab: ResultsTab) => void
     accentColor?: string
+    /** When set, used for tab/selection tints instead of accentColor (e.g. user base colour on Results → All). */
+    customColorHex?: string
+    /** RGB triple like "6, 182, 212" for rgba() with customColorHex. */
+    customColorRgb?: string
     showServiceBadge?: boolean
     maxHeight?: string
     title?: string
@@ -179,7 +183,9 @@ export function UnifiedJobList({
     onDeleteJob,
     resultsTab,
     onTabChange,
-    accentColor = 'blue',
+    accentColor = 'cyan',
+    customColorHex,
+    customColorRgb,
     showServiceBadge = true,
     maxHeight = '200px',
     title = 'Jobs',
@@ -200,9 +206,6 @@ export function UnifiedJobList({
             )
         }
     }, [jobs, resultsTab])
-
-    const activeColorClass = `bg-${accentColor}-600`
-    const selectedBgClass = `bg-${accentColor}-500/20 border-${accentColor}-500/50`
 
     // Height state for resizing
     const initialHeight = useMemo(() => {
@@ -295,7 +298,7 @@ export function UnifiedJobList({
                     <button
                         className="px-3 py-1 text-xs transition-colors"
                         style={{
-                            backgroundColor: resultsTab === 'recent' ? getAccentColor(accentColor) : '#374151',
+                            backgroundColor: resultsTab === 'recent' ? getAccentColor(accentColor, customColorHex) : '#374151',
                             color: resultsTab === 'recent' ? 'white' : '#d1d5db'
                         }}
                         onClick={() => onTabChange('recent')}
@@ -305,7 +308,7 @@ export function UnifiedJobList({
                     <button
                         className="px-3 py-1 text-xs transition-colors"
                         style={{
-                            backgroundColor: resultsTab === 'completed' ? getAccentColor(accentColor) : '#374151',
+                            backgroundColor: resultsTab === 'completed' ? getAccentColor(accentColor, customColorHex) : '#374151',
                             color: resultsTab === 'completed' ? 'white' : '#d1d5db'
                         }}
                         onClick={() => onTabChange('completed')}
@@ -330,9 +333,17 @@ export function UnifiedJobList({
                             showQCJobType={showQCJobType}
                             showMDJobType={showMDJobType}
                             onClick={() => activeJobId === job.job_id ? onSelectJob(null, null) : onSelectJob(job.job_id, job.service)}
-                            onCancel={() => onCancelJob?.(job.job_id, job.service)}
-                            onDelete={() => onDeleteJob?.(job.job_id, job.service)}
+                            onCancel={() => {
+                                onCancelJob?.(job.job_id, job.service)
+                                if (activeJobId === job.job_id) onSelectJob(null, null)
+                            }}
+                            onDelete={() => {
+                                onDeleteJob?.(job.job_id, job.service)
+                                if (activeJobId === job.job_id) onSelectJob(null, null)
+                            }}
                             accentColor={accentColor}
+                            customColorHex={customColorHex}
+                            customColorRgb={customColorRgb}
                         />
                     ))
                 ) : (
@@ -368,6 +379,8 @@ interface JobListItemProps {
     onCancel: () => void
     onDelete: () => void
     accentColor: string
+    customColorHex?: string
+    customColorRgb?: string
 }
 
 /**
@@ -384,6 +397,8 @@ function JobListItem({
     onCancel,
     onDelete,
     accentColor,
+    customColorHex,
+    customColorRgb,
 }: JobListItemProps) {
     const [isConfirmingDelete, setIsConfirmingDelete] = useState(false)
     const isPending = job.status === 'submitted' || job.status === 'preparing'
@@ -402,8 +417,8 @@ function JobListItem({
     let hoverBgColor = '#4b5563'  // gray-600
 
     if (isActive) {
-        bgColor = getAccentColorWithOpacity(accentColor, 0.2)
-        borderColor = getAccentColorWithOpacity(accentColor, 0.5)
+        bgColor = getAccentColorWithOpacity(accentColor, 0.2, customColorRgb)
+        borderColor = getAccentColorWithOpacity(accentColor, 0.5, customColorRgb)
     } else if (isPending || isRunning) {
         bgColor = '#78350f20'  // yellow-900/20
         borderColor = '#b45309'  // yellow-600
@@ -568,9 +583,11 @@ function JobListItem({
 }
 
 /**
- * Helper function to get hex color for accent color name
+ * Helper function to get hex color for accent color name (supports custom colour override)
  */
-function getAccentColor(accentColor: string): string {
+function getAccentColor(accentColor: string, customColorHex?: string): string {
+    if (customColorHex) return customColorHex
+
     const colorMap: Record<string, string> = {
         'blue': '#2563eb',
         'purple': '#a855f7',
@@ -586,22 +603,24 @@ function getAccentColor(accentColor: string): string {
 }
 
 /**
- * Helper function to get accent color with opacity (as rgba)
+ * Helper function to get accent color with opacity (as rgba, supports custom colour override)
  */
-function getAccentColorWithOpacity(accentColor: string, opacity: number): string {
+function getAccentColorWithOpacity(accentColor: string, opacity: number, customColorRgb?: string): string {
+    if (customColorRgb) return `rgba(${customColorRgb}, ${opacity})`
+
     const colorMap: Record<string, string> = {
-        'blue': 'rgb(37, 99, 235',
-        'purple': 'rgb(168, 85, 247',
-        'indigo': 'rgb(79, 70, 229',
-        'green': 'rgb(22, 163, 74',
-        'cyan': 'rgb(6, 182, 212',
-        'red': 'rgb(220, 38, 38',
-        'pink': 'rgb(236, 72, 153',
-        'orange': 'rgb(234, 88, 12',
-        'yellow': 'rgb(234, 179, 8',
+        blue: '37, 99, 235',
+        purple: '168, 85, 247',
+        indigo: '79, 70, 229',
+        green: '22, 163, 74',
+        cyan: '6, 182, 212',
+        red: '220, 38, 38',
+        pink: '236, 72, 153',
+        orange: '234, 88, 12',
+        yellow: '234, 179, 8',
     }
-    const rgb = colorMap[accentColor] || 'rgb(37, 99, 235'
-    return `${rgb}, ${opacity})`
+    const rgb = colorMap[accentColor] || '37, 99, 235'
+    return `rgba(${rgb}, ${opacity})`
 }
 
 export { ServiceBadge, QCJobTypeBadge, MDJobTypeBadge, BatchBadge }

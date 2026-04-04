@@ -301,6 +301,7 @@ services:
     build:
       context: .
       dockerfile: docker/Dockerfile.frontend.dev
+    command: []  # Use CMD from Dockerfile.frontend.dev (bun run dev)
     volumes:
       - ./frontend:/app
       - /app/node_modules  # Prevent overwriting node_modules

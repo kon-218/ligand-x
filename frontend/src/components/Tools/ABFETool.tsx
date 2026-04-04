@@ -17,12 +17,9 @@ import {
   ToggleParameter,
   PresetSelector,
   ExecutionPanel,
-  ResultsContainer,
-  ResultMetric,
-  ResultsTable,
   InfoBox,
 } from './shared'
-import type { WorkflowStep } from './shared'
+import type { WorkflowStep, ConfigGroup } from './shared'
 import type { StructureOption } from '@/types/abfe-types'
 
 // Define workflow steps
@@ -33,24 +30,24 @@ const ABFE_STEPS: WorkflowStep[] = [
   { id: 4, label: 'Results', description: 'View results' },
 ]
 
-// Simulation presets
+// Simulation presets with scientifically recommended defaults
 const SIMULATION_PRESETS = [
   {
     id: 'fast',
     name: 'Fast Mode',
-    description: '~30 min, lower precision',
+    description: '~30 min, quick testing',
     icon: null,
   },
   {
     id: 'standard',
     name: 'Standard',
-    description: '~2-4 hours, balanced',
+    description: '~2-4 h, balanced',
     icon: null,
   },
   {
     id: 'production',
     name: 'Production',
-    description: '~12-24 hours, high precision',
+    description: '~8-24 h, highest accuracy',
     icon: null,
   },
 ]
@@ -58,17 +55,44 @@ const SIMULATION_PRESETS = [
 // Helper to get preset mode
 const getPresetMode = (params: any): string => {
   if (params.fast_mode) return 'fast'
-  if (params.production_length_ns && params.production_length_ns >= 5) return 'production'
+  if (params.production_length_ns && params.production_length_ns >= 10) return 'production'
   return 'standard'
 }
 
 // Forcefield options
 const FORCEFIELD_OPTIONS = [
-  { value: 'openff-2.0.0', label: 'OpenFF 2.0.0 (Sage)', description: 'Standard general-purpose force field' },
+  { value: 'openff-2.2.1', label: 'OpenFF 2.2.1 (Sage)', description: 'Latest stable — recommended default' },
+  { value: 'openff-2.2.0', label: 'OpenFF 2.2.0', description: 'Previous Sage release' },
   { value: 'openff-2.1.0', label: 'OpenFF 2.1.0', description: 'Improved torsions and charged groups' },
-  { value: 'openff-2.2.0', label: 'OpenFF 2.2.0', description: 'Latest stable Sage release' },
+  { value: 'openff-2.0.0', label: 'OpenFF 2.0.0', description: 'Original Sage force field' },
   { value: 'gaff-2.11', label: 'GAFF 2.11', description: 'General Amber Force Field' },
   { value: 'espaloma-0.3.2', label: 'Espaloma 0.3.2', description: 'Machine learning force field' },
+]
+
+// Solvent model options
+const SOLVENT_MODEL_OPTIONS = [
+  { value: 'tip3p', label: 'TIP3P', description: 'Standard 3-point water model (default)' },
+  { value: 'tip4pew', label: 'TIP4P-Ew', description: '4-point water model, better density' },
+  { value: 'spce', label: 'SPC/E', description: 'Extended simple point charge model' },
+]
+
+// Box shape options
+const BOX_SHAPE_OPTIONS = [
+  { value: 'dodecahedron', label: 'Dodecahedron', description: 'Smaller volume, fewer waters (default)' },
+  { value: 'cube', label: 'Cube', description: 'Standard cubic box, more waters' },
+]
+
+// Restraint host selection options
+const HOST_SELECTION_OPTIONS = [
+  { value: 'backbone', label: 'Backbone', description: 'Protein backbone atoms (default, recommended)' },
+  { value: 'protein and name CA', label: 'CA atoms', description: 'Alpha-carbon atoms only' },
+  { value: 'protein', label: 'All protein', description: 'All protein atoms (slower, wider search)' },
+]
+
+// Anchor finding strategy options
+const ANCHOR_STRATEGY_OPTIONS = [
+  { value: 'bonded', label: 'Bonded', description: 'Follow bonded topology (default, faster)' },
+  { value: 'multi-residue', label: 'Multi-residue', description: 'Search across residues (slower, more flexible)' },
 ]
 
 // Charge method options
@@ -83,6 +107,7 @@ export function ABFETool() {
   const abfeStore = useABFEStore()
   const { currentStructure } = useMolecularStore()
   const [error, setError] = useState<string | null>(null)
+  const [isSubmitting, setIsSubmitting] = useState(false)
   const [pollingInterval, setPollingInterval] = useState<NodeJS.Timeout | null>(null)
 
   // Load persisted ABFE jobs on mount
@@ -183,7 +208,7 @@ export function ABFETool() {
 
   const runABFE = async () => {
     setError(null)
-    abfeStore.setIsRunning(true)
+    setIsSubmitting(true)
 
     try {
       let ligandData = ''
@@ -191,21 +216,18 @@ export function ABFETool() {
 
       // Check for preloaded ligand first (from MD equilibration, Docking, etc.)
       if (abfeStore.preloadedLigand) {
-        abfeStore.setProgress(5, 'Using preloaded ligand from MD equilibration...')
         ligandData = abfeStore.preloadedLigand.data
         ligandName = abfeStore.preloadedLigand.name
       } else if (abfeStore.selectedLigand) {
         const ligandId = abfeStore.selectedLigand
 
         if (ligandId.startsWith('library_')) {
-          abfeStore.setProgress(5, 'Loading molecule from library...')
           const molecules = await api.getMolecules()
           const moleculeId = parseInt(ligandId.replace('library_', ''))
           const libraryMolecule = molecules?.find((m: any) => m.id === moleculeId)
 
           if (!libraryMolecule) throw new Error('Library molecule not found')
 
-          abfeStore.setProgress(10, `Converting ${libraryMolecule.name} to 3D...`)
           const smilesResult = await api.uploadSmiles(libraryMolecule.canonical_smiles, libraryMolecule.name)
           ligandData = smilesResult.sdf_data || ''
           ligandName = libraryMolecule.name
@@ -221,8 +243,6 @@ export function ABFETool() {
       if (!ligandData) throw new Error('No ligand data available')
       if (!currentStructure?.pdb_data) throw new Error('No protein structure available')
 
-      abfeStore.setProgress(20, 'Submitting ABFE calculation...')
-
       const result = await api.submitABFECalculation({
         protein_pdb: currentStructure.pdb_data,
         ligand_sdf: ligandData,
@@ -232,7 +252,7 @@ export function ABFETool() {
       })
 
       abfeStore.setJobId(result.job_id)
-      abfeStore.setProgress(30, result.message || 'Calculation submitted')
+      abfeStore.setProgress(0, result.message || 'Calculation submitted')
       abfeStore.addJob({
         job_id: result.job_id,
         status: result.status || 'submitted',
@@ -242,9 +262,12 @@ export function ABFETool() {
         updated_at: new Date().toISOString(),
       })
       abfeStore.setABFEResult(result)
+      abfeStore.setIsRunning(true)
+      abfeStore.setStep(4)
     } catch (err: any) {
       setError(err.message)
-      abfeStore.setIsRunning(false)
+    } finally {
+      setIsSubmitting(false)
     }
   }
 
@@ -318,11 +341,26 @@ export function ABFETool() {
               selectedPreset={getPresetMode(abfeStore.abfeParameters)}
               onPresetSelect={(preset: string) => {
                 if (preset === 'fast') {
-                  abfeStore.setABFEParameters({ fast_mode: true, production_length_ns: 0.5, protocol_repeats: 1 })
+                  abfeStore.setABFEParameters({
+                    fast_mode: true,
+                    production_length_ns: 0.5,
+                    equilibration_length_ns: 0.1,
+                    protocol_repeats: 1,
+                  })
                 } else if (preset === 'production') {
-                  abfeStore.setABFEParameters({ fast_mode: false, production_length_ns: 10, protocol_repeats: 3 })
+                  abfeStore.setABFEParameters({
+                    fast_mode: false,
+                    production_length_ns: 10,
+                    equilibration_length_ns: 1.0,
+                    protocol_repeats: 3,
+                  })
                 } else {
-                  abfeStore.setABFEParameters({ fast_mode: false, production_length_ns: 2, protocol_repeats: 3 })
+                  abfeStore.setABFEParameters({
+                    fast_mode: false,
+                    production_length_ns: 5,
+                    equilibration_length_ns: 0.5,
+                    protocol_repeats: 3,
+                  })
                 }
               }}
               accentColor="orange"
@@ -330,24 +368,14 @@ export function ABFETool() {
 
             <ParameterSection title="Simulation Settings" collapsible defaultExpanded>
               <SliderParameter
-                label="Lambda Windows"
-                value={abfeStore.abfeParameters.lambda_windows || 11}
-                onChange={(v: number) => abfeStore.setABFEParameters({ lambda_windows: v })}
-                min={5}
-                max={21}
-                step={2}
-                description="More windows = higher precision but longer runtime"
-                accentColor="orange"
-              />
-              <SliderParameter
                 label="Production Length"
                 value={abfeStore.abfeParameters.production_length_ns || 0.5}
                 onChange={(v: number) => abfeStore.setABFEParameters({ production_length_ns: v })}
                 min={0.1}
-                max={10}
+                max={20}
                 step={0.1}
                 unit="ns"
-                description="Production simulation time in nanoseconds"
+                description="Production sampling time per lambda window"
                 accentColor="orange"
               />
               <SliderParameter
@@ -355,7 +383,7 @@ export function ABFETool() {
                 value={abfeStore.abfeParameters.equilibration_length_ns || 0.1}
                 onChange={(v: number) => abfeStore.setABFEParameters({ equilibration_length_ns: v })}
                 min={0.05}
-                max={1}
+                max={2}
                 step={0.05}
                 unit="ns"
                 description="Equilibration time before production"
@@ -368,15 +396,15 @@ export function ABFETool() {
                 min={1}
                 max={5}
                 step={1}
-                description="Number of independent repetitions"
+                description="Independent repetitions for statistical confidence"
                 accentColor="orange"
               />
             </ParameterSection>
 
-            <ParameterSection title="Ligand Preparation Settings" collapsible defaultExpanded>
+            <ParameterSection title="Ligand Preparation" collapsible defaultExpanded>
               <SelectParameter
                 label="Ligand Forcefield"
-                value={abfeStore.abfeParameters.ligand_forcefield || 'openff-2.0.0'}
+                value={abfeStore.abfeParameters.ligand_forcefield || 'openff-2.2.1'}
                 onChange={(v: string) => abfeStore.setABFEParameters({ ligand_forcefield: v })}
                 options={FORCEFIELD_OPTIONS}
                 description="Force field for small molecule parameterization"
@@ -390,183 +418,256 @@ export function ABFETool() {
               />
             </ParameterSection>
 
-            <ParameterSection title="Checkpoint Settings" collapsible defaultExpanded>
-              {/* Production Checkpoint Settings */}
-              <div className="space-y-4 p-4 bg-gray-800/50 rounded-lg border border-gray-700">
-                <div>
-                  <label className="block text-sm font-medium mb-3">
-                    Production Checkpoint Mode
-                    <span className="text-xs text-gray-400 ml-2 font-normal">
-                      Configure checkpoints for production phase
-                    </span>
-                  </label>
-                  <div className="flex gap-4">
-                    <label className="flex items-center gap-2 cursor-pointer">
-                      <input
-                        type="radio"
-                        name="production_checkpoint_mode"
-                        value="number"
-                        checked={abfeStore.abfeParameters.production_checkpoint_mode === 'number' || !abfeStore.abfeParameters.production_checkpoint_mode}
-                        onChange={(e) => abfeStore.setABFEParameters({ production_checkpoint_mode: 'number' })}
-                        className="cursor-pointer"
-                      />
-                      <span className="text-sm">Number of Checkpoints</span>
-                    </label>
-                    <label className="flex items-center gap-2 cursor-pointer">
-                      <input
-                        type="radio"
-                        name="production_checkpoint_mode"
-                        value="interval"
-                        checked={abfeStore.abfeParameters.production_checkpoint_mode === 'interval'}
-                        onChange={(e) => abfeStore.setABFEParameters({ production_checkpoint_mode: 'interval' })}
-                        className="cursor-pointer"
-                      />
-                      <span className="text-sm">Checkpoint Interval (ns)</span>
-                    </label>
-                  </div>
-                </div>
+            <ParameterSection title="Environment" collapsible defaultExpanded={false}>
+              <SliderParameter
+                label="Temperature"
+                value={abfeStore.abfeParameters.temperature || 298.15}
+                onChange={(v: number) => abfeStore.setABFEParameters({ temperature: v })}
+                min={273}
+                max={373}
+                step={0.5}
+                unit="K"
+                description="Simulation temperature (default: 298.15 K / 25 °C)"
+                accentColor="orange"
+              />
+              <SliderParameter
+                label="Pressure"
+                value={abfeStore.abfeParameters.pressure || 1.0}
+                onChange={(v: number) => abfeStore.setABFEParameters({ pressure: v })}
+                min={0.5}
+                max={2.0}
+                step={0.1}
+                unit="bar"
+                description="Simulation pressure (default: 1.0 bar)"
+                accentColor="orange"
+              />
+              <SelectParameter
+                label="Solvent Model"
+                value={abfeStore.abfeParameters.solvent_model || 'tip3p'}
+                onChange={(v: string) => abfeStore.setABFEParameters({ solvent_model: v as any })}
+                options={SOLVENT_MODEL_OPTIONS}
+                description="Water model for solvation"
+              />
+              <SelectParameter
+                label="Box Shape"
+                value={abfeStore.abfeParameters.box_shape || 'dodecahedron'}
+                onChange={(v: string) => abfeStore.setABFEParameters({ box_shape: v as any })}
+                options={BOX_SHAPE_OPTIONS}
+                description="Simulation box geometry"
+              />
+              <SliderParameter
+                label="Ionic Strength"
+                value={abfeStore.abfeParameters.ionic_strength || 0.15}
+                onChange={(v: number) => abfeStore.setABFEParameters({ ionic_strength: v })}
+                min={0}
+                max={1}
+                step={0.05}
+                unit="M"
+                description="NaCl concentration (physiological: ~0.15 M)"
+                accentColor="orange"
+              />
+            </ParameterSection>
 
-                {/* Number of Checkpoints Input */}
-                {(abfeStore.abfeParameters.production_checkpoint_mode === 'number' || !abfeStore.abfeParameters.production_checkpoint_mode) && (
-                  <div>
-                    <label className="block text-xs font-medium text-gray-300 mb-2">
-                      Number of Production Checkpoints
-                    </label>
-                    <input
-                      type="number"
-                      value={abfeStore.abfeParameters.production_n_checkpoints || 10}
-                      onChange={(e) => abfeStore.setABFEParameters({ production_n_checkpoints: parseInt(e.target.value) })}
-                      min={1}
-                      max={100}
-                      step={1}
-                      className="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded text-sm text-white"
-                    />
-                    <p className="text-xs text-gray-400 mt-1">
-                      Calculated interval: {((abfeStore.abfeParameters.production_length_ns || 0.5) / (abfeStore.abfeParameters.production_n_checkpoints || 10)).toFixed(4)} ns
-                    </p>
-                  </div>
-                )}
+            <ParameterSection title="Restraint Settings (Boresch)" collapsible defaultExpanded={false}>
+              <SelectParameter
+                label="Host Atom Selection"
+                value={abfeStore.abfeParameters.restraint_settings?.host_selection || 'backbone'}
+                onChange={(v: string) => abfeStore.setABFEParameters({
+                  restraint_settings: { ...abfeStore.abfeParameters.restraint_settings, host_selection: v }
+                })}
+                options={HOST_SELECTION_OPTIONS}
+                description="Which protein atoms to search for restraint anchors"
+              />
+              <SliderParameter
+                label="Host Min Distance"
+                value={abfeStore.abfeParameters.restraint_settings?.host_min_distance_nm || 0.5}
+                onChange={(v: number) => abfeStore.setABFEParameters({
+                  restraint_settings: { ...abfeStore.abfeParameters.restraint_settings, host_min_distance_nm: v }
+                })}
+                min={0.1}
+                max={2.0}
+                step={0.1}
+                unit="nm"
+                description="Minimum distance from ligand for anchor search (default: 0.5)"
+                accentColor="orange"
+              />
+              <SliderParameter
+                label="Host Max Distance"
+                value={abfeStore.abfeParameters.restraint_settings?.host_max_distance_nm || 1.5}
+                onChange={(v: number) => abfeStore.setABFEParameters({
+                  restraint_settings: { ...abfeStore.abfeParameters.restraint_settings, host_max_distance_nm: v }
+                })}
+                min={0.5}
+                max={5.0}
+                step={0.1}
+                unit="nm"
+                description="Maximum distance from ligand for anchor search (default: 1.5)"
+                accentColor="orange"
+              />
+              <SliderParameter
+                label="RMSF Cutoff"
+                value={abfeStore.abfeParameters.restraint_settings?.rmsf_cutoff_nm || 0.1}
+                onChange={(v: number) => abfeStore.setABFEParameters({
+                  restraint_settings: { ...abfeStore.abfeParameters.restraint_settings, rmsf_cutoff_nm: v }
+                })}
+                min={0.05}
+                max={0.5}
+                step={0.01}
+                unit="nm"
+                description="Max RMSF for anchor atoms (lower = more rigid, default: 0.1)"
+                accentColor="orange"
+              />
+              <ToggleParameter
+                label="DSSP Filter"
+                value={abfeStore.abfeParameters.restraint_settings?.dssp_filter !== false}
+                onChange={(v: boolean) => abfeStore.setABFEParameters({
+                  restraint_settings: { ...abfeStore.abfeParameters.restraint_settings, dssp_filter: v }
+                })}
+                description="Filter anchors by secondary structure (recommended)"
+              />
+              <SelectParameter
+                label="Anchor Finding Strategy"
+                value={abfeStore.abfeParameters.restraint_settings?.anchor_finding_strategy || 'bonded'}
+                onChange={(v: string) => abfeStore.setABFEParameters({
+                  restraint_settings: { ...abfeStore.abfeParameters.restraint_settings, anchor_finding_strategy: v as any }
+                })}
+                options={ANCHOR_STRATEGY_OPTIONS}
+                description="How to search for anchor atom triplets"
+              />
+            </ParameterSection>
 
-                {/* Checkpoint Interval Input */}
-                {abfeStore.abfeParameters.production_checkpoint_mode === 'interval' && (
-                  <div>
-                    <label className="block text-xs font-medium text-gray-300 mb-2">
-                      Production Checkpoint Interval (ns)
-                    </label>
-                    <input
-                      type="number"
-                      value={abfeStore.abfeParameters.production_checkpoint_interval_ns || 0.05}
-                      onChange={(e) => abfeStore.setABFEParameters({ production_checkpoint_interval_ns: parseFloat(e.target.value) })}
-                      min={0.01}
-                      max={10}
-                      step={0.01}
-                      className="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded text-sm text-white"
-                    />
-                    <p className="text-xs text-gray-400 mt-1">
-                      Calculated checkpoints: {Math.ceil((abfeStore.abfeParameters.production_length_ns || 0.5) / (abfeStore.abfeParameters.production_checkpoint_interval_ns || 0.05))}
-                    </p>
-                  </div>
-                )}
-              </div>
-
-              {/* Equilibration Checkpoint Settings */}
-              <div className="space-y-4 p-4 bg-gray-800/50 rounded-lg border border-gray-700 mt-4">
-                <div>
-                  <label className="block text-sm font-medium mb-3">
-                    Equilibration Checkpoint Mode
-                    <span className="text-xs text-gray-400 ml-2 font-normal">
-                      Configure checkpoints for equilibration phase
-                    </span>
-                  </label>
-                  <div className="flex gap-4">
-                    <label className="flex items-center gap-2 cursor-pointer">
-                      <input
-                        type="radio"
-                        name="equilibration_checkpoint_mode"
-                        value="number"
-                        checked={abfeStore.abfeParameters.equilibration_checkpoint_mode === 'number' || !abfeStore.abfeParameters.equilibration_checkpoint_mode}
-                        onChange={(e) => abfeStore.setABFEParameters({ equilibration_checkpoint_mode: 'number' })}
-                        className="cursor-pointer"
-                      />
-                      <span className="text-sm">Number of Checkpoints</span>
-                    </label>
-                    <label className="flex items-center gap-2 cursor-pointer">
-                      <input
-                        type="radio"
-                        name="equilibration_checkpoint_mode"
-                        value="interval"
-                        checked={abfeStore.abfeParameters.equilibration_checkpoint_mode === 'interval'}
-                        onChange={(e) => abfeStore.setABFEParameters({ equilibration_checkpoint_mode: 'interval' })}
-                        className="cursor-pointer"
-                      />
-                      <span className="text-sm">Checkpoint Interval (ns)</span>
-                    </label>
-                  </div>
-                </div>
-
-                {/* Number of Checkpoints Input */}
-                {(abfeStore.abfeParameters.equilibration_checkpoint_mode === 'number' || !abfeStore.abfeParameters.equilibration_checkpoint_mode) && (
-                  <div>
-                    <label className="block text-xs font-medium text-gray-300 mb-2">
-                      Number of Equilibration Checkpoints
-                    </label>
-                    <input
-                      type="number"
-                      value={abfeStore.abfeParameters.equilibration_n_checkpoints || 5}
-                      onChange={(e) => abfeStore.setABFEParameters({ equilibration_n_checkpoints: parseInt(e.target.value) })}
-                      min={1}
-                      max={100}
-                      step={1}
-                      className="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded text-sm text-white"
-                    />
-                    <p className="text-xs text-gray-400 mt-1">
-                      Calculated interval: {((abfeStore.abfeParameters.equilibration_length_ns || 0.1) / (abfeStore.abfeParameters.equilibration_n_checkpoints || 5)).toFixed(4)} ns
-                    </p>
-                  </div>
-                )}
-
-                {/* Checkpoint Interval Input */}
-                {abfeStore.abfeParameters.equilibration_checkpoint_mode === 'interval' && (
-                  <div>
-                    <label className="block text-xs font-medium text-gray-300 mb-2">
-                      Equilibration Checkpoint Interval (ns)
-                    </label>
-                    <input
-                      type="number"
-                      value={abfeStore.abfeParameters.equilibration_checkpoint_interval_ns || 0.02}
-                      onChange={(e) => abfeStore.setABFEParameters({ equilibration_checkpoint_interval_ns: parseFloat(e.target.value) })}
-                      min={0.01}
-                      max={10}
-                      step={0.01}
-                      className="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded text-sm text-white"
-                    />
-                    <p className="text-xs text-gray-400 mt-1">
-                      Calculated checkpoints: {Math.ceil((abfeStore.abfeParameters.equilibration_length_ns || 0.1) / (abfeStore.abfeParameters.equilibration_checkpoint_interval_ns || 0.02))}
-                    </p>
-                  </div>
-                )}
-              </div>
+            <ParameterSection title="Advanced Settings" collapsible defaultExpanded={false}>
+              <SliderParameter
+                label="Complex Replicas"
+                value={abfeStore.abfeParameters.n_replicas_complex || 30}
+                onChange={(v: number) => abfeStore.setABFEParameters({ n_replicas_complex: v })}
+                min={10}
+                max={50}
+                step={1}
+                description="Lambda replicas for complex leg (default: 30)"
+                accentColor="orange"
+              />
+              <SliderParameter
+                label="Solvent Replicas"
+                value={abfeStore.abfeParameters.n_replicas_solvent || 14}
+                onChange={(v: number) => abfeStore.setABFEParameters({ n_replicas_solvent: v })}
+                min={5}
+                max={30}
+                step={1}
+                description="Lambda replicas for solvent leg (default: 14)"
+                accentColor="orange"
+              />
+              <SliderParameter
+                label="Minimization Steps"
+                value={abfeStore.abfeParameters.minimization_steps || 5000}
+                onChange={(v: number) => abfeStore.setABFEParameters({ minimization_steps: v })}
+                min={1000}
+                max={20000}
+                step={1000}
+                description="Energy minimization steps (default: 5000)"
+                accentColor="orange"
+              />
+              <SliderParameter
+                label="Integrator Timestep"
+                value={abfeStore.abfeParameters.timestep_fs || 4.0}
+                onChange={(v: number) => abfeStore.setABFEParameters({ timestep_fs: v })}
+                min={1}
+                max={4}
+                step={0.5}
+                unit="fs"
+                description="Integration timestep (default: 4 fs with HMR)"
+                accentColor="orange"
+              />
+              <SliderParameter
+                label="Checkpoints (Production)"
+                value={abfeStore.abfeParameters.production_n_checkpoints || 10}
+                onChange={(v: number) => abfeStore.setABFEParameters({ production_n_checkpoints: v })}
+                min={1}
+                max={50}
+                step={1}
+                description="Number of analysis checkpoints during production"
+                accentColor="orange"
+              />
+              <SliderParameter
+                label="Checkpoints (Equilibration)"
+                value={abfeStore.abfeParameters.equilibration_n_checkpoints || 5}
+                onChange={(v: number) => abfeStore.setABFEParameters({ equilibration_n_checkpoints: v })}
+                min={1}
+                max={20}
+                step={1}
+                description="Number of analysis checkpoints during equilibration"
+                accentColor="orange"
+              />
             </ParameterSection>
           </div>
         )
 
-      case 3:
+      case 3: {
+        const params = abfeStore.abfeParameters
+        const prodNs = params.production_length_ns || 0.5
+        const equilNs = params.equilibration_length_ns || 0.1
+        const repeats = params.protocol_repeats || 1
+        const mode = params.fast_mode ? 'Fast' : prodNs >= 10 ? 'Production' : 'Standard'
+        const iterCount = Math.round(prodNs / ((params.time_per_iteration_ps || 2.5) / 1000))
+        const complexReplicas = params.n_replicas_complex || 30
+        const solventReplicas = params.n_replicas_solvent || 14
+        const ligandName = abfeStore.preloadedLigand?.name || abfeStore.selectedLigand || 'None'
+        const modeColor = mode === 'Fast' ? 'text-yellow-300' : mode === 'Production' ? 'text-green-300' : 'text-blue-300'
+
+        const configGroups: ConfigGroup[] = [
+          {
+            title: 'Structures',
+            items: [
+              { label: 'Protein', value: currentStructure?.structure_id || 'Current structure' },
+              { label: 'Ligand', value: ligandName },
+              ...(abfeStore.preloadedLigand?.source
+                ? [{ label: 'Source', value: abfeStore.preloadedLigand.source.replace('_', ' ') }]
+                : []),
+            ],
+          },
+          {
+            title: 'Simulation',
+            items: [
+              { label: 'Preset', value: mode, valueColor: modeColor },
+              { label: 'Production', value: `${prodNs} ns (${iterCount.toLocaleString()} iterations)` },
+              { label: 'Equilibration', value: `${equilNs} ns` },
+              { label: 'Repeats', value: `${repeats}` },
+              { label: 'Replicas', value: `Complex: ${complexReplicas}, Solvent: ${solventReplicas}` },
+            ],
+          },
+          {
+            title: 'Environment',
+            items: [
+              { label: 'Temperature', value: `${params.temperature || 298.15} K` },
+              { label: 'Pressure', value: `${params.pressure || 1.0} bar` },
+              { label: 'Solvent', value: (params.solvent_model || 'tip3p').toUpperCase() },
+              { label: 'Box Shape', value: (params.box_shape || 'dodecahedron').charAt(0).toUpperCase() + (params.box_shape || 'dodecahedron').slice(1) },
+            ],
+          },
+          {
+            title: 'Ligand Preparation',
+            items: [
+              { label: 'Forcefield', value: params.ligand_forcefield || 'openff-2.2.1' },
+              { label: 'Charge Method', value: (params.charge_method || 'am1bcc').toUpperCase() },
+            ],
+          },
+        ]
+
         return (
           <ExecutionPanel
-            isRunning={abfeStore.isRunning}
-            progress={abfeStore.progress}
-            progressMessage={abfeStore.progressMessage}
+            isRunning={false}
+            progress={0}
+            progressMessage=""
             error={error}
             accentColor="orange"
-            configSummary={[
-              { label: 'Protein', value: currentStructure?.structure_id || 'Current' },
-              { label: 'Ligand', value: abfeStore.preloadedLigand?.name || abfeStore.selectedLigand || 'None' },
-              { label: 'Source', value: abfeStore.preloadedLigand?.source ? `From ${abfeStore.preloadedLigand.source.replace('_', ' ')}` : 'Selected' },
-              { label: 'Mode', value: abfeStore.abfeParameters.fast_mode ? 'Fast' : 'Standard' },
-              { label: 'Lambda Windows', value: String(abfeStore.abfeParameters.lambda_windows || 11) },
-            ]}
+            configGroups={configGroups}
+            runtimeEstimate={{
+              value: mode === 'Fast' ? '~15-30 minutes' : mode === 'Standard' ? '~2-4 hours' : '~8-24 hours',
+              detail: `${repeats > 1 ? `${repeats} independent repeats` : 'Single run'} · ${complexReplicas + solventReplicas} total replicas · GPU accelerated`,
+            }}
           />
         )
+      }
 
       case 4:
         const result = abfeStore.abfeResult
@@ -577,11 +678,6 @@ export function ABFETool() {
             isRunning={abfeStore.isRunning}
             progress={abfeStore.progress}
             progressMessage={abfeStore.progressMessage}
-            onReset={abfeStore.reset}
-            onNewCalculation={() => {
-              abfeStore.setStep(1)
-              setError(null)
-            }}
           />
         )
 
@@ -604,7 +700,7 @@ export function ABFETool() {
       onReset={abfeStore.reset}
       onExecute={runABFE}
       canProceed={!!canProceed}
-      isRunning={false}
+      isRunning={isSubmitting}
       executeLabel="Start ABFE"
       showExecuteOnStep={3}
       accentColor="orange"

@@ -17,10 +17,12 @@ export function ABFEResultsView({ jobId }: ABFEResultsViewProps) {
     const [loadingParsed, setLoadingParsed] = useState(false)
 
     useEffect(() => {
+        const controller = new AbortController()
+
         const fetchJob = async () => {
             try {
                 setLoading(true)
-                const data = await api.getJobDetails(jobId)
+                const data = await api.getJobDetails(jobId, { signal: controller.signal })
                 setJob(data)
                 setError(null)
 
@@ -28,26 +30,30 @@ export function ABFEResultsView({ jobId }: ABFEResultsViewProps) {
                     fetchParsedResults()
                 }
             } catch (err: any) {
+                if (controller.signal.aborted) return
                 console.error('Failed to fetch ABFE job:', err)
                 setError(err.message || 'Failed to load ABFE results')
             } finally {
-                setLoading(false)
+                if (!controller.signal.aborted) setLoading(false)
             }
         }
 
         const fetchParsedResults = async () => {
+            if (controller.signal.aborted) return
             try {
                 setLoadingParsed(true)
-                const data = await api.parseABFEResults(jobId)
+                const data = await api.parseABFEResults(jobId, { signal: controller.signal })
                 setParsedResults(data)
             } catch (err) {
+                if (controller.signal.aborted) return
                 console.error('Failed to parse ABFE results:', err)
             } finally {
-                setLoadingParsed(false)
+                if (!controller.signal.aborted) setLoadingParsed(false)
             }
         }
 
         fetchJob()
+        return () => controller.abort()
     }, [jobId])
 
     if (loading) {

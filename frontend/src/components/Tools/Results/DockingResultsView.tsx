@@ -20,21 +20,25 @@ export function DockingResultsView({ jobId }: DockingResultsViewProps) {
     const { setCurrentStructure } = useMolecularStore()
 
     useEffect(() => {
+        const controller = new AbortController()
+
         const fetchJob = async () => {
             try {
                 setLoading(true)
-                const data = await api.getDockingJob(jobId)
+                const data = await api.getDockingJob(jobId, { signal: controller.signal })
                 setJob(data)
                 setError(null)
             } catch (err: any) {
+                if (controller.signal.aborted) return
                 console.error('Failed to fetch docking job:', err)
                 setError(err.message || 'Failed to load docking results')
             } finally {
-                setLoading(false)
+                if (!controller.signal.aborted) setLoading(false)
             }
         }
 
         fetchJob()
+        return () => controller.abort()
     }, [jobId])
 
     if (loading) {

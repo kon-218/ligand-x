@@ -69,7 +69,7 @@ export function QuantumChemistryTool() {
             if (pending.workflow) setSelectedWorkflow(pending.workflow)
             clearPendingInitialState()
         }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+        // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [])
 
     // Reset selected ligand when structure changes
@@ -80,7 +80,7 @@ export function QuantumChemistryTool() {
     // Sync isRunning state
     useEffect(() => {
         const hasRunningJobs = qcJobs.some((job: any) =>
-            job.status === 'running' || job.status === 'pending'
+            job.status === 'running' || job.status === 'submitted' || job.status === 'preparing'
         )
         setIsRunning(hasRunningJobs)
     }, [qcJobs, setIsRunning])
@@ -200,7 +200,7 @@ export function QuantumChemistryTool() {
     useEffect(() => {
         const qcRunning = allJobs.filter(
             j => j.service === 'qc' &&
-                 (j.status === 'submitted' || j.status === 'running' || j.status === 'pending')
+                (j.status === 'submitted' || j.status === 'running' || j.status === 'preparing')
         )
         qcRunning.forEach(j => startSSEStream(j.job_id))
         // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -220,16 +220,16 @@ export function QuantumChemistryTool() {
             const ligandKeys = currentStructure.ligands ? Object.keys(currentStructure.ligands) : []
 
             // Get the selected ligand or fall back to first ligand
-            const selectedLigand = selectedLigandId && currentStructure.ligands 
-                ? currentStructure.ligands[selectedLigandId] 
+            const selectedLigand = selectedLigandId && currentStructure.ligands
+                ? currentStructure.ligands[selectedLigandId]
                 : ligands[0]
             const selectedLigandKey = selectedLigandId || ligandKeys[0]
 
             const moleculeData = currentStructure.sdf_data ||
-                               selectedLigand?.sdf_data ||
-                               selectedLigand?.pdb_data ||
-                               currentStructure.pdb_data ||
-                               currentStructure.xyz_data || ''
+                selectedLigand?.sdf_data ||
+                selectedLigand?.pdb_data ||
+                currentStructure.pdb_data ||
+                currentStructure.xyz_data || ''
 
             if (!moleculeData) {
                 addNotification('error', 'No 3D molecular data available')
@@ -304,18 +304,18 @@ export function QuantumChemistryTool() {
             const ligandKeys = currentStructure.ligands ? Object.keys(currentStructure.ligands) : []
 
             // Get the selected ligand or fall back to first ligand
-            const selectedLigand = selectedLigandId && currentStructure.ligands 
-                ? currentStructure.ligands[selectedLigandId] 
+            const selectedLigand = selectedLigandId && currentStructure.ligands
+                ? currentStructure.ligands[selectedLigandId]
                 : ligands[0]
             const selectedLigandKey = selectedLigandId || ligandKeys[0]
 
             // Prioritize ligand data (SDF/PDB) over the main structure PDB/XYZ
             // This prevents sending a full protein complex for Fukui calculations
             const moleculeData = currentStructure.sdf_data ||
-                               selectedLigand?.sdf_data ||
-                               selectedLigand?.pdb_data ||
-                               currentStructure.pdb_data ||
-                               currentStructure.xyz_data || ''
+                selectedLigand?.sdf_data ||
+                selectedLigand?.pdb_data ||
+                currentStructure.pdb_data ||
+                currentStructure.xyz_data || ''
 
             if (!moleculeData) {
                 addNotification('error', 'No 3D molecular data available')
@@ -367,20 +367,20 @@ export function QuantumChemistryTool() {
             const ligandKeys = currentStructure.ligands ? Object.keys(currentStructure.ligands) : []
 
             // Get the selected ligand or fall back to first ligand
-            const selectedLigand = selectedLigandId && currentStructure.ligands 
-                ? currentStructure.ligands[selectedLigandId] 
+            const selectedLigand = selectedLigandId && currentStructure.ligands
+                ? currentStructure.ligands[selectedLigandId]
                 : ligands[0]
             const selectedLigandKey = selectedLigandId || ligandKeys[0]
 
             const smiles = currentStructure.smiles || selectedLigand?.smiles
-            
+
             // Prioritize ligand data (SDF/PDB) over the main structure PDB/XYZ
             // This prevents sending a full protein complex for conformer search
-            const moleculeData = currentStructure.sdf_data || 
-                               selectedLigand?.sdf_data || 
-                               selectedLigand?.pdb_data || 
-                               currentStructure.pdb_data || 
-                               currentStructure.xyz_data || ''
+            const moleculeData = currentStructure.sdf_data ||
+                selectedLigand?.sdf_data ||
+                selectedLigand?.pdb_data ||
+                currentStructure.pdb_data ||
+                currentStructure.xyz_data || ''
 
             if (!smiles && !moleculeData) {
                 addNotification('error', 'Conformer search requires a SMILES string or 3D structure')
@@ -435,16 +435,16 @@ export function QuantumChemistryTool() {
             const ligands: Ligand[] = currentStructure.ligands ? Object.values(currentStructure.ligands) : []
             const ligandKeys = currentStructure.ligands ? Object.keys(currentStructure.ligands) : []
 
-            const selectedLigand = selectedLigandId && currentStructure.ligands 
-                ? currentStructure.ligands[selectedLigandId] 
+            const selectedLigand = selectedLigandId && currentStructure.ligands
+                ? currentStructure.ligands[selectedLigandId]
                 : ligands[0]
             const selectedLigandKey = selectedLigandId || ligandKeys[0]
 
             const moleculeData = currentStructure.sdf_data ||
-                               selectedLigand?.sdf_data ||
-                               selectedLigand?.pdb_data ||
-                               currentStructure.pdb_data ||
-                               currentStructure.xyz_data || ''
+                selectedLigand?.sdf_data ||
+                selectedLigand?.pdb_data ||
+                currentStructure.pdb_data ||
+                currentStructure.xyz_data || ''
 
             if (!moleculeData) {
                 addNotification('error', 'No 3D molecular data available')
@@ -559,11 +559,11 @@ export function QuantumChemistryTool() {
 
                 if (filesResponse.files && filesResponse.files.length > 0) {
                     const files = filesResponse.files
-                    
+
                     if (files.includes('orca.out')) {
                         targetFile = 'orca.out'
                     } else if (files.includes('neutral.out')) {
-                        targetFile = 'neutral.out' 
+                        targetFile = 'neutral.out'
                         targetTitle = 'Neutral Species Log'
                     } else if (files.includes('conf_0.out')) {
                         targetFile = 'conf_0.out'
@@ -577,7 +577,7 @@ export function QuantumChemistryTool() {
                         }
                     }
                 }
-                
+
                 const logContent = await qcService.getJobFileContent(jobId, targetFile)
                 addInputFileTab(logContent, targetTitle)
             } catch (error) {
@@ -698,7 +698,7 @@ export function QuantumChemistryTool() {
     return (
         <div className="h-full flex flex-col relative">
             {/* Header Tabs */}
-            <div className="flex border-b border-gray-700">
+            <div className="flex h-14 border-b border-gray-800/50 bg-gray-950">
                 {[
                     { id: 'setup', label: 'Setup', icon: Settings },
                     { id: 'results', label: 'Results', icon: BarChart3 },
@@ -706,13 +706,16 @@ export function QuantumChemistryTool() {
                     <button
                         key={id}
                         onClick={() => setActiveTab(id as any)}
-                        className={`flex items-center gap-2 px-4 py-3 text-sm font-medium transition-colors ${activeTab === id
-                            ? 'text-blue-400 border-b-2 border-blue-400 bg-gray-800'
-                            : 'text-gray-400 hover:text-white hover:bg-gray-800'
+                        className={`flex items-center gap-2 px-6 h-full text-sm font-medium transition-all relative ${activeTab === id
+                            ? 'text-blue-400 bg-gray-800/50'
+                            : 'text-gray-400 hover:text-white hover:bg-gray-800/30'
                             }`}
                     >
                         <Icon className="w-4 h-4" />
                         {label}
+                        {activeTab === id && (
+                            <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-blue-400" />
+                        )}
                     </button>
                 ))}
             </div>

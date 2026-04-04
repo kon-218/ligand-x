@@ -127,9 +127,8 @@ export const BatchBoltz2Results: React.FC<BatchBoltz2ResultsProps> = ({
 
     // Calculate summary statistics
     const summary = useMemo(() => {
-        // Stricter success check: must have success=true AND valid affinity
-        const successful = results.filter((r) => r.success && r.affinity_pred_value != null)
-        const failed = results.filter((r) => !r.success || (r.success && r.affinity_pred_value == null))
+        const successful = results.filter((r) => r.success)
+        const failed = results.filter((r) => !r.success)
 
         const affinities = successful
             .map((r) => r.affinity_pred_value)
@@ -520,7 +519,7 @@ export const BatchBoltz2Results: React.FC<BatchBoltz2ResultsProps> = ({
                         <div>
                             <h3 className="font-medium">Screening Results</h3>
                             <p className="text-sm text-gray-400">
-                                Click on a row to view detailed results for that ligand
+                                Per-ligand screening results
                             </p>
                         </div>
                         <Button
@@ -529,7 +528,7 @@ export const BatchBoltz2Results: React.FC<BatchBoltz2ResultsProps> = ({
                             onClick={onExportResults}
                             disabled={results.length === 0}
                         >
-                            <Download className="h-4 w-4 mr-2" />
+                            <Download className="h-4 w-4 mr-1" />
                             Export CSV
                         </Button>
                     </div>
@@ -593,32 +592,24 @@ export const BatchBoltz2Results: React.FC<BatchBoltz2ResultsProps> = ({
                                         <SortIcon field="complex_plddt" />
                                     </button>
                                 </th>
-                                <th className="p-2 w-12"></th>
+                                <th className="p-2 text-right text-sm font-medium text-gray-400">Action</th>
                             </tr>
                         </thead>
                         <tbody>
-                            {sortedResults.map((result, idx) => (
+                            {sortedResults.map((result, idx) => {
+                                const hasViewableData = result.success && result.poses && result.poses.length > 0
+                                return (
                                 <tr
                                     key={`${result.ligand_id}-${idx}`}
-                                    className={`border-t border-gray-700 cursor-pointer hover:bg-gray-700/50 ${!result.success || result.affinity_pred_value == null ? 'bg-red-500/5' : ''
-                                        }`}
-                                    onClick={() => {
-                                        if (result.success && result.affinity_pred_value != null) {
-                                            const visIndex = visualizableResults.findIndex(r => r.ligand_id === result.ligand_id);
-                                            if (visIndex !== -1) {
-                                                loadStructureToViewer(result, visIndex, true);
-                                            }
-                                            onViewResult(result);
-                                        }
-                                    }}
+                                    className={`border-t border-gray-700 ${hasViewableData ? 'hover:bg-gray-700/50' : 'bg-red-500/5'}`}
                                 >
                                     <td className="p-2 text-sm text-gray-500">{idx + 1}</td>
                                     <td className="p-2">
                                         <div className="flex items-center gap-2">
-                                            {result.success && result.affinity_pred_value != null ? (
+                                            {result.success ? (
                                                 <Check className="h-3 w-3 text-green-500" />
                                             ) : (
-                                                <div title={result.success ? "Prediction incomplete (missing affinity)" : "Prediction failed"}>
+                                                <div title={result.error || 'Prediction failed'}>
                                                     <AlertCircle className="h-3 w-3 text-red-500" />
                                                 </div>
                                             )}
@@ -628,42 +619,49 @@ export const BatchBoltz2Results: React.FC<BatchBoltz2ResultsProps> = ({
                                         </div>
                                     </td>
                                     <td className={`p-2 text-right font-mono text-sm ${getAffinityColor(result.affinity_pred_value)}`}>
-                                        {result.success && result.affinity_pred_value != null ? formatNumber(result.affinity_pred_value, 2) : '-'}
+                                        {result.affinity_pred_value != null ? formatNumber(result.affinity_pred_value, 2) : '-'}
                                     </td>
                                     <td className={`p-2 text-right font-mono text-sm ${getAffinityColor(result.binding_free_energy)}`}>
-                                        {result.success && result.binding_free_energy != null ? formatNumber(result.binding_free_energy, 2) : '-'}
+                                        {result.binding_free_energy != null ? formatNumber(result.binding_free_energy, 2) : '-'}
                                     </td>
                                     <td className={`p-2 text-right font-mono text-sm ${getProbabilityColor(result.affinity_probability_binary)}`}>
-                                        {result.success && result.affinity_probability_binary !== undefined
+                                        {result.affinity_probability_binary != null
                                             ? `${(result.affinity_probability_binary * 100).toFixed(0)}%`
                                             : '-'}
                                     </td>
                                     <td className={`p-2 text-right font-mono text-sm ${getConfidenceColor(result.confidence_score)}`}>
-                                        {result.success && result.confidence_score != null ? formatNumber(result.confidence_score, 2) : '-'}
+                                        {result.confidence_score != null ? formatNumber(result.confidence_score, 2) : '-'}
                                     </td>
                                     <td className={`p-2 text-right font-mono text-sm ${getConfidenceColor(result.complex_plddt)}`}>
-                                        {result.success && result.complex_plddt != null ? formatNumber(result.complex_plddt, 2) : '-'}
+                                        {result.complex_plddt != null ? formatNumber(result.complex_plddt, 2) : '-'}
                                     </td>
-                                    <td className="p-2">
-                                        {result.success && result.affinity_pred_value != null ? (
-                                            <button
-                                                className="p-1 hover:bg-gray-600 rounded"
-                                                title="View details"
+                                    <td className="p-2 text-right">
+                                        {hasViewableData ? (
+                                            <Button
+                                                variant="ghost"
+                                                size="sm"
+                                                className="h-7 px-2 text-xs text-blue-400 hover:text-blue-300 hover:bg-blue-500/10"
                                                 onClick={(e: React.MouseEvent) => {
                                                     e.stopPropagation()
+                                                    const visIndex = visualizableResults.findIndex(r => r.ligand_id === result.ligand_id)
+                                                    if (visIndex !== -1) {
+                                                        loadStructureToViewer(result, visIndex, true)
+                                                    }
                                                     onViewResult(result)
                                                 }}
                                             >
-                                                <Eye className="h-4 w-4" />
-                                            </button>
+                                                <Eye className="h-3 w-3 mr-1" />
+                                                View
+                                            </Button>
                                         ) : (
-                                            <div title={result.error || 'Prediction failed or incomplete'}>
+                                            <div className="flex justify-end" title={result.error || 'Prediction failed'}>
                                                 <AlertCircle className="h-4 w-4 text-red-500" />
                                             </div>
                                         )}
                                     </td>
                                 </tr>
-                            ))}
+                                )
+                            })}
                             {results.length === 0 && !isRunning && (
                                 <tr>
                                     <td colSpan={8} className="p-8 text-center text-gray-500">

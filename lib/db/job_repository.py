@@ -272,15 +272,28 @@ class JobRepository:
         else:
             async with self.pool.acquire() as conn:
                 if status == 'running':
-                    row = await conn.fetchrow(
-                        """
-                        UPDATE jobs 
-                        SET status = $1, started_at = NOW(), progress = COALESCE($3, progress), stage = COALESCE($4, stage)
-                        WHERE id = $2
-                        RETURNING job_type
-                        """,
-                        status, _parse_job_id(job_id), progress, stage
-                    )
+                    if result is not None:
+                        row = await conn.fetchrow(
+                            """
+                            UPDATE jobs 
+                            SET status = $1, started_at = NOW(), progress = COALESCE($3, progress),
+                                stage = COALESCE($4, stage), result = $5
+                            WHERE id = $2
+                            RETURNING job_type
+                            """,
+                            status, _parse_job_id(job_id), progress, stage,
+                            json.dumps(result)
+                        )
+                    else:
+                        row = await conn.fetchrow(
+                            """
+                            UPDATE jobs 
+                            SET status = $1, started_at = NOW(), progress = COALESCE($3, progress), stage = COALESCE($4, stage)
+                            WHERE id = $2
+                            RETURNING job_type
+                            """,
+                            status, _parse_job_id(job_id), progress, stage
+                        )
                     if row:
                         job_type = row['job_type']
                 elif status in ('completed', 'failed', 'cancelled'):

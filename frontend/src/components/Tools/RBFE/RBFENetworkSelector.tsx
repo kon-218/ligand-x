@@ -7,6 +7,9 @@ import {
   CheckCircle,
   AlertCircle,
   Check,
+  Upload,
+  FlaskConical,
+  Atom,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Label } from '@/components/ui/label'
@@ -45,6 +48,7 @@ export default function RBFENetworkSelector({
 }: RBFENetworkSelectorProps) {
   const [libraryMolecules, setLibraryMolecules] = useState<LibraryMolecule[]>([])
   const [isLoading, setIsLoading] = useState(false)
+  const [ligandInputMethod, setLigandInputMethod] = useState<'existing' | 'smiles' | 'upload'>('existing')
 
   // Compute protein validation error internally
   const proteinValidationError = currentStructure ? getProteinValidationError(currentStructure) : null
@@ -118,6 +122,53 @@ export default function RBFENetworkSelector({
             )}
           </div>
         </div>
+      </div>
+
+      {/* Ligand Input Method Selection */}
+      <div className="space-y-2">
+        <Label className="text-sm font-medium">Ligand Input Method</Label>
+        <div className="grid grid-cols-3 gap-2">
+          <button
+            onClick={() => setLigandInputMethod('existing')}
+            className={`p-3 rounded-lg border transition-all flex flex-col items-center gap-2 ${
+              ligandInputMethod === 'existing'
+                ? 'border-cyan-500 bg-cyan-900/30'
+                : 'border-gray-700 bg-gray-800 hover:bg-gray-700'
+            }`}
+          >
+            <Atom className={`w-5 h-5 ${ligandInputMethod === 'existing' ? 'text-cyan-400' : 'text-gray-400'}`} />
+            <span className={`text-xs ${ligandInputMethod === 'existing' ? 'text-cyan-400' : 'text-gray-400'}`}>
+              Existing
+            </span>
+          </button>
+          <button
+            onClick={() => setLigandInputMethod('smiles')}
+            className={`p-3 rounded-lg border transition-all flex flex-col items-center gap-2 ${
+              ligandInputMethod === 'smiles'
+                ? 'border-cyan-500 bg-cyan-900/30'
+                : 'border-gray-700 bg-gray-800 hover:bg-gray-700'
+            }`}
+          >
+            <FlaskConical className={`w-5 h-5 ${ligandInputMethod === 'smiles' ? 'text-cyan-400' : 'text-gray-400'}`} />
+            <span className={`text-xs ${ligandInputMethod === 'smiles' ? 'text-cyan-400' : 'text-gray-400'}`}>
+              SMILES
+            </span>
+          </button>
+          <button
+            onClick={() => setLigandInputMethod('upload')}
+            className={`p-3 rounded-lg border transition-all flex flex-col items-center gap-2 ${
+              ligandInputMethod === 'upload'
+                ? 'border-cyan-500 bg-cyan-900/30'
+                : 'border-gray-700 bg-gray-800 hover:bg-gray-700'
+            }`}
+          >
+            <Upload className={`w-5 h-5 ${ligandInputMethod === 'upload' ? 'text-cyan-400' : 'text-gray-400'}`} />
+            <span className={`text-xs ${ligandInputMethod === 'upload' ? 'text-cyan-400' : 'text-gray-400'}`}>
+              Upload
+            </span>
+          </button>
+        </div>
+        <p className="text-xs text-gray-500">Select how you want to add ligands to your RBFE network</p>
       </div>
 
       {/* Ligand Selection */}

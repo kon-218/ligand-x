@@ -1,7 +1,7 @@
 'use client'
 
 import React, { useState, useEffect, useRef } from 'react'
-import { RefreshCw, CheckCircle, XCircle, Clock } from 'lucide-react'
+import { RefreshCw, CheckCircle, XCircle, Clock, FlaskConical } from 'lucide-react'
 import type { QCJob, QCResults } from '@/types/qc'
 import { StatusBadge } from '@/components/ui/StatusBadge'
 import { filterJobs, getJobTypeBadge } from './utils'
@@ -15,7 +15,7 @@ import { BDEResultsTable } from '@/components/QC/BDEResultsTable'
 import { AtomicChargesTable } from '@/components/QC/AtomicChargesTable'
 import { OrbitalControls } from '@/components/QC/OrbitalControls'
 import { useUnifiedResultsStore } from '@/store/unified-results-store'
-import { UnifiedJobList } from '../shared'
+import { UnifiedJobList, NoJobSelectedState } from '../shared'
 import type { MolstarViewerHandle } from '@/components/MolecularViewer/MolecularViewer'
 
 interface QCTabResultsProps {
@@ -277,11 +277,19 @@ export function QCTabResults({
                             )}
                         </div>
                     ) : (
-                        <div className="flex items-center justify-center h-full text-gray-400">
-                            <div className="text-center">
-                                <p>Select a job to view results</p>
+                        activeJobId ? (
+                            <div className="flex items-center justify-center h-full text-gray-400">
+                                <div className="text-center">
+                                    <p>No results available for selected job</p>
+                                </div>
                             </div>
-                        </div>
+                        ) : (
+                            <NoJobSelectedState
+                                icon={FlaskConical}
+                                description="Select a job from the list or run a new QC job"
+                                className="h-full"
+                            />
+                        )
                     )}
             </div >
         </div >

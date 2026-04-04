@@ -561,6 +561,8 @@ def rbfe_mapping_preview(self, job_data: Dict[str, Any]) -> Dict[str, Any]:
                 self.update_progress(progress, 'running', status)
             elif update['type'] == 'result':
                 result = update['data']
+            elif update['type'] == 'error':
+                raise Exception(update['data'].get('error', 'Unknown error from mapping preview service'))
 
         if result is None:
             raise RuntimeError("Mapping preview service returned no result")

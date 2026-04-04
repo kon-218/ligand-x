@@ -43,7 +43,7 @@ export function ResultsContainer({
   onDownload,
   onSave,
   onOptimize,
-  accentColor = 'blue',
+  accentColor = 'cyan',
   children,
 }: ResultsContainerProps) {
   const colors = accentColorClasses[accentColor]
@@ -204,7 +204,7 @@ export function ResultMetric({
   unit,
   description,
   status = 'neutral',
-  accentColor = 'blue',
+  accentColor = 'cyan',
 }: ResultMetricProps) {
   const colors = accentColorClasses[accentColor]
 
@@ -243,7 +243,7 @@ export function ResultsTable({
   data,
   onRowClick,
   selectedIndex,
-  accentColor = 'blue',
+  accentColor = 'cyan',
 }: ResultsTableProps) {
   const colors = accentColorClasses[accentColor]
 

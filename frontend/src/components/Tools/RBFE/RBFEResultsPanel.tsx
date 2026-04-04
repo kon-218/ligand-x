@@ -19,21 +19,38 @@ import {
   Move,
   Download,
   Image as ImageIcon,
+  ChevronLeft,
+  ChevronRight,
+  Maximize2,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button' // Used in DockedPosesPreview
 import { api } from '@/lib/api-client'
 import { useMolecularStore } from '@/store/molecular-store'
 import { useRBFEStore } from '@/store/rbfe-store'
 import { useUnifiedResultsStore } from '@/store/unified-results-store'
-import { UnifiedJobList } from '../shared'
+import { UnifiedJobList, NoJobSelectedState } from '../shared'
 import {
   generateNetworkGraphSVG,
   generateNetworkGraphSVGWithImages,
   downloadNetworkGraphSVG,
   svgToDataUrl,
 } from '@/lib/rbfe-network-export'
+import { computeNetworkGraphLayout } from '@/lib/rbfe-network-layout'
 import type { RBFEJob, RBFENetworkData, RBFEDdGValue, RBFETransformationResult, DockedPoseInfo, LigandSelection, AlignmentInfo } from '@/types/rbfe-types'
 import { AlignmentPreview } from './AlignmentPreview'
+
+// Resolve a backend /api/… path to a full URL, encoding special characters in each segment.
+// Transformation names may contain spaces and parentheses (e.g. "BNZ_A_200_BNZ_o (Library)_complex").
+function resolveApiFileUrl(path: string): string {
+  if (!path.startsWith('/api')) return path
+  const base = (process.env.NEXT_PUBLIC_API_URL || '').replace(/\/$/, '')
+  // Encode each path segment individually to handle spaces/parentheses while preserving slashes
+  const encoded = path
+    .split('/')
+    .map((seg, i) => (i === 0 ? seg : encodeURIComponent(seg)))
+    .join('/')
+  return `${base}${encoded}`
+}
 
 // Helper to check if a job status indicates it's still running/in-progress
 // Note: 'docking_ready' is NOT considered running since it's waiting for user action
@@ -46,18 +63,6 @@ const isRunningStatus = (status: string | undefined): boolean => {
     'resuming',
   ])
   return runningStatuses.has(status || '')
-}
-
-// Helper to check if a job status indicates completion
-const isCompletedStatus = (status: string | undefined): boolean => {
-  const completedStatuses = new Set([
-    'completed',
-    'success',
-    'successful',
-    'finished',
-    'done',
-  ])
-  return completedStatuses.has((status || '').toLowerCase())
 }
 
 interface TransformationLegRow {
@@ -191,7 +196,7 @@ export function RBFEResultsPanel({
     loadAllJobs()
   }, [])
 
-  const filteredJobs = getFilteredJobs().filter(j => j.service === 'rbfe')
+  const filteredJobs = getFilteredJobs().filter(j => j.service === 'rbfe' && j.metadata.network_topology)
 
   // Use ref for callback to avoid dependency issues causing infinite loops
   const onJobsLoadedRef = useRef(onJobsLoaded)
@@ -200,20 +205,6 @@ export function RBFEResultsPanel({
   }, [onJobsLoaded])
 
   // No longer need local loadJobs as it's handled by unified store
-
-  // Auto-select most recent completed job if none selected
-  useEffect(() => {
-    if (!activeJobId && !result && jobs.length > 0) {
-      const completedJobs = jobs.filter(j => isCompletedStatus(j.status))
-      if (completedJobs.length > 0) {
-        const sorted = [...completedJobs].sort((a, b) =>
-          new Date(b.created_at || 0).getTime() - new Date(a.created_at || 0).getTime()
-        )
-        onSelectJob(sorted[0].job_id)
-        setResultsTab('completed')
-      }
-    }
-  }, [jobs, activeJobId, result, onSelectJob])
 
   // Ensure docking results are loaded for completed jobs
   useEffect(() => {
@@ -354,11 +345,11 @@ export function RBFEResultsPanel({
     // No result yet
     if (!result) {
       return (
-        <div className="flex flex-col items-center justify-center py-12 text-gray-400">
-          <GitBranch className="w-12 h-12 mb-4 opacity-50" />
-          <p>No RBFE results yet</p>
-          <p className="text-sm mt-1">Configure and run a calculation to see results, or select a job above</p>
-        </div>
+        <NoJobSelectedState
+          icon={GitBranch}
+          description="Select a job from the list or run a new RBFE calculation"
+          className="h-full"
+        />
       )
     }
 
@@ -410,6 +401,7 @@ export function RBFEResultsPanel({
               network={result.network}
               ddgValues={result.results.ddg_values || []}
               availableLigands={rbfeStore.availableLigands}
+              jobLigandSmiles={result.ligand_smiles}
             />
           )}
 
@@ -524,65 +516,6 @@ export function RBFEResultsPanel({
             )
           })()}
 
-          {/* Overlap Matrices */}
-          {result.results.transformation_results && result.results.transformation_results.some(r => r.overlap_matrix) && (() => {
-            // Group by edge, keeping complex and solvent matrices separately
-            const byEdge = new Map<string, {
-              ligand_a: string
-              ligand_b: string
-              complex?: number[][]
-              solvent?: number[][]
-            }>()
-            for (const r of result.results.transformation_results) {
-              if (!r.overlap_matrix || !r.ligand_a || !r.ligand_b) continue
-              const key = `${r.ligand_a}||${r.ligand_b}`
-              if (!byEdge.has(key)) byEdge.set(key, { ligand_a: r.ligand_a, ligand_b: r.ligand_b })
-              const e = byEdge.get(key)!
-              if (r.leg === 'complex') e.complex = r.overlap_matrix
-              else if (r.leg === 'solvent') e.solvent = r.overlap_matrix
-            }
-            if (byEdge.size === 0) return null
-
-            return (
-              <div className="space-y-3">
-                <div className="flex items-center gap-2">
-                  <h4 className="text-sm font-semibold text-gray-300">Overlap Matrices</h4>
-                  <div className="group relative">
-                    <div className="cursor-help text-xs text-gray-500 border border-gray-600 rounded-full w-4 h-4 flex items-center justify-center">?</div>
-                    <div className="absolute right-0 bottom-full mb-2 hidden group-hover:block w-72 p-2 bg-gray-900 text-xs text-gray-300 rounded border border-gray-700 shadow-lg z-20">
-                      MBAR overlap between adjacent lambda windows. Superdiagonal values ≥ 0.03 indicate sufficient phase-space overlap for reliable ΔΔG estimates.
-                    </div>
-                  </div>
-                </div>
-                {[...byEdge.values()].map((edge, i) => (
-                  <div key={i} className="space-y-2">
-                    <p className="text-xs text-gray-400 flex items-center gap-1">
-                      {edge.ligand_a}
-                      <ArrowRight className="w-3 h-3" />
-                      {edge.ligand_b}
-                    </p>
-                    <div className="grid grid-cols-2 gap-3">
-                      {(['complex', 'solvent'] as const).map(leg => {
-                        const matrix = edge[leg]
-                        return (
-                          <div key={leg} className="space-y-1">
-                            <span className={`text-xs font-medium px-2 py-0.5 rounded ${leg === 'complex' ? 'bg-blue-900/30 text-blue-300' : 'bg-green-900/30 text-green-300'}`}>
-                              {leg}
-                            </span>
-                            {matrix
-                              ? <OverlapMatrixHeatmap matrix={matrix} />
-                              : <div className="h-24 bg-gray-800/40 rounded border border-gray-700 flex items-center justify-center text-xs text-gray-600">Not available</div>
-                            }
-                          </div>
-                        )
-                      })}
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )
-          })()}
-
           {/* Relative Affinities */}
           {result.results.relative_affinities && Object.keys(result.results.relative_affinities).length > 0 && (
             <div className="space-y-2">
@@ -662,6 +595,7 @@ interface NetworkGraphProps {
   network: RBFENetworkData
   ddgValues: RBFEDdGValue[]
   availableLigands: LigandSelection[]
+  jobLigandSmiles?: Record<string, string>
 }
 
 // Helper function to get SMILES for a ligand name
@@ -758,11 +692,54 @@ function OverlapMatrixHeatmap({ matrix }: { matrix: number[][] }) {
   )
 }
 
-function NetworkGraph({ network, ddgValues, availableLigands }: NetworkGraphProps) {
+function NetworkGraph({ network, ddgValues, availableLigands, jobLigandSmiles }: NetworkGraphProps) {
   const { addImageFileTab } = useMolecularStore()
   const [isGenerating, setIsGenerating] = useState(false)
-  
-  // Zoom and Pan state
+  const [imageDataUrls, setImageDataUrls] = useState<Map<string, string>>(new Map())
+
+  // Container measurement for responsive canvas
+  const containerRef = useRef<HTMLDivElement>(null)
+  const [containerWidth, setContainerWidth] = useState(400)
+
+  useEffect(() => {
+    const updateWidth = () => {
+      if (containerRef.current) setContainerWidth(containerRef.current.clientWidth)
+    }
+    updateWidth()
+    const ro = new ResizeObserver(updateWidth)
+    if (containerRef.current) ro.observe(containerRef.current)
+    return () => ro.disconnect()
+  }, [])
+
+  // Load ligand images as data URLs (avoids cross-origin SVG image issues)
+  useEffect(() => {
+    let cancelled = false
+    const load = async () => {
+      const entries = await Promise.all(
+        network.nodes.map(async (node) => {
+          const smiles = getLigandSmiles(node, availableLigands) ?? jobLigandSmiles?.[node] ?? null
+          if (!smiles) return [node, null] as const
+          try {
+            const baseUrl = process.env.NEXT_PUBLIC_API_URL || ''
+            const res = await fetch(`${baseUrl}/api/rbfe/ligand-image?smiles=${encodeURIComponent(smiles)}`)
+            if (!res.ok) return [node, null] as const
+            const blob = await res.blob()
+            return [node, URL.createObjectURL(blob)] as const
+          } catch {
+            return [node, null] as const
+          }
+        })
+      )
+      if (!cancelled) {
+        setImageDataUrls(new Map(entries.filter(([, url]) => url !== null) as [string, string][]))
+      }
+    }
+    load()
+    return () => { cancelled = true }
+  }, [network.nodes, availableLigands, jobLigandSmiles])
+
+  // Zoom and Pan state — initial scale=1, position=(0,0) always fits since layout
+  // is computed to match the canvas dimensions exactly.
   const [scale, setScale] = useState(1)
   const [position, setPosition] = useState({ x: 0, y: 0 })
   const [isDragging, setIsDragging] = useState(false)
@@ -803,7 +780,7 @@ function NetworkGraph({ network, ddgValues, availableLigands }: NetworkGraphProp
     try {
       setIsGenerating(true)
       // Use async version to generate 2D ligand images locally
-      const svgString = await generateNetworkGraphSVGWithImages(network, ddgValues, availableLigands)
+      const svgString = await generateNetworkGraphSVGWithImages(network, ddgValues, availableLigands, jobLigandSmiles)
       const imageUrl = svgToDataUrl(svgString)
       addImageFileTab(imageUrl, `RBFE Network Graph (${network.topology.toUpperCase()})`)
     } catch (error) {
@@ -813,36 +790,33 @@ function NetworkGraph({ network, ddgValues, availableLigands }: NetworkGraphProp
     }
   }
 
-  const handleDownloadGraph = () => {
+  const handleDownloadGraph = async () => {
     try {
-      downloadNetworkGraphSVG(network, ddgValues, availableLigands, `rbfe_network_${network.topology}.svg`)
+      await downloadNetworkGraphSVG(network, ddgValues, availableLigands, `rbfe_network_${network.topology}.svg`, jobLigandSmiles)
     } catch (error) {
       console.error('Failed to download network graph:', error)
     }
   }
 
-  // Enhanced visualization with better spacing and styling
   const nodeRadius = 45
   const imageSize = 70
-  const width = 600
-  const height = 400
-  const padding = 40
+  // Responsive square canvas — layout positions are computed for these dimensions
+  // so scale=1, position=(0,0) is always a perfect fit with no zoomToFit needed.
+  const width = Math.max(containerWidth - 24, 300)
+  const height = width
 
-  // Calculate node positions in a circle with better spacing
-  const nodePositions = network.nodes.map((node, i) => {
-    const angle = (2 * Math.PI * i) / network.nodes.length - Math.PI / 2
-    const radius = Math.min(width, height) / 2 - nodeRadius - padding
-    const smiles = getLigandSmiles(node, availableLigands)
-    const imageUrl = getLigandImageUrl(smiles)
+  const layoutPositions = useMemo(
+    () => computeNetworkGraphLayout(network, width, height, nodeRadius),
+    [network, width, height, nodeRadius],
+  )
 
-    return {
-      node,
-      x: width / 2 + radius * Math.cos(angle),
-      y: height / 2 + radius * Math.sin(angle),
-      imageUrl,
-      index: i,
-    }
-  })
+  const nodePositions = layoutPositions.map((p) => ({
+    node: p.node,
+    x: p.x,
+    y: p.y,
+    imageUrl: imageDataUrls.get(p.node) ?? null,
+    index: p.index,
+  }))
 
   // Create a map for quick lookup
   const posMap = new Map(nodePositions.map((p) => [p.node, p]))
@@ -913,9 +887,10 @@ function NetworkGraph({ network, ddgValues, availableLigands }: NetworkGraphProp
           </Button>
         </div>
       </div>
-      <div 
-        className="bg-gray-900/50 rounded-lg border border-gray-200/20 shadow-sm overflow-hidden relative"
-        style={{ height: height }}
+      <div
+        ref={containerRef}
+        className="bg-gray-900/50 rounded-lg border border-gray-200/20 shadow-sm overflow-hidden relative min-h-[280px]"
+        style={{ height: width }}
       >
         <div className="absolute top-2 left-2 z-10 pointer-events-none">
           <div className="bg-black/40 backdrop-blur-sm text-xs text-gray-400 px-2 py-1 rounded border border-white/10 flex items-center gap-1">
@@ -942,40 +917,28 @@ function NetworkGraph({ network, ddgValues, availableLigands }: NetworkGraphProp
                 <circle cx={pos.x} cy={pos.y} r={nodeRadius - 3} />
               </clipPath>
             ))}
-            {/* Define arrow markers for directional edges - larger and more visible */}
-            <marker
-              id="arrow-green"
-              markerWidth="12"
-              markerHeight="12"
-              refX="10"
-              refY="3.5"
-              orient="auto"
-              markerUnits="strokeWidth"
-            >
-              <path d="M0,0 L0,7 L10,3.5 z" fill="#16a34a" stroke="#16a34a" strokeWidth="0.5" />
-            </marker>
-            <marker
-              id="arrow-red"
-              markerWidth="12"
-              markerHeight="12"
-              refX="10"
-              refY="3.5"
-              orient="auto"
-              markerUnits="strokeWidth"
-            >
-              <path d="M0,0 L0,7 L10,3.5 z" fill="#dc2626" stroke="#dc2626" strokeWidth="0.5" />
-            </marker>
-            <marker
-              id="arrow-gray"
-              markerWidth="12"
-              markerHeight="12"
-              refX="10"
-              refY="3.5"
-              orient="auto"
-              markerUnits="strokeWidth"
-            >
-              <path d="M0,0 L0,7 L10,3.5 z" fill="#6b7280" stroke="#6b7280" strokeWidth="0.5" />
-            </marker>
+            {/* Arrow markers — dimensions in userSpaceOnUse tied to nodeRadius so
+                arrowheads stay proportional to nodes as the canvas resizes.
+                Keep aLen small (0.28×r) so there is always visible line before the tip. */}
+            {(['#16a34a', '#dc2626', '#6b7280'] as const).map((fill, i) => {
+              const id = ['arrow-green', 'arrow-red', 'arrow-gray'][i]
+              const aLen = nodeRadius * 0.28
+              const aHalf = nodeRadius * 0.14
+              return (
+                <marker
+                  key={id}
+                  id={id}
+                  markerWidth={aLen + 2}
+                  markerHeight={aHalf * 2 + 2}
+                  refX={aLen}
+                  refY={aHalf}
+                  orient="auto"
+                  markerUnits="userSpaceOnUse"
+                >
+                  <path d={`M0,0 L0,${aHalf * 2} L${aLen},${aHalf} z`} fill={fill} />
+                </marker>
+              )
+            })}
             {/* Drop shadow filter for nodes */}
             <filter id="node-shadow" x="-50%" y="-50%" width="200%" height="200%">
               <feGaussianBlur in="SourceAlpha" stdDeviation="2" />
@@ -1009,28 +972,34 @@ function NetworkGraph({ network, ddgValues, availableLigands }: NetworkGraphProp
                 : 'arrow-red'
               : 'arrow-gray'
 
-            // Calculate arrow endpoint (shortened to avoid overlapping with node)
+            // Start from edge of source node, end at edge of target node.
+            // gap = nodeRadius (circle edge) + effective arrow length.
+            // Cap the arrow to ≤40% of the inner edge (space between circle borders)
+            // so the visible line is always longer than the arrowhead.
             const dx = to.x - from.x
             const dy = to.y - from.y
             const distance = Math.sqrt(dx * dx + dy * dy)
-            const shorten = nodeRadius + 15 // Shorten by node radius + padding to prevent DDG circles from touching arrows
-            const ratio = (distance - shorten) / distance
-            const endX = from.x + dx * ratio
-            const endY = from.y + dy * ratio
+            const arrowLen = nodeRadius * 0.28
+            const innerEdge = Math.max(0, distance - 2 * nodeRadius)
+            const effectiveArrow = Math.min(arrowLen, innerEdge * 0.4)
+            const gap = nodeRadius + effectiveArrow
+            const startX = from.x + dx * (gap / distance)
+            const startY = from.y + dy * (gap / distance)
+            const endX = from.x + dx * ((distance - gap) / distance)
+            const endY = from.y + dy * ((distance - gap) / distance)
 
-            // Calculate label position (offset perpendicular to the arrow)
-            const midX = (from.x + endX) / 2
-            const midY = (from.y + endY) / 2
+            // DDG label at center between nodes, offset perpendicular
+            const midX = (from.x + to.x) / 2
+            const midY = (from.y + to.y) / 2
             const perpAngle = Math.atan2(dy, dx) + Math.PI / 2
-            const labelOffset = 12
-            const labelX = midX + Math.cos(perpAngle) * labelOffset
-            const labelY = midY + Math.sin(perpAngle) * labelOffset
+            const labelX = midX + Math.cos(perpAngle) * 14
+            const labelY = midY + Math.sin(perpAngle) * 14
 
             return (
               <g key={i}>
                 <line
-                  x1={from.x}
-                  y1={from.y}
+                  x1={startX}
+                  y1={startY}
                   x2={endX}
                   y2={endY}
                   stroke={edgeColor}
@@ -1072,67 +1041,84 @@ function NetworkGraph({ network, ddgValues, availableLigands }: NetworkGraphProp
           {/* Nodes */}
           {nodePositions.map((pos) => {
             const hasImage = !!pos.imageUrl
+            const displayName = getDisplayName(pos.node)
+            const cx = width / 2
+            const cy = height / 2
+            const isHub =
+              network.topology === 'radial' &&
+              Math.abs(pos.x - cx) < 0.01 &&
+              Math.abs(pos.y - cy) < 0.01
+
+            const imgSize = isHub ? 58 : imageSize
+            const imgYOffset = isHub ? -5 : 0
+
+            // Place labels on the OUTER side (away from center) so that arrows
+            // arriving from the hub/center never collide with labels.
+            // Upper-half nodes: label above (outer); lower-half nodes: label below (outer).
+            // Hub label stays inside the circle via the isHub branch below.
+            const labelBelow = pos.y > height / 2
+            const labelY = isHub
+              ? pos.y + 18
+              : labelBelow
+                ? pos.y + nodeRadius + 4
+                : pos.y - nodeRadius - 4
+            const labelBaseline = isHub
+              ? 'middle'
+              : labelBelow
+                ? 'hanging'
+                : 'auto'
+            const labelBgY = isHub
+              ? pos.y + 10
+              : labelBelow
+                ? pos.y + nodeRadius + 3
+                : pos.y - nodeRadius - 18
+            const estWidth = Math.max(displayName.length * 7 + 8, 30)
             return (
               <g key={pos.index} filter="url(#node-shadow)">
-                {/* Ligand image with subtle shadow */}
+                {/* Ligand image */}
                 {hasImage ? (
-                  <g>
-                    <image
-                      href={pos.imageUrl!}
-                      x={pos.x - imageSize / 2}
-                      y={pos.y - imageSize / 2}
-                      width={imageSize}
-                      height={imageSize}
-                      clipPath={`url(#clip-${pos.index})`}
-                      style={{ cursor: 'pointer' }}
-                    />
-                    {/* Tooltip area - invisible but captures hover */}
-                    <circle
-                      cx={pos.x}
-                      cy={pos.y}
-                      r={nodeRadius}
-                      fill="transparent"
-                      style={{ cursor: 'pointer' }}
-                    >
-                      <title>{getDisplayName(pos.node)}</title>
-                    </circle>
-                  </g>
+                  <image
+                    href={pos.imageUrl!}
+                    x={pos.x - imgSize / 2}
+                    y={pos.y - imgSize / 2 + imgYOffset}
+                    width={imgSize}
+                    height={imgSize}
+                    clipPath={`url(#clip-${pos.index})`}
+                    style={{ cursor: 'pointer' }}
+                  />
                 ) : (
-                  // Fallback to text if no image available
+                  // Fallback circle
                   <g>
-                    <circle
-                      cx={pos.x}
-                      cy={pos.y}
-                      r={nodeRadius - 5}
-                      fill="#f3f4f6"
-                      stroke="#d1d5db"
-                      strokeWidth="1.5"
-                    />
-                    <text
-                      x={pos.x}
-                      y={pos.y}
-                      textAnchor="middle"
-                      dominantBaseline="middle"
-                      fontSize="12"
-                      fill="#374151"
-                      className="select-none"
-                      fontWeight="600"
-                      fontFamily="system-ui, -apple-system, sans-serif"
-                    >
-                      {getDisplayName(pos.node).length > 10 ? getDisplayName(pos.node).slice(0, 8) + '..' : getDisplayName(pos.node)}
-                    </text>
-                    {/* Tooltip area for text nodes */}
-                    <circle
-                      cx={pos.x}
-                      cy={pos.y}
-                      r={nodeRadius}
-                      fill="transparent"
-                      style={{ cursor: 'pointer' }}
-                    >
-                      <title>{getDisplayName(pos.node)}</title>
-                    </circle>
+                    <circle cx={pos.x} cy={pos.y} r={nodeRadius - 5} fill="#f3f4f6" stroke="#d1d5db" strokeWidth="1.5" />
                   </g>
                 )}
+                {/* Ligand name label with white backing */}
+                <rect
+                  x={pos.x - estWidth / 2}
+                  y={labelBgY}
+                  width={estWidth}
+                  height={15}
+                  fill="white"
+                  fillOpacity={0.85}
+                  rx={3}
+                />
+                <text
+                  x={pos.x}
+                  y={labelY}
+                  textAnchor="middle"
+                  dominantBaseline={labelBaseline}
+                  fontSize="11"
+                  fill="#111827"
+                  fontWeight="600"
+                  fontFamily="system-ui, -apple-system, sans-serif"
+                  className="select-none"
+                >
+                  {displayName}
+                </text>
+                {/* Invisible hit area for tooltip */}
+                <circle cx={pos.x} cy={pos.y} r={nodeRadius} fill="transparent" style={{ cursor: 'pointer' }}>
+                  <title>{pos.node}</title>
+                </circle>
               </g>
             )
           })}
@@ -1518,6 +1504,7 @@ function StatCard({ label, value, unit, color }: StatCardProps) {
 
 function OverlapHeatmap({ matrix, label }: { matrix: number[][]; label: string }) {
   const n = matrix.length
+  const { addImageFileTab, setActiveTab: setViewerTab } = useMolecularStore()
 
   const cellColor = (v: number): string => {
     const t = Math.max(0, Math.min(1, v))
@@ -1533,19 +1520,80 @@ function OverlapHeatmap({ matrix, label }: { matrix: number[][]; label: string }
   const avgNeighbor = neighbors.length > 0 ? neighbors.reduce((a, b) => a + b, 0) / neighbors.length : 0
   const poor = minNeighbor < 0.03
 
+  const handleEnlarge = () => {
+    const cellPx = 40
+    const sidePad = 24
+    const headerH = 52  // room for title (18px) + gap + quality label (14px) + gap
+    const footerH = 36  // legend bar + labels
+    const gridW = n * cellPx
+    const gridH = n * cellPx
+    const totalW = gridW + sidePad * 2
+    const totalH = headerH + gridH + footerH
+    const fontSize = 11
+    const gridX = sidePad
+    const gridY = headerH
+
+    const cells = matrix.flatMap((row, i) =>
+      row.map((v, j) => {
+        const x = gridX + j * cellPx
+        const y = gridY + i * cellPx
+        const bg = cellColor(v)
+        const text = v >= 0.005 ? v.toFixed(2).replace('0.', '.') : '0'
+        return `<rect x="${x}" y="${y}" width="${cellPx}" height="${cellPx}" fill="${bg}" stroke="white" stroke-width="0.5"/>
+<text x="${x + cellPx / 2}" y="${y + cellPx / 2 + fontSize * 0.38}" text-anchor="middle" font-size="${fontSize}" fill="black" font-family="monospace">${text}</text>`
+      })
+    ).join('\n')
+
+    const qualityText = poor
+      ? `min λ±1: ${minNeighbor.toFixed(3)} ⚠`
+      : `avg λ±1: ${avgNeighbor.toFixed(3)} ✓`
+    const qualityColor = poor ? '#b91c1c' : '#15803d'
+
+    const gradId = 'omg1'
+    const barY = headerH + gridH + 8
+    const legend = `
+<defs><linearGradient id="${gradId}" x1="0" x2="1" y1="0" y2="0">
+  <stop offset="0%" stop-color="rgb(255,255,255)"/>
+  <stop offset="100%" stop-color="rgb(75,95,255)"/>
+</linearGradient></defs>
+<rect x="${gridX}" y="${barY}" width="${gridW}" height="10" fill="url(#${gradId})" rx="2" stroke="#ccc" stroke-width="0.5"/>
+<text x="${gridX}" y="${barY + 24}" font-size="10" fill="#444" font-family="sans-serif">0</text>
+<text x="${gridX + gridW}" y="${barY + 24}" font-size="10" fill="#444" font-family="sans-serif" text-anchor="end">1</text>`
+
+    const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${totalW}" height="${totalH}" viewBox="0 0 ${totalW} ${totalH}">
+<rect width="${totalW}" height="${totalH}" fill="white"/>
+<text x="${totalW / 2}" y="20" text-anchor="middle" font-size="14" font-weight="bold" fill="#111" font-family="sans-serif">${label}</text>
+<text x="${totalW / 2}" y="40" text-anchor="middle" font-size="11" fill="${qualityColor}" font-family="sans-serif">${qualityText}</text>
+${cells}
+${legend}
+</svg>`
+
+    const url = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`
+    const tabId = addImageFileTab(url, `Overlap Matrix – ${label}`)
+    setViewerTab(tabId)
+  }
+
   return (
-    <div className="space-y-1">
-      <div className="flex items-center gap-2">
-        <span className="text-xs text-gray-400">{label}</span>
-        <span className={`text-xs px-1.5 py-0.5 rounded ${poor ? 'bg-red-900/40 text-red-400' : 'bg-green-900/40 text-green-400'}`}>
-          {poor ? `min λ±1: ${minNeighbor.toFixed(3)}` : `avg λ±1: ${avgNeighbor.toFixed(3)}`}
+    <div className="space-y-1 min-w-0 bg-white rounded p-1.5">
+      <div className="flex items-center gap-1.5 flex-wrap">
+        <span className="text-xs text-gray-800 font-semibold">{label}</span>
+        <span className={`text-xs px-1 py-0.5 rounded font-medium ${poor ? 'bg-red-100 text-red-700' : 'bg-green-100 text-green-700'}`}>
+          {poor ? `min: ${minNeighbor.toFixed(2)}` : `avg: ${avgNeighbor.toFixed(2)}`}
         </span>
+        <button
+          onClick={handleEnlarge}
+          title="Open in viewer"
+          className="ml-auto p-0.5 rounded hover:bg-gray-100 text-gray-500 hover:text-gray-800 transition-colors"
+        >
+          <Maximize2 className="w-3 h-3" />
+        </button>
       </div>
       <div
         style={{
           display: 'grid',
-          gridTemplateColumns: `repeat(${n}, 22px)`,
+          gridTemplateColumns: `repeat(${n}, 1fr)`,
           gap: '1px',
+          width: '100%',
         }}
       >
         {matrix.flatMap((row, i) =>
@@ -1555,14 +1603,14 @@ function OverlapHeatmap({ matrix, label }: { matrix: number[][]; label: string }
               title={`λ${i} ↔ λ${j}: ${v.toFixed(4)}`}
               style={{
                 backgroundColor: cellColor(v),
-                width: '22px',
-                height: '22px',
-                fontSize: '6px',
+                aspectRatio: '1',
+                cursor: 'default',
                 display: 'flex',
                 alignItems: 'center',
                 justifyContent: 'center',
-                color: v > 0.5 ? 'rgba(20,40,80,0.8)' : 'rgba(100,100,100,0.6)',
-                cursor: 'default',
+                fontSize: '6px',
+                color: 'black',
+                overflow: 'hidden',
               }}
             >
               {v >= 0.005 ? v.toFixed(2).replace('0.', '.') : '0'}
@@ -1570,31 +1618,40 @@ function OverlapHeatmap({ matrix, label }: { matrix: number[][]; label: string }
           ))
         )}
       </div>
-      {/* Colour legend */}
       <div className="flex items-center gap-1 pt-0.5">
-        <span className="text-xs text-gray-600">0</span>
+        <span className="text-xs text-gray-700 font-medium">0</span>
         <div className="flex-1 h-1.5 rounded" style={{ background: 'linear-gradient(to right, rgb(255,255,255), rgb(75,95,255))' }} />
-        <span className="text-xs text-gray-600">1</span>
+        <span className="text-xs text-gray-700 font-medium">1</span>
       </div>
     </div>
   )
 }
 
 function OverlapMatrices({ transformationResults }: { transformationResults: RBFETransformationResult[] }) {
+  const [selectedIdx, setSelectedIdx] = useState(0)
+
   const edges = useMemo(() => {
-    const map = new Map<string, { complex?: number[][] | null; solvent?: number[][] | null }>()
+    const map = new Map<string, {
+      complex?: number[][] | null; solvent?: number[][] | null
+      complex_path?: string; solvent_path?: string
+    }>()
     for (const tr of transformationResults) {
-      if (!tr.overlap_matrix || !tr.ligand_a || !tr.ligand_b) continue
+      if (!tr.ligand_a || !tr.ligand_b) continue
+      if (!tr.overlap_matrix && !tr.overlap_matrix_path) continue
       const key = `${tr.ligand_a}|${tr.ligand_b}`
       const entry = map.get(key) ?? {}
-      if (tr.leg === 'complex') entry.complex = tr.overlap_matrix
-      if (tr.leg === 'solvent') entry.solvent = tr.overlap_matrix
+      if (tr.leg === 'complex') { entry.complex = tr.overlap_matrix; entry.complex_path = tr.overlap_matrix_path ?? undefined }
+      if (tr.leg === 'solvent') { entry.solvent = tr.overlap_matrix; entry.solvent_path = tr.overlap_matrix_path ?? undefined }
       map.set(key, entry)
     }
     return Array.from(map.entries())
   }, [transformationResults])
 
   if (edges.length === 0) return null
+
+  const clampedIdx = Math.min(selectedIdx, edges.length - 1)
+  const [key, { complex, solvent, complex_path, solvent_path }] = edges[clampedIdx]
+  const [ligandA, ligandB] = key.split('|')
 
   return (
     <div className="space-y-2">
@@ -1607,23 +1664,60 @@ function OverlapMatrices({ transformationResults }: { transformationResults: RBF
           </div>
         </div>
       </div>
-      <div className="space-y-3">
-        {edges.map(([key, { complex, solvent }]) => {
-          const [ligandA, ligandB] = key.split('|')
-          return (
-            <div key={key} className="bg-gray-800/50 rounded-lg border border-gray-700 p-3 space-y-3">
-              <div className="flex items-center gap-2 text-xs text-gray-300">
-                <span className="font-medium">{ligandA}</span>
-                <ArrowRight className="w-3 h-3 text-gray-500" />
-                <span className="font-medium">{ligandB}</span>
-              </div>
-              <div className="flex flex-wrap gap-6">
-                {complex && <OverlapHeatmap matrix={complex} label="Complex" />}
-                {solvent && <OverlapHeatmap matrix={solvent} label="Solvent" />}
-              </div>
-            </div>
-          )
-        })}
+
+      {/* Navigation row */}
+      <div className="flex items-center gap-1">
+        <button
+          onClick={() => setSelectedIdx(i => Math.max(0, i - 1))}
+          disabled={clampedIdx === 0}
+          className="p-1 rounded hover:bg-gray-700 disabled:opacity-30 disabled:cursor-not-allowed text-gray-400 hover:text-gray-200 transition-colors flex-shrink-0"
+        >
+          <ChevronLeft className="w-4 h-4" />
+        </button>
+        <select
+          value={clampedIdx}
+          onChange={e => setSelectedIdx(Number(e.target.value))}
+          className="flex-1 min-w-0 bg-gray-800 border border-gray-700 rounded px-2 py-1 text-xs text-gray-300 focus:outline-none focus:border-gray-500 truncate"
+        >
+          {edges.map(([k], i) => {
+            const [a, b] = k.split('|')
+            return <option key={k} value={i}>{a} → {b}</option>
+          })}
+        </select>
+        <button
+          onClick={() => setSelectedIdx(i => Math.min(edges.length - 1, i + 1))}
+          disabled={clampedIdx === edges.length - 1}
+          className="p-1 rounded hover:bg-gray-700 disabled:opacity-30 disabled:cursor-not-allowed text-gray-400 hover:text-gray-200 transition-colors flex-shrink-0"
+        >
+          <ChevronRight className="w-4 h-4" />
+        </button>
+      </div>
+
+      {/* Matrices side by side */}
+      <div className="bg-gray-800/50 rounded-lg border border-gray-700 p-3">
+        <div className="flex items-center gap-1 text-xs text-gray-400 mb-2">
+          <span className="font-medium text-gray-300">{ligandA}</span>
+          <ArrowRight className="w-3 h-3 text-gray-500" />
+          <span className="font-medium text-gray-300">{ligandB}</span>
+        </div>
+        <div className="grid grid-cols-2 gap-3">
+          <div>
+            {complex
+              ? <OverlapHeatmap matrix={complex} label="Complex" />
+              : complex_path
+                ? <img src={resolveApiFileUrl(complex_path)} alt="MBAR overlap matrix (complex)" className="w-full rounded border border-gray-700" />
+                : <div className="h-16 bg-gray-800/40 rounded border border-gray-700 flex items-center justify-center text-xs text-gray-600">N/A</div>
+            }
+          </div>
+          <div>
+            {solvent
+              ? <OverlapHeatmap matrix={solvent} label="Solvent" />
+              : solvent_path
+                ? <img src={resolveApiFileUrl(solvent_path)} alt="MBAR overlap matrix (solvent)" className="w-full rounded border border-gray-700" />
+                : <div className="h-16 bg-gray-800/40 rounded border border-gray-700 flex items-center justify-center text-xs text-gray-600">N/A</div>
+            }
+          </div>
+        </div>
       </div>
     </div>
   )

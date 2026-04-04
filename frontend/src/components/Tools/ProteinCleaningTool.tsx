@@ -20,6 +20,23 @@ import {
 } from './shared'
 import type { WorkflowStep, ConfigGroup, AccentColor } from './shared'
 
+/** Map BaseColorName to AccentColor for workflow components */
+function getWorkflowAccentColor(baseColor: string, isCustom: boolean): AccentColor {
+  if (isCustom) return 'cyan'
+
+  const colorMap: Record<string, AccentColor> = {
+    cyan: 'cyan',
+    teal: 'teal',
+    blue: 'blue',
+    indigo: 'indigo',
+    magenta: 'pink', // magenta → pink
+    fuchsia: 'fuchsia',
+    rose: 'rose',
+  }
+
+  return (colorMap[baseColor] as AccentColor) || 'cyan'
+}
+
 interface CleaningStage {
   name: string
   description: string
@@ -40,7 +57,7 @@ export function ProteinCleaningTool() {
   const { addNotification } = useUIStore()
   const bc_active = useBaseColor()
   /** Preset: follow Settings base colour. Custom: keep "cyan" class names so the injected style overrides still match. */
-  const workflowAccent = (bc_active.isCustom ? 'cyan' : bc_active.basePreset) as AccentColor
+  const workflowAccent = getWorkflowAccentColor(bc_active.basePreset, bc_active.isCustom)
   const themeBg10 = `rgba(${bc_active.rgbString}, 0.1)`
   const themeBg20 = `rgba(${bc_active.rgbString}, 0.2)`
   const themeBorder35 = `rgba(${bc_active.rgbString}, 0.35)`

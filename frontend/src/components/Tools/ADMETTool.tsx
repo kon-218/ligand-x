@@ -1,11 +1,10 @@
 'use client'
 
 import React, { useState, useEffect } from 'react'
-import { Beaker, History, RefreshCw, Trash2, ChevronDown, ChevronRight, Loader2, Plus, Check, Square, CheckSquare, Download } from 'lucide-react'
+import { Beaker, History, RefreshCw, Trash2, ChevronDown, ChevronRight, Loader2, Plus, Check, Square, CheckSquare, Target, Layers } from 'lucide-react'
 import { useMolecularStore } from '@/store/molecular-store'
 import { api } from '@/lib/api-client'
 import { Button } from '@/components/ui/button'
-import { Switch } from '@/components/ui/switch'
 import { Input } from '@/components/ui/input'
 import type { ADMETResult } from '@/types/molecular'
 import type { MoleculeOption, StoredADMETResult } from '@/types/admet'
@@ -49,6 +48,11 @@ export function ADMETTool() {
 
   // Single mode state
   const [selectedMolecule, setSelectedMolecule] = useState('')
+  const [ligandInputMethod, setLigandInputMethod] = useState<'existing' | 'smiles' | 'structure' | 'hetid'>('existing')
+  const [singleSmiles, setSingleSmiles] = useState('')
+  const [hetidInput, setHetidInput] = useState('')
+  const [hetidValidation, setHetidValidation] = useState<{ valid: boolean; message?: string } | null>(null)
+  const [uploadedFile, setUploadedFile] = useState<{ name: string; data: string } | null>(null)
 
   // Batch mode state
   const [isBatchMode, setIsBatchMode] = useState(false)
@@ -103,6 +107,39 @@ export function ADMETTool() {
       setSelectedMolecule(molecules[0].id)
     } else if (molecules.length === 0) {
       setSelectedMolecule('')
+    }
+  }
+
+  const handleFileUpload = (file: File) => {
+    const reader = new FileReader()
+    reader.onload = (e) => {
+      setUploadedFile({ name: file.name, data: e.target?.result as string })
+    }
+    reader.readAsText(file)
+  }
+
+  const handleValidateHetid = () => {
+    if (!hetidInput) return
+    if (!currentStructure?.ligands) {
+      setHetidValidation({ valid: false, message: 'No structure loaded' })
+      return
+    }
+    const match = Object.values(currentStructure.ligands).find(
+      (l: any) => (l.residue_name || l.name)?.toUpperCase() === hetidInput.toUpperCase()
+    ) as any
+    if (match?.smiles) {
+      setHetidValidation({ valid: true, message: `Found ${hetidInput}` })
+    } else {
+      setHetidValidation({ valid: false, message: `${hetidInput} not found in loaded structure` })
+    }
+  }
+
+  const isSingleInputReady = () => {
+    switch (ligandInputMethod) {
+      case 'existing': return !!selectedMolecule
+      case 'smiles': return !!singleSmiles.trim()
+      case 'hetid': return !!hetidValidation?.valid
+      case 'structure': return !!uploadedFile
     }
   }
 
@@ -238,16 +275,29 @@ export function ADMETTool() {
         await api.predictADMET({ smiles_list: smilesList, molecule_names: namesList })
 
       } else {
-        if (!selectedMolecule) {
-          throw new Error('Please select a molecule')
+        let request: any
+
+        if (ligandInputMethod === 'existing') {
+          if (!selectedMolecule) throw new Error('Please select a molecule')
+          const molecule = availableMolecules.find((m) => m.id === selectedMolecule)
+          if (!molecule) throw new Error('Selected molecule not found')
+          request = molecule.smiles
+            ? { smiles: molecule.smiles, molecule_name: molecule.name }
+            : { pdb_data: molecule.pdb_data, molecule_name: molecule.name }
+        } else if (ligandInputMethod === 'smiles') {
+          if (!singleSmiles.trim()) throw new Error('Please enter a SMILES string')
+          request = { smiles: singleSmiles.trim(), molecule_name: `SMILES_${Date.now()}` }
+        } else if (ligandInputMethod === 'hetid') {
+          if (!hetidValidation?.valid) throw new Error('Please enter and validate a HET ID')
+          const ligand = Object.values(currentStructure?.ligands || {}).find(
+            (l: any) => (l.residue_name || l.name)?.toUpperCase() === hetidInput.toUpperCase()
+          ) as any
+          if (!ligand?.smiles) throw new Error('SMILES not found for this ligand')
+          request = { smiles: ligand.smiles, molecule_name: hetidInput }
+        } else if (ligandInputMethod === 'structure') {
+          if (!uploadedFile) throw new Error('Please upload a structure file')
+          request = { pdb_data: uploadedFile.data, molecule_name: uploadedFile.name }
         }
-
-        const molecule = availableMolecules.find((m) => m.id === selectedMolecule)
-        if (!molecule) throw new Error('Selected molecule not found')
-
-        const request = molecule.smiles
-          ? { smiles: molecule.smiles, molecule_name: molecule.name }
-          : { pdb_data: molecule.pdb_data, molecule_name: molecule.name }
 
         await api.predictADMET(request)
       }
@@ -363,9 +413,9 @@ export function ADMETTool() {
     )
   }
 
-  const renderExpandedResults = (results: ADMETResult) => {
+  const renderExpandedResults = (results: ADMETResult, fallbackSmiles?: string) => {
     const propertyGroups = ['Physicochemical', 'Absorption', 'Distribution', 'Metabolism', 'Excretion', 'Toxicity'] as const
-    const smiles = results._metadata?.canonical_smiles
+    const smiles = results._metadata?.canonical_smiles || fallbackSmiles
 
     return (
       <div className="mt-4 space-y-4 pl-4 border-l-2 border-pink-500/30">
@@ -445,24 +495,40 @@ export function ADMETTool() {
       <div className="flex-1 relative min-h-0 overflow-y-auto">
         {activeTab === 'predict' ? (
           <div className="space-y-6 pb-20">
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-2">
-                <Switch
-                  checked={isBatchMode}
-                  onCheckedChange={setIsBatchMode}
-                  id="batch-mode"
-                  accentColor="pink"
-                />
-                <label htmlFor="batch-mode" className="text-sm font-medium text-gray-200 cursor-pointer">
-                  Batch Mode
-                </label>
+            <div className="space-y-3">
+              <label className="text-sm font-medium text-gray-300">Prediction Mode</label>
+              <div className="grid grid-cols-2 gap-3">
+                <button
+                  onClick={() => setIsBatchMode(false)}
+                  className={`p-4 rounded-lg border-2 transition-all text-left ${!isBatchMode
+                    ? 'border-pink-500 bg-pink-500/10'
+                    : 'border-gray-700 bg-gray-800/50 hover:border-gray-600'
+                    }`}
+                >
+                  <div className="flex items-center gap-2 mb-1">
+                    <Target className={`w-4 h-4 ${!isBatchMode ? 'text-pink-400' : 'text-gray-400'}`} />
+                    <div className="font-medium text-white">Single Ligand</div>
+                  </div>
+                  <div className="text-xs text-gray-400">
+                    Predict ADMET for one molecule.
+                  </div>
+                </button>
+                <button
+                  onClick={() => setIsBatchMode(true)}
+                  className={`p-4 rounded-lg border-2 transition-all text-left ${isBatchMode
+                    ? 'border-pink-500 bg-pink-500/10'
+                    : 'border-gray-700 bg-gray-800/50 hover:border-gray-600'
+                    }`}
+                >
+                  <div className="flex items-center gap-2 mb-1">
+                    <Layers className={`w-4 h-4 ${isBatchMode ? 'text-pink-400' : 'text-gray-400'}`} />
+                    <div className="font-medium text-white">Batch Mode</div>
+                  </div>
+                  <div className="text-xs text-gray-400">
+                    Screen multiple molecules at once.
+                  </div>
+                </button>
               </div>
-
-              {isBatchMode && (
-                <div className="text-sm text-gray-400">
-                  {batchMolecules.size} selected
-                </div>
-              )}
             </div>
 
             {isBatchMode ? (
@@ -537,8 +603,19 @@ export function ADMETTool() {
                 availableLigands={getStructureOptions()}
                 ligandLabel="Select Molecule"
                 ligandDescription="Choose from structure ligands or library molecules"
-                onRefresh={fetchAvailableMolecules}
                 accentColor="pink"
+                ligandInputMethod={ligandInputMethod}
+                onLigandMethodChange={setLigandInputMethod}
+                showSmilesInput={true}
+                smilesValue={singleSmiles}
+                onSmilesChange={setSingleSmiles}
+                showFileUpload={true}
+                onFileUpload={handleFileUpload}
+                uploadedFileName={uploadedFile?.name}
+                hetidValue={hetidInput}
+                onHetidChange={(v) => { setHetidInput(v); setHetidValidation(null) }}
+                hetidValidation={hetidValidation}
+                onValidateHetid={handleValidateHetid}
               />
             )}
 
@@ -550,7 +627,7 @@ export function ADMETTool() {
 
             <Button
               onClick={runPrediction}
-              disabled={isAdmetRunning || (isBatchMode ? batchMolecules.size === 0 : !selectedMolecule)}
+              disabled={isAdmetRunning || (isBatchMode ? batchMolecules.size === 0 : !isSingleInputReady())}
               className={`w-full ${colors.bg} ${colors.bgHover} text-white`}
             >
               {isAdmetRunning ? (
@@ -636,7 +713,7 @@ export function ADMETTool() {
                       </div>
                     </div>
 
-                    {expandedResults[result.id] && renderExpandedResults(expandedResults[result.id]!)}
+                    {expandedResults[result.id] && renderExpandedResults(expandedResults[result.id]!, result.smiles)}
                   </div>
                 ))}
               </div>

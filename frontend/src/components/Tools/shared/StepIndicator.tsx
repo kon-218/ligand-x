@@ -16,6 +16,8 @@ const STEP_ACTIVE_SHADOW: Record<AccentColor, string> = {
   indigo: 'shadow-indigo-500/30',
   cyan: 'shadow-cyan-500/30',
   amber: 'shadow-amber-500/30',
+  fuchsia: 'shadow-fuchsia-500/30',
+  rose: 'shadow-rose-500/30',
 }
 
 interface StepIndicatorProps {

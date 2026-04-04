@@ -26,7 +26,7 @@ export function InputTool() {
   const [tautomerTabIds, setTautomerTabIds] = useState<Record<string, string>>({})
   const [copied, setCopied] = useState<string | null>(null)
   const [using, setUsing] = useState<string | null>(null)
-  const { currentStructure, addStructureTab, setCurrentStructure, setIsLoading, setError, structureTabs, setActiveTab: setViewerActiveTab, pendingTautomerSmiles, setPendingTautomerSmiles } = useMolecularStore()
+  const { currentStructure, addStructureTab, setCurrentStructure, setIsLoading, setError, structureTabs, setActiveTab: setViewerActiveTab, pendingTautomerSmiles, setPendingTautomerSmiles, refreshLibrary } = useMolecularStore()
   const { addNotification, recentPdbIds, addRecentPdbId } = useUIStore()
   const bc_active = useBaseColor()
 
@@ -112,6 +112,7 @@ export function InputTool() {
         const result = await saveLigandsToLibrary(structure)
         if (result.saved > 0) {
           addNotification('success', `Saved ${result.saved} ligand(s) to library`)
+          refreshLibrary()
         } else if (result.duplicates > 0) {
           addNotification('info', `Ligand(s) already exist in library`)
         }
@@ -146,6 +147,7 @@ export function InputTool() {
         const result = await saveLigandsToLibrary(structure)
         if (result.saved > 0) {
           addNotification('success', `Saved ${result.saved} ligand(s) to library`)
+          refreshLibrary()
         } else if (result.duplicates > 0) {
           addNotification('info', `Ligand(s) already exist in library`)
         }
@@ -178,6 +180,7 @@ export function InputTool() {
       if (structure.library_save) {
         if (structure.library_save.saved) {
           addNotification('success', `Saved to library: ${structure.structure_id}`)
+          refreshLibrary()
         } else if (structure.library_save.already_exists) {
           addNotification('info', 'Molecule already exists in library')
         }

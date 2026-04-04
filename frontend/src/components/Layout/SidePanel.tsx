@@ -184,6 +184,8 @@ function getAccentColorHex(accentColor: AccentColor | undefined): string {
     'indigo': '#4f46e5',
     'cyan': '#06b6d4',
     'amber': '#d97706',
+    'fuchsia': '#c026d3',
+    'rose': '#e11d48',
   }
   return accentColor ? colorMap[accentColor] : '#06b6d4'
 }
@@ -806,15 +808,10 @@ export function SidePanel() {
                 className="relative flex items-center justify-between px-4 h-14 min-w-fit"
               >
                 <div className="flex items-center gap-3 flex-1 min-w-0 pr-4">
-                  <div
-                    className={`p-2.5 rounded-lg flex-shrink-0 ${!bc_active.isCustom ? `bg-gradient-to-br ${bc_active.gradientFromLight} to-blue-500/20` : ''}`}
-                    style={bc_active.isCustom ? {
-                      background: `linear-gradient(to bottom right, rgba(${bc_active.rgbString}, 0.2), rgba(59, 130, 246, 0.1))`,
-                    } : undefined}
-                  >
-                    <div className={`w-5 h-5 ${!bc_active.isCustom ? bc_active.text : ''}`} style={bc_active.isCustom ? { color: bc_active.hexValue } : undefined}>
-                      <PenTool className="w-5 h-5" />
-                    </div>
+                  <div className={`p-2.5 rounded-lg flex-shrink-0 ${!bc_active.isCustom ? bc_active.bgLight : ''}`} style={bc_active.isCustom ? {
+                    backgroundColor: `rgba(${bc_active.rgbString}, 0.2)`
+                  } : undefined}>
+                    <PenTool className={`w-5 h-5 ${!bc_active.isCustom ? bc_active.text : ''}`} style={bc_active.isCustom ? { color: bc_active.hexValue } : undefined} />
                   </div>
                   <div className="min-w-0">
                     <h2 className="text-lg font-semibold text-white flex items-center">

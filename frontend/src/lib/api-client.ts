@@ -835,8 +835,7 @@ export const api = {
   },
 
   getSmilesImageUrl: (smiles: string) => {
-    const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'
-    return `${API_BASE_URL}/api/structure/render_smiles?smiles=${encodeURIComponent(smiles)}`
+    return `/api/structure/render_smiles?smiles=${encodeURIComponent(smiles)}`
   },
 
   // Molecule library

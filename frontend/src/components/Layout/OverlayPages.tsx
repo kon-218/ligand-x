@@ -53,6 +53,8 @@ const EXPERIMENT_CARD_ICON_HOVER_GLOW: Record<AccentColor, string> = {
   indigo: 'group-hover:shadow-[0_0_15px_rgba(99,102,241,0.2)]',
   cyan: 'group-hover:shadow-[0_0_15px_rgba(6,182,212,0.2)]',
   amber: 'group-hover:shadow-[0_0_15px_rgba(217,119,6,0.2)]',
+  fuchsia: 'group-hover:shadow-[0_0_15px_rgba(192,38,211,0.2)]',
+  rose: 'group-hover:shadow-[0_0_15px_rgba(225,29,72,0.2)]',
 }
 import { useQCStore } from '@/store/qc-store'
 import { warmAccentConfigs, WARM_ACCENT_LABELS, type WarmAccentPreset } from '@/lib/accent-config'

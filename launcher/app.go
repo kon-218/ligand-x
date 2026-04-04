@@ -3,6 +3,7 @@ package main
 import (
 	"bufio"
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"os"
@@ -37,6 +38,23 @@ type LogEntry struct {
 	Service   string `json:"service"`
 	Message   string `json:"message"`
 	Timestamp string `json:"timestamp"`
+}
+
+type ServiceGroup struct {
+	ID          string   `json:"id"`
+	Name        string   `json:"name"`
+	Description string   `json:"description"`
+	Services    []string `json:"services"`
+	Images      []string `json:"images"`
+	SizeMB      int      `json:"sizeMb"`
+	Required    bool     `json:"required"`
+	DefaultOn   bool     `json:"defaultOn"`
+}
+
+type LauncherConfig struct {
+	FirstRunDone   bool     `json:"firstRunDone"`
+	SelectedGroups []string `json:"selectedGroups"`
+	ConfigVersion  int      `json:"configVersion"`
 }
 
 type App struct {
@@ -224,19 +242,49 @@ func (a *App) StartServices(mode string) error {
 	}
 
 	var args []string
-	switch mode {
-	case "dev":
-		args = []string{"compose", "up", "-d"}
-	case "prod":
-		args = []string{"compose", "-f", "docker-compose.yml", "up", "-d"}
-	case "core":
-		args = []string{"compose", "up", "-d", "postgres", "redis", "rabbitmq", "gateway", "frontend", "structure"}
-	case "docking":
-		args = []string{"compose", "up", "-d", "postgres", "redis", "rabbitmq", "gateway", "frontend", "structure", "ketcher", "docking", "worker-cpu"}
-	case "md":
-		args = []string{"compose", "up", "-d", "postgres", "redis", "rabbitmq", "gateway", "frontend", "structure", "ketcher", "md", "worker-gpu-short"}
-	default:
-		args = []string{"compose", "up", "-d"}
+	var services []string
+
+	// Load launcher config to get selected service groups
+	config, err := a.GetLauncherConfig()
+	if err != nil || config.SelectedGroups == nil || len(config.SelectedGroups) == 0 {
+		// Fallback to legacy mode behavior if config not available
+		switch mode {
+		case "dev":
+			args = []string{"compose", "up", "-d", "--pull=never"}
+		case "prod":
+			args = []string{"compose", "-f", "docker-compose.yml", "up", "-d", "--pull=never"}
+		case "core":
+			args = []string{"compose", "up", "-d", "--pull=never", "postgres", "redis", "rabbitmq", "gateway", "frontend", "structure"}
+		case "docking":
+			args = []string{"compose", "up", "-d", "--pull=never", "postgres", "redis", "rabbitmq", "gateway", "frontend", "structure", "ketcher", "docking", "worker-cpu"}
+		case "md":
+			args = []string{"compose", "up", "-d", "--pull=never", "postgres", "redis", "rabbitmq", "gateway", "frontend", "structure", "ketcher", "md", "worker-gpu-short"}
+		default:
+			args = []string{"compose", "up", "-d", "--pull=never"}
+		}
+	} else {
+		// Use selected service groups from config
+		allGroups := a.GetServiceGroups()
+		groupMap := make(map[string]ServiceGroup)
+		for _, g := range allGroups {
+			groupMap[g.ID] = g
+		}
+
+		serviceSet := make(map[string]bool)
+		for _, groupID := range config.SelectedGroups {
+			if group, ok := groupMap[groupID]; ok {
+				for _, svc := range group.Services {
+					serviceSet[svc] = true
+				}
+			}
+		}
+
+		for svc := range serviceSet {
+			services = append(services, svc)
+		}
+
+		args = []string{"compose", "up", "-d", "--pull=never"}
+		args = append(args, services...)
 	}
 
 	return a.runDockerCompose(args, "Starting services...")
@@ -526,4 +574,347 @@ func (a *App) CleanDocker() error {
 	})
 
 	return nil
+}
+
+func (a *App) getConfigPath() (string, error) {
+	configDir, err := os.UserConfigDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(configDir, "ligandx-launcher", "config.json"), nil
+}
+
+func (a *App) GetServiceGroups() []ServiceGroup {
+	return []ServiceGroup{
+		{
+			ID:          "core",
+			Name:        "Core Services",
+			Description: "Essential services: Gateway, Frontend, Structure, and supporting infrastructure",
+			Services:    []string{"postgres", "redis", "rabbitmq", "gateway", "frontend", "structure", "alignment", "ketcher", "msa", "worker-cpu"},
+			Images: []string{
+				"ghcr.io/kon-218/ligand-x/gateway:latest",
+				"ghcr.io/kon-218/ligand-x/frontend:latest",
+				"ghcr.io/kon-218/ligand-x/structure:latest",
+				"ghcr.io/kon-218/ligand-x/alignment:latest",
+				"ghcr.io/kon-218/ligand-x/ketcher:latest",
+				"ghcr.io/kon-218/ligand-x/msa:latest",
+				"ghcr.io/kon-218/ligand-x/worker-cpu:latest",
+				"redis:7-alpine",
+				"postgres:16-alpine",
+				"rabbitmq:3.13-management-alpine",
+			},
+			SizeMB:    3000,
+			Required:  true,
+			DefaultOn: true,
+		},
+		{
+			ID:          "docking",
+			Name:        "Molecular Docking",
+			Description: "AutoDock Vina-based protein-ligand docking calculations",
+			Services:    []string{"docking"},
+			Images: []string{
+				"ghcr.io/kon-218/ligand-x/docking:latest",
+			},
+			SizeMB:    800,
+			Required:  false,
+			DefaultOn: true,
+		},
+		{
+			ID:          "md",
+			Name:        "Molecular Dynamics",
+			Description: "MD simulations with OpenMM/OpenFF, includes ABFE and RBFE support",
+			Services:    []string{"md", "abfe", "rbfe", "worker-gpu-short", "worker-gpu-long"},
+			Images: []string{
+				"ghcr.io/kon-218/ligand-x/md:latest",
+				"ghcr.io/kon-218/ligand-x/abfe:latest",
+				"ghcr.io/kon-218/ligand-x/rbfe:latest",
+				"ghcr.io/kon-218/ligand-x/worker-gpu-short:latest",
+				"ghcr.io/kon-218/ligand-x/worker-gpu-long:latest",
+			},
+			SizeMB:    10000,
+			Required:  false,
+			DefaultOn: true,
+		},
+		{
+			ID:          "admet",
+			Name:        "ADMET Prediction",
+			Description: "Predict molecular properties: absorption, distribution, metabolism, excretion, and toxicity",
+			Services:    []string{"admet"},
+			Images: []string{
+				"ghcr.io/kon-218/ligand-x/admet:latest",
+			},
+			SizeMB:    1500,
+			Required:  false,
+			DefaultOn: true,
+		},
+		{
+			ID:          "qc",
+			Name:        "Quantum Chemistry",
+			Description: "ORCA-based quantum chemistry calculations (GPU recommended, large download)",
+			Services:    []string{"qc", "worker-qc"},
+			Images: []string{
+				"ghcr.io/kon-218/ligand-x/qc:latest",
+				"ghcr.io/kon-218/ligand-x/worker-qc:latest",
+			},
+			SizeMB:    3000,
+			Required:  false,
+			DefaultOn: false,
+		},
+		{
+			ID:          "boltz2",
+			Name:        "Boltz-2",
+			Description: "Boltz-2 binding affinity predictions (GPU required, large download)",
+			Services:    []string{"boltz2"},
+			Images: []string{
+				"ghcr.io/kon-218/ligand-x/boltz2:latest",
+			},
+			SizeMB:    6000,
+			Required:  false,
+			DefaultOn: false,
+		},
+	}
+}
+
+func (a *App) GetLauncherConfig() (LauncherConfig, error) {
+	configPath, err := a.getConfigPath()
+	if err != nil {
+		return LauncherConfig{ConfigVersion: 1}, err
+	}
+
+	data, err := os.ReadFile(configPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return LauncherConfig{FirstRunDone: false, SelectedGroups: []string{}, ConfigVersion: 1}, nil
+		}
+		return LauncherConfig{ConfigVersion: 1}, fmt.Errorf("failed to read config: %w", err)
+	}
+
+	var config LauncherConfig
+	if err := json.Unmarshal(data, &config); err != nil {
+		return LauncherConfig{ConfigVersion: 1}, fmt.Errorf("corrupted config file: %w", err)
+	}
+
+	return config, nil
+}
+
+func (a *App) SaveLauncherConfig(config LauncherConfig) error {
+	configPath, err := a.getConfigPath()
+	if err != nil {
+		return err
+	}
+
+	// Create config directory if it doesn't exist
+	configDir := filepath.Dir(configPath)
+	if err := os.MkdirAll(configDir, 0755); err != nil {
+		return fmt.Errorf("failed to create config directory: %w", err)
+	}
+
+	data, err := json.MarshalIndent(config, "", "  ")
+	if err != nil {
+		return fmt.Errorf("failed to marshal config: %w", err)
+	}
+
+	if err := os.WriteFile(configPath, data, 0644); err != nil {
+		return fmt.Errorf("failed to write config: %w", err)
+	}
+
+	return nil
+}
+
+func (a *App) CheckGPU() bool {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	cmd := exec.CommandContext(ctx, "nvidia-smi")
+	err := cmd.Run()
+	return err == nil
+}
+
+func (a *App) CheckImagePresence() map[string]bool {
+	result := make(map[string]bool)
+
+	if a.dockerClient == nil {
+		a.initDockerClient()
+	}
+
+	if a.dockerClient == nil {
+		allGroups := a.GetServiceGroups()
+		for _, g := range allGroups {
+			result[g.ID] = false
+		}
+		return result
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	images, err := a.dockerClient.ImageList(ctx, types.ImageListOptions{})
+	if err != nil {
+		allGroups := a.GetServiceGroups()
+		for _, g := range allGroups {
+			result[g.ID] = false
+		}
+		return result
+	}
+
+	// Build a list of available image tags
+	var availableImages []string
+	for _, img := range images {
+		for _, tag := range img.RepoTags {
+			if tag != "<none>:<none>" {
+				availableImages = append(availableImages, tag)
+			}
+		}
+	}
+
+	allGroups := a.GetServiceGroups()
+	for _, group := range allGroups {
+		allPresent := true
+		for _, requiredImage := range group.Images {
+			found := false
+
+			// Extract the service name from required image (e.g., "gateway" from "ghcr.io/kon-218/ligand-x/gateway:latest")
+			parts := strings.Split(requiredImage, "/")
+			serviceName := ""
+			if len(parts) > 0 {
+				// Get last part and remove tag if present
+				lastPart := parts[len(parts)-1]
+				serviceName = strings.Split(lastPart, ":")[0]
+			}
+
+			// Check if required image or service name is contained in any available tag
+			for _, availableTag := range availableImages {
+				if strings.Contains(availableTag, requiredImage) || (serviceName != "" && strings.Contains(availableTag, serviceName)) {
+					found = true
+					break
+				}
+			}
+
+			if !found {
+				allPresent = false
+				break
+			}
+		}
+		result[group.ID] = allPresent
+	}
+
+	return result
+}
+
+func (a *App) PullServiceGroups(groupIDs []string) {
+	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				wailsRuntime.EventsEmit(a.ctx, "log", LogEntry{
+					Service:   "launcher",
+					Message:   fmt.Sprintf("Error during pull: %v", r),
+					Timestamp: time.Now().Format("15:04:05"),
+				})
+				wailsRuntime.EventsEmit(a.ctx, "pullComplete", map[string]interface{}{
+					"success":      false,
+					"failedGroups": groupIDs,
+				})
+			}
+		}()
+
+		allGroups := a.GetServiceGroups()
+		groupMap := make(map[string]ServiceGroup)
+		for _, g := range allGroups {
+			groupMap[g.ID] = g
+		}
+
+		// Check for GPU services
+		gpuServices := map[string]bool{
+			"qc":                true,
+			"boltz2":            true,
+			"worker-gpu-short":  true,
+			"worker-gpu-long":   true,
+		}
+
+		hasGPUService := false
+		for _, groupID := range groupIDs {
+			if group, ok := groupMap[groupID]; ok {
+				for _, service := range group.Services {
+					if gpuServices[service] {
+						hasGPUService = true
+						break
+					}
+				}
+			}
+		}
+
+		if hasGPUService && !a.CheckGPU() {
+			wailsRuntime.EventsEmit(a.ctx, "log", LogEntry{
+				Service:   "launcher",
+				Message:   "NVIDIA GPU not detected. GPU services require NVIDIA Docker runtime.",
+				Timestamp: time.Now().Format("15:04:05"),
+			})
+			wailsRuntime.EventsEmit(a.ctx, "pullComplete", map[string]interface{}{
+				"success":      false,
+				"failedGroups": groupIDs,
+				"reason":       "gpu_not_found",
+			})
+			return
+		}
+
+		failedGroups := []string{}
+
+		for _, groupID := range groupIDs {
+			group, ok := groupMap[groupID]
+			if !ok {
+				continue
+			}
+
+			wailsRuntime.EventsEmit(a.ctx, "log", LogEntry{
+				Service:   "launcher",
+				Message:   fmt.Sprintf("Pulling %s...", group.Name),
+				Timestamp: time.Now().Format("15:04:05"),
+			})
+
+			groupFailed := false
+			for _, image := range group.Images {
+				cmd := exec.Command("docker", "pull", image)
+				stdout, _ := cmd.StdoutPipe()
+				stderr, _ := cmd.StderrPipe()
+
+				if err := cmd.Start(); err != nil {
+					wailsRuntime.EventsEmit(a.ctx, "log", LogEntry{
+						Service:   groupID,
+						Message:   fmt.Sprintf("Failed to pull %s: %v", image, err),
+						Timestamp: time.Now().Format("15:04:05"),
+					})
+					groupFailed = true
+					continue
+				}
+
+				// Stream output
+				go a.streamOutput(stdout, groupID)
+				go a.streamOutput(stderr, groupID)
+
+				if err := cmd.Wait(); err != nil {
+					wailsRuntime.EventsEmit(a.ctx, "log", LogEntry{
+						Service:   groupID,
+						Message:   fmt.Sprintf("Failed to pull %s: %v", image, err),
+						Timestamp: time.Now().Format("15:04:05"),
+					})
+					groupFailed = true
+				}
+			}
+
+			if groupFailed {
+				failedGroups = append(failedGroups, groupID)
+			}
+		}
+
+		if len(failedGroups) > 0 {
+			wailsRuntime.EventsEmit(a.ctx, "pullComplete", map[string]interface{}{
+				"success":      false,
+				"failedGroups": failedGroups,
+			})
+		} else {
+			wailsRuntime.EventsEmit(a.ctx, "pullComplete", map[string]interface{}{
+				"success": true,
+			})
+		}
+	}()
 }

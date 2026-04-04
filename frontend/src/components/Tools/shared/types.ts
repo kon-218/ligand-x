@@ -33,7 +33,7 @@ export interface WorkflowConfig {
   accentColor: 'cyan' | 'green' | 'purple' | 'orange' | 'pink'
 }
 
-export type AccentColor = 'blue' | 'green' | 'purple' | 'orange' | 'pink' | 'teal' | 'indigo' | 'cyan' | 'amber'
+export type AccentColor = 'blue' | 'green' | 'purple' | 'orange' | 'pink' | 'teal' | 'indigo' | 'cyan' | 'amber' | 'fuchsia' | 'rose'
 
 export const accentColorClasses: Record<AccentColor, {
   bg: string
@@ -124,6 +124,24 @@ export const accentColorClasses: Record<AccentColor, {
     border: 'border-amber-500',
     borderLight: 'border-amber-700/40',
     gradient: 'from-amber-500/20 to-yellow-500/20',
+  },
+  fuchsia: {
+    bg: 'bg-fuchsia-500',
+    bgHover: 'hover:bg-fuchsia-600',
+    bgLight: 'bg-fuchsia-500/20',
+    text: 'text-fuchsia-400',
+    border: 'border-fuchsia-500',
+    borderLight: 'border-fuchsia-700/40',
+    gradient: 'from-fuchsia-500/20 to-pink-500/20',
+  },
+  rose: {
+    bg: 'bg-rose-500',
+    bgHover: 'hover:bg-rose-600',
+    bgLight: 'bg-rose-500/20',
+    text: 'text-rose-400',
+    border: 'border-rose-500',
+    borderLight: 'border-rose-700/40',
+    gradient: 'from-rose-500/20 to-pink-500/20',
   },
 }
 

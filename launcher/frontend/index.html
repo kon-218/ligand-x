@@ -55,113 +55,6 @@
                             <option value="prod">Production</option>
                         </select>
                     </div>
-                    <div class="control-group">
-                        <label for="servicePreset">Services</label>
-                        <select id="servicePreset" class="select" onchange="onPresetChange()">
-                            <option value="full">Full (All Services)</option>
-                            <option value="core">Core Only</option>
-                            <option value="docking">Core + Docking</option>
-                            <option value="md">Core + MD</option>
-                            <option value="qc">Core + QC</option>
-                            <option value="free-energy">Free Energy</option>
-                            <option value="gpu">GPU Stack</option>
-                            <option value="custom">Custom...</option>
-                        </select>
-                    </div>
-                </div>
-
-                <div id="customServices" class="custom-services hidden">
-                    <div class="custom-services-header">
-                        <span>Select Services</span>
-                        <button class="btn btn-xs btn-ghost" onclick="selectAllServices()">All</button>
-                        <button class="btn btn-xs btn-ghost" onclick="selectNoServices()">None</button>
-                    </div>
-                    <div class="services-checkbox-grid">
-                        <label class="service-checkbox core-service">
-                            <input type="checkbox" value="postgres" checked disabled>
-                            <span>PostgreSQL</span>
-                        </label>
-                        <label class="service-checkbox core-service">
-                            <input type="checkbox" value="redis" checked disabled>
-                            <span>Redis</span>
-                        </label>
-                        <label class="service-checkbox core-service">
-                            <input type="checkbox" value="rabbitmq" checked disabled>
-                            <span>RabbitMQ</span>
-                        </label>
-                        <label class="service-checkbox core-service">
-                            <input type="checkbox" value="gateway" checked disabled>
-                            <span>Gateway</span>
-                        </label>
-                        <label class="service-checkbox core-service">
-                            <input type="checkbox" value="frontend" checked disabled>
-                            <span>Frontend</span>
-                        </label>
-                        <label class="service-checkbox core-service">
-                            <input type="checkbox" value="structure" checked disabled>
-                            <span>Structure</span>
-                        </label>
-                        <label class="service-checkbox">
-                            <input type="checkbox" value="ketcher" data-service>
-                            <span>Ketcher</span>
-                        </label>
-                        <label class="service-checkbox">
-                            <input type="checkbox" value="alignment" data-service>
-                            <span>Alignment</span>
-                        </label>
-                        <label class="service-checkbox">
-                            <input type="checkbox" value="msa" data-service>
-                            <span>MSA</span>
-                        </label>
-                        <label class="service-checkbox">
-                            <input type="checkbox" value="docking" data-service>
-                            <span>Docking</span>
-                        </label>
-                        <label class="service-checkbox">
-                            <input type="checkbox" value="md" data-service>
-                            <span>MD</span>
-                        </label>
-                        <label class="service-checkbox">
-                            <input type="checkbox" value="admet" data-service>
-                            <span>ADMET</span>
-                        </label>
-                        <label class="service-checkbox">
-                            <input type="checkbox" value="boltz2" data-service>
-                            <span>Boltz2</span>
-                        </label>
-                        <label class="service-checkbox">
-                            <input type="checkbox" value="qc" data-service>
-                            <span>QC</span>
-                        </label>
-                        <label class="service-checkbox">
-                            <input type="checkbox" value="abfe" data-service>
-                            <span>ABFE</span>
-                        </label>
-                        <label class="service-checkbox">
-                            <input type="checkbox" value="rbfe" data-service>
-                            <span>RBFE</span>
-                        </label>
-                        <label class="service-checkbox">
-                            <input type="checkbox" value="worker-cpu" data-service>
-                            <span>Worker CPU</span>
-                        </label>
-                        <label class="service-checkbox">
-                            <input type="checkbox" value="worker-gpu-short" data-service>
-                            <span>Worker GPU Short</span>
-                        </label>
-                        <label class="service-checkbox">
-                            <input type="checkbox" value="worker-gpu-long" data-service>
-                            <span>Worker GPU Long</span>
-                        </label>
-                        <label class="service-checkbox">
-                            <input type="checkbox" value="worker-qc" data-service>
-                            <span>Worker QC</span>
-                        </label>
-                        <label class="service-checkbox">
-                            <input type="checkbox" value="flower" data-service>
-                            <span>Flower</span>
-                        </label>
-                    </div>
                 </div>
 
                 <div class="button-grid">
@@ -188,46 +81,33 @@
                         </svg>
                         Pull Images
                     </button>
-                </div>
-            </section>
-
-            <!-- Quick Links -->
-            <section class="panel links-panel">
-                <h2>Quick Links</h2>
-                <div class="links-grid">
-                    <button class="link-btn" onclick="openFrontend()">
+                    <button class="btn btn-secondary" onclick="openFrontend()">
                         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
                             <rect x="3" y="3" width="18" height="18" rx="2"/>
                             <path d="M3 9h18"/>
                             <circle cx="6.5" cy="6" r="0.5" fill="currentColor"/>
                             <circle cx="9" cy="6" r="0.5" fill="currentColor"/>
                         </svg>
-                        <span>Open App</span>
-                        <small>localhost:3000</small>
-                    </button>
-                    <button class="link-btn" onclick="openAPI()">
-                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
-                            <path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/>
-                            <polyline points="14,2 14,8 20,8"/>
-                            <line x1="16" y1="13" x2="8" y2="13"/>
-                            <line x1="16" y1="17" x2="8" y2="17"/>
-                        </svg>
-                        <span>API Docs</span>
-                        <small>localhost:8000</small>
-                    </button>
-                    <button class="link-btn" onclick="openFlower()">
-                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
-                            <circle cx="12" cy="12" r="10"/>
-                            <polyline points="12,6 12,12 16,14"/>
-                        </svg>
-                        <span>Task Monitor</span>
-                        <small>Flower UI</small>
+                        Open App
                     </button>
                 </div>
             </section>
 
-            <!-- Logs Panel -->
-            <section class="panel logs-panel">
+            <!-- Tab Strip -->
+            <div class="tab-strip">
+                <button class="tab-button active" data-tab="services">Services</button>
+                <button class="tab-button" data-tab="logs">Logs</button>
+            </div>
+
+            <!-- Services Panel (Tabbed) -->
+            <section class="panel services-panel tab-content active" data-tab="services">
+                <div id="servicesTabContent">
+                    <p style="color: var(--text-dim); font-size: 12px;">Loading services...</p>
+                </div>
+            </section>
+
+            <!-- Logs Panel (Tabbed) -->
+            <section class="panel logs-panel tab-content" data-tab="logs">
                 <div class="logs-header">
                     <h2>Logs</h2>
                     <div class="logs-controls">
@@ -288,6 +168,61 @@
                 Clean
             </button>
         </footer>
+    </div>
+
+    <!-- First-Run Wizard Overlay -->
+    <div id="firstRunWizard" class="wizard-overlay hidden">
+        <div class="wizard-container">
+            <!-- Step 1: Welcome -->
+            <div class="wizard-step active" data-step="1">
+                <div class="wizard-content">
+                    <svg class="wizard-logo" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                        <path d="M12 2L2 7l10 5 10-5-10-5z"/>
+                        <path d="M2 17l10 5 10-5"/>
+                        <path d="M2 12l10 5 10-5"/>
+                    </svg>
+                    <h1 class="wizard-title">Welcome to Ligand-X</h1>
+                    <p class="wizard-subtitle">Before we start, let's set up your services.</p>
+                </div>
+                <div class="wizard-actions">
+                    <button class="btn btn-primary" onclick="nextWizardStep()">Next →</button>
+                </div>
+            </div>
+
+            <!-- Step 2: Service Selection -->
+            <div class="wizard-step" data-step="2">
+                <h2 class="wizard-title">Choose your services</h2>
+
+                <div class="wizard-scroll">
+                    <div class="wizard-cards" id="wizardServiceCards">
+                        <!-- Cards will be generated by JavaScript -->
+                    </div>
+                </div>
+
+                <div class="wizard-footer">
+                    <div class="estimated-size">
+                        Estimated download: <span id="estimatedSize">0</span> GB
+                    </div>
+                </div>
+
+                <div id="pullErrorBanner" class="error-banner hidden">
+                    <span id="errorMessage"></span>
+                    <button class="btn btn-sm btn-primary" onclick="retryPullFailed()" id="retryButton">Retry Failed</button>
+                </div>
+
+                <div class="wizard-actions">
+                    <button class="btn btn-secondary" onclick="previousWizardStep()">← Back</button>
+                    <button class="btn btn-primary" id="pullSetupBtn" onclick="startWizardPull()">Pull & Setup</button>
+                </div>
+
+                <div id="pullProgressContainer" class="hidden">
+                    <div class="progress-message">Pulling images...</div>
+                    <div class="logs-container" id="wizardLogsContainer" style="max-height: 200px; overflow-y: auto;">
+                        <div class="log-placeholder">Waiting for pull to start...</div>
+                    </div>
+                </div>
+            </div>
+        </div>
     </div>
 
     <script src="wailsjs/runtime/runtime.js"></script>

@@ -33,7 +33,8 @@ _LIGAND_RMSD_PASS_A = 2.0             # Å
 _LIGAND_RMSD_WARN_A = 5.0             # Å
 
 # Max frames to load for RMSD (stride to cap compute time)
-_RMSD_MAX_FRAMES = 200
+# Increased from 200 to 2500 to provide better resolution for long trajectories
+_RMSD_MAX_FRAMES = 2500
 
 # Report interval × integration timestep (ps) used in equilibration_runner.py
 # report_interval=1000, dt=0.004 ps → 4 ps per data point
@@ -60,9 +61,19 @@ class EquilibrationAnalytics:
         output_dir: str,
         system_id: str,
         topology_pdb: str | None,
-        npt_traj: str | None,
-        log_path: str | None,
+        nvt_traj: str | None = None,
+        npt_traj: str | None = None,
+        production_traj: str | None = None,
+        log_path: str | None = None,
         ligand_id: str = "ligand",
+        nvt_steps: int = 0,
+        npt_steps: int = 0,
+        production_steps: int = 0,
+        nvt_report_interval: int = 1000,
+        npt_report_interval: int = 1000,
+        production_report_interval: int = 2500,
+        report_interval: int | None = None,
+        dt_ps: float | None = None,
     ) -> dict[str, Any]:
         """
         Run all analytics passes and return combined result dict.
@@ -70,10 +81,17 @@ class EquilibrationAnalytics:
         Args:
             output_dir:    MD output directory (unused directly; paths passed explicitly)
             system_id:     System identifier (used for logging only)
-            topology_pdb:  Path to NPT final PDB (topology reference for RMSD)
-            npt_traj:      Path to NPT DCD trajectory
-            log_path:      Path to StateDataReporter equilibration log (TSV)
+            topology_pdb:  Path to topology PDB (reference for RMSD)
+            nvt_traj:      Path to NVT DCD trajectory (optional)
+            npt_traj:      Path to NPT DCD trajectory (optional)
+            production_traj: Path to production DCD trajectory (optional)
+            log_path:      Path to StateDataReporter log (TSV)
             ligand_id:     Ligand identifier; residue name derived as ligand_id[:3].upper()
+            nvt_steps:     Number of NVT steps (for time axis calculation)
+            npt_steps:     Number of NPT steps (for time axis calculation)
+            production_steps: Number of production steps (for time axis calculation)
+            report_interval: MD report interval (steps) for fallback time calculation
+            dt_ps:         MD timestep (ps) for time axis calculation
 
         Returns:
             {
@@ -91,7 +109,16 @@ class EquilibrationAnalytics:
             )
 
             thermo = self._parse_log(log_path)
-            rmsd = self._compute_rmsd(topology_pdb, npt_traj, ligand_resname)
+            
+            # Use provided dt_ps or default
+            if dt_ps is None:
+                dt_ps = _DT_PS
+            
+            rmsd = self._compute_rmsd(
+                topology_pdb, nvt_traj, npt_traj, production_traj,
+                ligand_resname, nvt_steps, npt_steps, production_steps, dt_ps,
+                nvt_report_interval, npt_report_interval, production_report_interval
+            )
             kpi = self._evaluate_kpis(thermo, rmsd)
 
             logger.info(
@@ -229,29 +256,37 @@ class EquilibrationAnalytics:
     def _compute_rmsd(
         self,
         topology_pdb: str | None,
+        nvt_traj: str | None,
         npt_traj: str | None,
+        production_traj: str | None,
         ligand_resname: str,
+        nvt_steps: int = 0,
+        npt_steps: int = 0,
+        production_steps: int = 0,
+        dt_ps: float = _DT_PS,
+        nvt_report_interval: int = 1000,
+        npt_report_interval: int = 1000,
+        production_report_interval: int = 2500,
     ) -> dict[str, Any]:
         """
-        Compute backbone and ligand RMSD from NPT DCD trajectory using MDAnalysis.
+        Compute backbone and ligand RMSD from all available trajectories (NVT, NPT, Production).
 
-        Uses NPT trajectory only (NVT skipped to save compute).
+        Processes all trajectory phases and combines them into a single continuous dataset
+        with phase boundary markers for visualization.
 
-        Alignment: protein backbone (CA atoms) aligned to frame 0.
-        Backbone RMSD: CA atoms vs frame 0 after alignment.
-        Ligand RMSD:   ligand heavy atoms vs frame 0 after backbone alignment.
-
-        Ligand selection tries `resname {ligand_resname}` first. If empty,
-        falls back to non-protein/non-solvent atoms and appends a warning.
-
-        DCD is strided so at most _RMSD_MAX_FRAMES frames are loaded to cap
-        compute time regardless of trajectory length.
+        Method:
+        1. Load each trajectory (strided to stay under _RMSD_MAX_FRAMES total).
+        2. Apply robust PBC imaging (anchor to protein/largest molecule) to fix ligand jumps.
+        3. Align (superpose) protein backbone to frame 0 of first trajectory.
+        4. Compute RMSD for backbone and ligand.
+        5. Combine phases with proper time offsets.
 
         Returns:
             {
                 "time_ps": [...],
                 "backbone_rmsd_angstrom": [...],
-                "ligand_rmsd_angstrom": [...],   # empty list if no ligand found
+                "ligand_rmsd_angstrom": [...],
+                "phase_boundaries": [{"phase": "nvt", "start_ps": 0, "end_ps": 100}, ...],
                 "warnings": [...],
             }
         """
@@ -259,162 +294,244 @@ class EquilibrationAnalytics:
             "time_ps": [],
             "backbone_rmsd_angstrom": [],
             "ligand_rmsd_angstrom": [],
+            "phase_boundaries": [],
             "warnings": [],
         }
-
-        if not npt_traj or not os.path.exists(npt_traj):
-            logger.debug(f"[ANALYTICS] NPT trajectory not found: {npt_traj} — skipping RMSD")
-            return empty
 
         if not topology_pdb or not os.path.exists(topology_pdb):
             logger.debug(f"[ANALYTICS] Topology PDB not found: {topology_pdb} — skipping RMSD")
             return empty
+        
+        # Collect available trajectories with their report intervals
+        trajectories = []
+        if nvt_traj and os.path.exists(nvt_traj):
+            trajectories.append(("nvt", nvt_traj, nvt_steps, nvt_report_interval))
+        if npt_traj and os.path.exists(npt_traj):
+            trajectories.append(("npt", npt_traj, npt_steps, npt_report_interval))
+        if production_traj and os.path.exists(production_traj):
+            trajectories.append(("production", production_traj, production_steps, production_report_interval))
+        
+        if not trajectories:
+            logger.debug("[ANALYTICS] No trajectory files found — skipping RMSD")
+            return empty
 
         try:
+            import mdtraj as md
             import numpy as np
-            import MDAnalysis as mda
-            from MDAnalysis.analysis import align
-            from MDAnalysis.lib.distances import minimize_vectors
 
             warnings_list: list[str] = []
-
-            # Load universe with stride to cap frame count
-            u_full = mda.Universe(topology_pdb, npt_traj)
-
-            # NOTE: We do NOT use the MDAnalysis `unwrap` on-the-fly transformation here.
-            # That transformation is stateful and requires seeing every consecutive frame
-            # to track atoms crossing box boundaries. Strided iteration (trajectory[::N])
-            # skips intermediate frames, breaking the state tracking and leaving PBC jumps
-            # uncorrected. Instead we apply the minimum image convention per frame below.
-
-            n_frames = len(u_full.trajectory)
-
-            if n_frames == 0:
-                return {**empty, "warnings": ["Trajectory has 0 frames"]}
-
-            stride = max(1, n_frames // _RMSD_MAX_FRAMES)
+            
+            # Calculate total frames and stride to stay under _RMSD_MAX_FRAMES
+            total_frames = 0
+            frame_counts = []
+            for phase_name, traj_path, steps, report_interval in trajectories:
+                temp_traj = md.load(traj_path, top=topology_pdb)
+                n = temp_traj.n_frames
+                frame_counts.append(n)
+                total_frames += n
+            
+            if total_frames == 0:
+                return {**empty, "warnings": ["All trajectories have 0 frames"]}
+            
+            # Calculate global stride to keep total analyzed frames under limit
+            stride = max(1, total_frames // _RMSD_MAX_FRAMES)
             logger.info(
-                f"[ANALYTICS] RMSD: {n_frames} frames, stride={stride} "
-                f"(loading ~{n_frames // stride} frames)"
+                f"[ANALYTICS] RMSD: {total_frames} total frames across {len(trajectories)} phases, "
+                f"stride={stride} (analyzing ~{total_frames // stride} frames)"
             )
+            
+            # Process each trajectory phase
+            all_time_ps = []
+            all_backbone_rmsd = []
+            all_ligand_rmsd = []
+            phase_boundaries = []
+            
+            current_time_offset_ps = 0.0
+            reference_traj = None
+            backbone_sel = None
+            ligand_sel = None
+            has_ligand = False
 
-            if n_frames < 10:
-                warnings_list.append("Trajectory too short for reliable plateau analysis")
+            for phase_idx, (phase_name, traj_path, steps, report_interval) in enumerate(trajectories):
+                logger.info(f"[ANALYTICS] Processing {phase_name.upper()} trajectory: {traj_path}")
+                
+                # Load trajectory with stride
+                traj = md.load(traj_path, top=topology_pdb)
+                if stride > 1:
+                    traj = traj[::stride]
+                
+                n_frames = traj.n_frames
+                if n_frames == 0:
+                    logger.warning(f"[ANALYTICS] {phase_name.upper()} trajectory has 0 frames after striding")
+                    continue
+                
+                # ── Robust PBC Imaging & Alignment ─────────────────────────────────
+                if traj.unitcell_lengths is None:
+                    if phase_idx == 0:
+                        warnings_list.append("No unit cell info — skipping PBC correction (RMSD may be inflated)")
+                else:
+                    # 1. Identify anchors
+                    anchor_molecules = []
+                    protein_sel_temp = traj.topology.select('protein')
+                    molecules = traj.topology.find_molecules()
+                    
+                    if len(protein_sel_temp) > 10:
+                        protein_atom_set = set(protein_sel_temp)
+                        anchor_molecules = [
+                            sorted(list(mol), key=lambda a: a.index) 
+                            for mol in molecules 
+                            if any(atom.index in protein_atom_set for atom in mol)
+                        ]
+                    
+                    # Fallback to largest molecule
+                    if not anchor_molecules and len(molecules) > 0:
+                        largest_mol = max(molecules, key=len)
+                        anchor_molecules = [sorted(list(largest_mol), key=lambda a: a.index)]
+                        if phase_idx == 0:
+                            logger.info(f"[ANALYTICS] Fallback: Anchoring PBC to largest molecule ({len(largest_mol)} atoms)")
+                    
+                    # Apply imaging
+                    if anchor_molecules:
+                        traj.image_molecules(inplace=True, anchor_molecules=anchor_molecules)
+                    else:
+                        traj.image_molecules(inplace=True)
+                
+                # 2. Select Atoms for RMSD (only once, on first trajectory)
+                if phase_idx == 0:
+                    # Backbone/CA
+                    backbone_sel = traj.topology.select("protein and name CA")
+                    if len(backbone_sel) == 0:
+                        backbone_sel = traj.topology.select("protein and backbone")
+                    if len(backbone_sel) == 0:
+                        backbone_sel = traj.topology.select("protein")
+                    
+                    if len(backbone_sel) == 0:
+                        logger.warning("[ANALYTICS] No protein atoms found — skipping RMSD")
+                        return {**empty, "warnings": ["No protein atoms found"]}
+                    
+                    # Ligand
+                    ligand_sel = traj.topology.select(f"resname {ligand_resname} and not element H")
+                    
+                    if len(ligand_sel) == 0:
+                        # Fallback: non-protein, non-water, non-ion
+                        solvent_query = "(water or resname HOH or resname WAT or resname SOL or resname TIP3 or resname TIP4P)"
+                        ion_query = "(resname NA or resname CL or resname MG or resname K or resname CA or resname ZN)"
+                        ligand_query = f"not (protein or {solvent_query} or {ion_query}) and not element H"
+                        
+                        ligand_sel = traj.topology.select(ligand_query)
+                        
+                        if len(ligand_sel) > 0:
+                            warnings_list.append(
+                                f"Ligand resname '{ligand_resname}' not found — "
+                                f"used auto-detected ligand ({len(ligand_sel)} atoms)"
+                            )
+                    
+                    has_ligand = len(ligand_sel) > 0
+                    
+                    # Store reference trajectory (first frame of first phase)
+                    reference_traj = traj
+                
+                # 3. Align (Superpose)
+                # Align to frame 0 of the reference trajectory (first phase)
+                if phase_idx == 0:
+                    traj.superpose(traj, 0, atom_indices=backbone_sel)
+                else:
+                    # Align to frame 0 of reference trajectory
+                    traj.superpose(reference_traj, 0, atom_indices=backbone_sel)
 
-            # Select backbone (CA atoms) for alignment + backbone RMSD
-            backbone_sel_str = "backbone and name CA"
-            backbone_sel = u_full.select_atoms(backbone_sel_str)
-            if len(backbone_sel) == 0:
-                backbone_sel_str = "protein and name CA"
-                backbone_sel = u_full.select_atoms(backbone_sel_str)
-            if len(backbone_sel) == 0:
-                logger.warning("[ANALYTICS] No backbone CA atoms found — skipping RMSD")
-                return {**empty, "warnings": ["No backbone CA atoms found"]}
-
-            # Select ligand heavy atoms
-            ligand_sel = u_full.select_atoms(f"resname {ligand_resname} and not name H*")
-            if len(ligand_sel) == 0:
-                # Fallback: non-protein, non-solvent, non-ion atoms
-                solvent_resnames = (
-                    "HOH WAT H2O TIP TIP3 TIP4 TIP5 SOL "
-                    "NA CL MG K CA ZN FE MN NA+ CL-"
-                )
-                ligand_sel = u_full.select_atoms(
-                    f"not protein and not (resname {solvent_resnames}) and not name H*"
-                )
-                if len(ligand_sel) > 0:
-                    warnings_list.append(
-                        f"Ligand resname '{ligand_resname}' not found — "
-                        f"used auto-detected ligand ({len(ligand_sel)} atoms)"
-                    )
-                    logger.info(
-                        f"[ANALYTICS] Ligand fallback: found {len(ligand_sel)} atoms"
-                    )
-
-            has_ligand = len(ligand_sel) > 0
-
-            # ── Run RMSD analysis ──────────────────────────────────────────────
-            # Rewind to frame 0 to extract reference positions (avoids a second Universe load)
-            u_full.trajectory[0]
-            ref_backbone_pos = u_full.select_atoms(backbone_sel_str).positions.copy()
-            ref_ligand_pos = u_full.select_atoms(
-                f"resname {ligand_resname} and not name H*"
-                if len(u_full.select_atoms(f"resname {ligand_resname} and not name H*")) > 0
-                else f"not protein and not (resname HOH WAT H2O TIP TIP3 TIP4 TIP5 SOL NA CL MG K CA ZN FE MN NA+ CL-) and not name H*"
-            ).positions.copy() if has_ligand else None
-
-            backbone_rmsd: list[float] = []
-            ligand_rmsd: list[float] = []
-            time_ps: list[float] = []
-
-            ref_bb_com = ref_backbone_pos.mean(axis=0)
-            ref_bb_centered = ref_backbone_pos - ref_bb_com
-            ref_lig_com = ref_ligand_pos.mean(axis=0) if has_ligand else None
-            ref_lig_centered = (ref_ligand_pos - ref_bb_com) if has_ligand else None
-
-            for frame_i, ts in enumerate(u_full.trajectory[::stride]):
-                mobile_bb = backbone_sel.positions.copy()
-                mobile_bb_com = mobile_bb.mean(axis=0)
-
-                # PBC correction for backbone translation continuity.
-                # Without this, the protein CA coordinates may be split across
-                # periodic images, making the rigid-body superposition ill-conditioned
-                # and inflating RMSD (which then propagates into ligand RMSD).
-                if ts.dimensions is not None:
-                    delta_bb = (mobile_bb_com - ref_bb_com).reshape(1, 3)
-                    delta_bb_mim = minimize_vectors(delta_bb, ts.dimensions)[0]
-                    mobile_bb += delta_bb_mim - delta_bb[0]
-                    mobile_bb_com = mobile_bb.mean(axis=0)
-
-                # Compute rotation matrix aligning mobile backbone to reference
-                R, _ = align.rotation_matrix(mobile_bb, ref_backbone_pos)
-
-                # Backbone RMSD after alignment
-                aligned_bb = (mobile_bb - mobile_bb_com) @ R.T
-                diff_bb = aligned_bb - ref_bb_centered
-                rmsd_bb = float(np.sqrt((diff_bb ** 2).sum(axis=1).mean()))
-                backbone_rmsd.append(round(rmsd_bb, 4))
-
+                # 4. Compute RMSD
+                # mdtraj.rmsd returns result in nanometers, we need Angstroms (* 10)
+                
+                # Backbone RMSD
+                if phase_idx == 0:
+                    rmsd_bb_nm = md.rmsd(traj, traj, 0, atom_indices=backbone_sel)
+                else:
+                    rmsd_bb_nm = md.rmsd(traj, reference_traj, 0, atom_indices=backbone_sel)
+                backbone_rmsd_phase = [round(float(r) * 10.0, 4) for r in rmsd_bb_nm]
+                
+                # Ligand RMSD
+                ligand_rmsd_phase = []
                 if has_ligand:
-                    mobile_lig = ligand_sel.positions.copy()
+                    # Get ligand coordinates (n_frames, n_atoms, 3)
+                    ligand_xyz = traj.xyz[:, ligand_sel, :]
+                    ref_ligand_xyz = reference_traj.xyz[0, ligand_sel, :]
+                    
+                    # Calculate displacement
+                    diff = ligand_xyz - ref_ligand_xyz
+                    
+                    # Sum of squares along spatial dimension (axis 2) -> (n_frames, n_atoms)
+                    dist_sq = np.sum(diff**2, axis=2)
+                    
+                    # Mean over atoms (axis 1) -> (n_frames,)
+                    mean_dist_sq = np.mean(dist_sq, axis=1)
+                    
+                    # Sqrt -> RMSD in nm
+                    rmsd_lig_nm = np.sqrt(mean_dist_sq)
+                    
+                    ligand_rmsd_phase = [round(float(r) * 10.0, 4) for r in rmsd_lig_nm]
 
-                    # PBC correction: apply minimum image convention to the ligand
-                    # centre-of-mass displacement. This collapses any periodic-image
-                    # jump to the nearest equivalent position relative to the reference,
-                    # eliminating the ~50 Å RMSD spikes caused by the ligand crossing a
-                    # box boundary mid-trajectory. Works per-frame with no sequential
-                    # state, so it is fully compatible with strided iteration.
-                    if ts.dimensions is not None:
-                        lig_com_mobile = mobile_lig.mean(axis=0)
-                        delta = (lig_com_mobile - ref_lig_com).reshape(1, 3)
-                        delta_mim = minimize_vectors(delta, ts.dimensions)[0]
-                        mobile_lig += delta_mim - delta[0]
+                # 5. Calculate time axis for this phase
+                # Each kept frame is spaced by stride * report_interval integration steps.
+                phase_duration_ps = steps * dt_ps
+                time_per_frame_ps = stride * report_interval * dt_ps
+                time_ps_phase = [
+                    round(current_time_offset_ps + (i * time_per_frame_ps), 3)
+                    for i in range(n_frames)
+                ]
 
-                    # Apply the same backbone rotation to the PBC-corrected ligand
-                    aligned_lig = (mobile_lig - mobile_bb_com) @ R.T
-                    diff_lig = aligned_lig - ref_lig_centered
-                    lig_rmsd = float(np.sqrt((diff_lig ** 2).sum(axis=1).mean()))
-                    ligand_rmsd.append(round(lig_rmsd, 4))
+                # Record phase boundary (nominal span from configured step counts)
+                phase_start_ps = current_time_offset_ps
+                phase_end_ps = current_time_offset_ps + phase_duration_ps
+                phase_boundaries.append({
+                    "phase": phase_name,
+                    "start_ps": round(phase_start_ps, 1),
+                    "end_ps": round(phase_end_ps, 1)
+                })
 
-                # Use ts.time (ps) directly from DCD metadata — correct regardless
-                # of report interval (equilibration=1000 steps, production=2500 steps).
-                time_ps.append(round(float(ts.time), 1))
+                # Append to combined arrays
+                all_time_ps.extend(time_ps_phase)
+                all_backbone_rmsd.extend(backbone_rmsd_phase)
+                if has_ligand:
+                    all_ligand_rmsd.extend(ligand_rmsd_phase)
+
+                # Next phase must start strictly after the last plotted sample time.
+                # If the DCD has more frames than steps/report_interval implies, or step
+                # counts are underreported, sample times can extend past phase_end_ps;
+                # starting the next phase at phase_end_ps alone makes time go backward
+                # on the Plotly line plot.
+                last_sample_ps = time_ps_phase[-1] if time_ps_phase else phase_start_ps
+                _eps = max(1e-3, 0.01 * time_per_frame_ps) if time_per_frame_ps > 0 else 1e-3
+                if last_sample_ps <= phase_end_ps + 1e-6:
+                    current_time_offset_ps = phase_end_ps
+                else:
+                    current_time_offset_ps = last_sample_ps + _eps
+                    warnings_list.append(
+                        f"RMSD time axis: {phase_name} trajectory spans past nominal phase end "
+                        f"({last_sample_ps:.1f} ps > {phase_end_ps:.1f} ps); next phase offset adjusted "
+                        "to keep a monotonic plot."
+                    )
+                
+                logger.info(
+                    f"[ANALYTICS] {phase_name.upper()} RMSD: {n_frames} frames, "
+                    f"time range: {phase_start_ps:.1f}-{phase_end_ps:.1f} ps"
+                )
 
             logger.info(
-                f"[ANALYTICS] RMSD computed: {len(backbone_rmsd)} points, "
-                f"backbone max={max(backbone_rmsd):.2f}Å"
+                f"[ANALYTICS] RMSD computed: {len(all_backbone_rmsd)} total points across {len(phase_boundaries)} phases, "
+                f"backbone max={max(all_backbone_rmsd) if all_backbone_rmsd else 0:.2f}Å"
             )
 
             return {
-                "time_ps": time_ps,
-                "backbone_rmsd_angstrom": backbone_rmsd,
-                "ligand_rmsd_angstrom": ligand_rmsd,
+                "time_ps": all_time_ps,
+                "backbone_rmsd_angstrom": all_backbone_rmsd,
+                "ligand_rmsd_angstrom": all_ligand_rmsd,
+                "phase_boundaries": phase_boundaries,
                 "warnings": warnings_list,
             }
 
         except ImportError:
-            logger.warning("[ANALYTICS] MDAnalysis not available — skipping RMSD")
-            return {**empty, "warnings": ["MDAnalysis not available"]}
+            logger.warning("[ANALYTICS] MDTraj not available — skipping RMSD")
+            return {**empty, "warnings": ["MDTraj not available"]}
         except Exception as e:
             logger.warning(f"[ANALYTICS] RMSD computation failed: {e}", exc_info=True)
             return {**empty, "warnings": [f"RMSD computation failed: {str(e)}"]}

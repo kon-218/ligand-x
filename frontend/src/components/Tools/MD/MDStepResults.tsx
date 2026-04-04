@@ -1,9 +1,9 @@
 'use client'
 
-import { useEffect } from 'react'
-import { Activity, Loader2, CheckCircle } from 'lucide-react'
+import { useEffect, useRef } from 'react'
+import { Loader2, CheckCircle, Activity } from 'lucide-react'
 import { api } from '@/lib/api-client'
-import { UnifiedJobList } from '../shared'
+import { UnifiedJobList, NoJobSelectedState } from '../shared'
 import { MDResultsDisplay } from './MDResultsDisplay'
 import { useMDStore } from '@/store/md-store'
 import { useUnifiedResultsStore } from '@/store/unified-results-store'
@@ -38,35 +38,35 @@ export function MDStepResults({ result, isRunning, progress, progressMessage, co
 
   const filteredJobs = getFilteredJobs().filter(j => j.service === 'md')
 
+  const fetchControllerRef = useRef<AbortController | null>(null)
+
   const handleSelectJob = async (jobId: string | null) => {
+    fetchControllerRef.current?.abort()
     mdStore.setActiveJob(jobId)
     if (!jobId) return
-    try {
-      const job = await api.getMDJob(jobId)
-      console.log('📋 Fetched MD job:', { jobId, status: job.status, hasResult: !!job.result, result: job.result })
 
-      // Determine if job is in a running state
+    const controller = new AbortController()
+    fetchControllerRef.current = controller
+
+    try {
+      const job = await api.getMDJob(jobId, { signal: controller.signal })
+      if (controller.signal.aborted) return
+
       const isRunningState = job.status === 'running' || job.status === 'submitted' || job.status === 'preparing' || job.status === 'pending'
 
       if (isRunningState) {
         mdStore.setMDResult(null)
         mdStore.setIsRunning(true)
 
-        // Track whether this job includes production MD
         const jobProductionSteps = job.input_params?.production_steps ?? 0
         mdStore.setHasProduction(jobProductionSteps > 0)
 
-        // Infer completed stages from progress when selecting an existing running job.
-        // Use backend stage keys so setProgress can map them to display names correctly.
-        // Also try to parse the DB stage field (comma-joined backend names from Celery).
         const jobProgress = job.progress || 0
         let inferredStages: string[] = []
 
         if (job.stage && job.stage !== 'running') {
-          // Stage field may be comma-joined backend stage names (e.g. "preparation,minimization")
           inferredStages = job.stage.split(',').map((s: string) => s.trim()).filter(Boolean)
         } else {
-          // Fallback: infer from progress percentages
           if (jobProgress > 5)  inferredStages.push('preparation')
           if (jobProgress > 9)  inferredStages.push('minimization')
           if (jobProgress > 15) inferredStages.push('nvt')
@@ -75,14 +75,11 @@ export function MDStepResults({ result, isRunning, progress, progressMessage, co
 
         mdStore.setProgress(jobProgress, job.stage || 'Running...', inferredStages)
       } else if (job.result) {
-        // Check if job has result and set them
         const actualResult = job.result
         
-        // Ensure result has success field if missing
         if (actualResult.success === undefined) {
           actualResult.success = job.status === 'completed'
         }
-        console.log('SUCCESS: Setting MD result with output_files:', actualResult.output_files)
         mdStore.setMDResult(actualResult as MDResult)
         mdStore.setIsRunning(false)
       } else if (job.status === 'failed') {
@@ -93,7 +90,8 @@ export function MDStepResults({ result, isRunning, progress, progressMessage, co
           status: 'failed'
         })
       }
-    } catch (error) {
+    } catch (error: any) {
+      if (controller.signal.aborted) return
       console.error('Failed to load job details:', error)
     }
   }
@@ -119,13 +117,10 @@ export function MDStepResults({ result, isRunning, progress, progressMessage, co
       <div className="flex-1 overflow-y-auto p-4">
         {/* Show "No job selected" when no active job is selected */}
         {!mdStore.activeJobId && (
-          <div className="flex items-center justify-center h-64">
-            <div className="text-center text-gray-400">
-              <Activity className="h-12 w-12 mx-auto mb-3 opacity-50" />
-              <p>No job selected</p>
-              <p className="text-sm mt-1">Select a job from the list or run a new optimization</p>
-            </div>
-          </div>
+          <NoJobSelectedState
+            icon={Activity}
+            description="Select a job from the list or run a new optimization"
+          />
         )}
 
         {/* Show loader when a job is selected and running */}
@@ -204,6 +199,7 @@ export function MDStepResults({ result, isRunning, progress, progressMessage, co
         {/* Results */}
         {mdStore.activeJobId && !isRunning && (result?.status === 'preview_ready' || result?.status === 'minimized_ready' || result?.success || result?.error) && (
           <MDResultsDisplay
+            key={mdStore.activeJobId}
             result={result as MDResult}
             jobId={mdStore.activeJobId}
             isRunning={isRunning}

@@ -15,9 +15,12 @@ import subprocess
 import os
 import sys
 import threading
+import logging
 from pathlib import Path
 from typing import List, Optional, Dict, Any
 import json
+
+logger = logging.getLogger(__name__)
 
 
 # Map service names to environment names
@@ -79,8 +82,8 @@ def _get_cuda_home_for_env(env_name: str) -> Optional[str]:
                 return str(env_path / 'targets' / 'x86_64-linux')
             # Fallback: return environment root
             return str(env_path)
-    except Exception:
-        pass
+    except Exception as e:
+        logger.debug("CUDA detection failed: %s", e)
     return None
 
 
@@ -538,15 +541,15 @@ def call_service_with_progress(
             import re
             
             # Track ABFE progress state
-            # ABFE workflow per leg:
-            #   1. Partial Charges (AM1-BCC) - ~2% per leg
-            #   2. MD Optimization (minimization, NPT, NVT) - ~3% per leg  
-            #   3. Equilibration HREX - ~10% per leg
-            #   4. Production HREX - ~35% per leg
-            # Total: 2 legs (Complex=50%, Solvent=50%) = 100%
-            # Note: Solvent leg is typically faster but we allocate equal weight
+            # ABFE workflow: OpenFE runs Solvent leg FIRST, then Complex leg.
+            # Per leg:
+            #   1. Partial Charges (AM1-BCC) - ~2% of leg
+            #   2. MD Optimization (minimization, NPT, NVT) - ~10% of leg
+            #   3. Equilibration HREX - ~20% of leg
+            #   4. Production HREX - ~66% of leg
+            # Total: Solvent (Leg 1) = 0-50%, Complex (Leg 2) = 50-100%
             abfe_state = {
-                'current_leg': None,  # 'complex' or 'solvent'
+                'current_leg': None,  # 'solvent' or 'complex'
                 'leg_count': 0,       # How many legs have started (0, 1, or 2)
                 'phase': 'setup',     # 'setup', 'charges', 'minimization', 'npt', 'nvt', 'equil_hrex', 'prod_hrex'
                 'current_iteration': 0,
@@ -556,28 +559,29 @@ def call_service_with_progress(
             }
             
             # Progress allocation per leg (each leg = 50% of total)
+            # Leg 1 (Solvent): 0-49%, Leg 2 (Complex): 50-99%
             # Within each leg:
-            #   - Setup/Charges: 0-4% of leg (0-2% or 50-52% overall)
+            #   - Setup/Charges: 0-4% of leg
             #   - MD Optimization (minimization, NPT, NVT): 4-14% of leg
             #   - Equilibration HREX: 14-34% of leg (20% of leg)
             #   - Production HREX: 34-100% of leg (66% of leg)
             def calc_progress(leg_num, phase, phase_progress=0):
                 """Calculate overall progress given leg number and phase progress."""
-                leg_base = (leg_num - 1) * 50  # Leg 1: 0-50%, Leg 2: 50-100%
+                leg_base = (leg_num - 1) * 50  # Leg 1 (Solvent): 0-49%, Leg 2 (Complex): 50-99%
                 
                 if phase == 'setup':
-                    return leg_base + 1
+                    raw = leg_base + 1
                 elif phase == 'charges':
-                    return leg_base + 2 + phase_progress * 2  # 2-4%
+                    raw = leg_base + 2 + phase_progress * 2  # 2-4%
                 elif phase in ('minimization', 'npt', 'nvt', 'md_optimization'):
-                    # All MD optimization phases combined: 4-14%
-                    return leg_base + 4 + phase_progress * 10
+                    raw = leg_base + 4 + phase_progress * 10  # 4-14%
                 elif phase == 'equil_hrex':
-                    return leg_base + 14 + phase_progress * 20  # 14-34%
+                    raw = leg_base + 14 + phase_progress * 20  # 14-34%
                 elif phase == 'prod_hrex':
-                    return leg_base + 34 + phase_progress * 66  # 34-100%
+                    raw = leg_base + 34 + phase_progress * 65  # 34-99%
                 else:
-                    return leg_base
+                    raw = leg_base
+                return min(int(raw), 99)  # Clamp to 99%; 100% set on completion
             
             for line in process.stderr:
                 stderr_lines.append(line)
@@ -598,22 +602,22 @@ def call_service_with_progress(
                         message = parts[3] if len(parts) >= 4 else line_stripped
                         message_lower = message.lower()
                         
-                        # Detect which leg we're on (Complex runs first, then Solvent)
-                        if 'absolutebindingcomplexunit' in message_lower or 'complex' in message_lower:
-                            if abfe_state['current_leg'] != 'complex':
-                                abfe_state['current_leg'] = 'complex'
-                                abfe_state['leg_count'] = 1
-                                abfe_state['phase'] = 'setup'
-                                logger.info(f"[ABFE] Starting Complex leg (Leg 1/2)")
-                        elif 'absolutebindingsolventunit' in message_lower or ('solvent' in message_lower and 'leg' not in message_lower):
+                        # Detect which leg we're on (Solvent runs first, then Complex)
+                        if 'absolutebindingsolventunit' in message_lower or ('solvent' in message_lower and 'leg' not in message_lower):
                             if abfe_state['current_leg'] != 'solvent':
                                 abfe_state['current_leg'] = 'solvent'
+                                abfe_state['leg_count'] = 1
+                                abfe_state['phase'] = 'setup'
+                                logger.info(f"[ABFE] Starting Solvent leg (Leg 1/2)")
+                        elif 'absolutebindingcomplexunit' in message_lower or 'complex' in message_lower:
+                            if abfe_state['current_leg'] != 'complex':
+                                abfe_state['current_leg'] = 'complex'
                                 abfe_state['leg_count'] = 2
                                 abfe_state['phase'] = 'setup'
-                                logger.info(f"[ABFE] Starting Solvent leg (Leg 2/2)")
+                                logger.info(f"[ABFE] Starting Complex leg (Leg 2/2)")
                         
                         leg_num = abfe_state['leg_count'] if abfe_state['leg_count'] > 0 else 1
-                        leg_name = abfe_state['current_leg'] or 'complex'
+                        leg_name = abfe_state['current_leg'] or 'solvent'
                         leg_display = f"{'Complex' if leg_name == 'complex' else 'Solvent'} ({leg_num}/2)"
                         
                         # Detect partial charge assignment

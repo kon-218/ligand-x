@@ -415,23 +415,25 @@ async def batch_boltz2_predict(request: Boltz2BatchRequest):
                         logger.error(f"Failed ligand {ligand.name}: {error_msg}")
                         continue
                     
-                    # Extract key metrics
+                    # Extract key metrics from top-level result
+                    poses = result.get('poses', [])
+                    first_pose = poses[0] if poses else {}
+                    
+                    # Fallback to first pose data when top-level fields are missing
                     job_result = {
                         "success": True,
                         "ligand_id": ligand.id,
                         "ligand_name": ligand.name,
-                        "affinity_pred_value": result.get('affinity_pred_value'),
-                        "binding_free_energy": result.get('binding_free_energy'),
-                        "affinity_probability_binary": result.get('affinity_probability_binary'),
-                        "prediction_confidence": result.get('prediction_confidence'),
+                        "affinity_pred_value": result.get('affinity_pred_value') or first_pose.get('affinity_pred_value'),
+                        "binding_free_energy": result.get('binding_free_energy') or first_pose.get('binding_free_energy'),
+                        "affinity_probability_binary": result.get('affinity_probability_binary') or first_pose.get('affinity_probability_binary'),
+                        "prediction_confidence": result.get('prediction_confidence') or first_pose.get('confidence_score'),
                         "processing_time": result.get('processing_time'),
-                        "poses": result.get('poses', []),
+                        "poses": poses,
                     }
                     
                     # Extract additional metrics from first pose if available
-                    poses = result.get('poses', [])
-                    if poses:
-                        first_pose = poses[0]
+                    if first_pose:
                         job_result.update({
                             "aggregate_score": first_pose.get('aggregate_score'),
                             "confidence_score": first_pose.get('confidence_score'),

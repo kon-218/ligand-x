@@ -13,13 +13,14 @@ import {
   StructureSelector,
   ParameterSection,
   SliderParameter,
+  NumberParameter,
   SelectParameter,
   ToggleParameter,
   PresetSelector,
   ExecutionPanel,
   InfoBox,
 } from './shared'
-import type { WorkflowStep, StructureOption } from './shared'
+import type { WorkflowStep, StructureOption, ConfigGroup } from './shared'
 
 // Define workflow steps
 const MD_STEPS: WorkflowStep[] = [
@@ -32,8 +33,9 @@ const MD_STEPS: WorkflowStep[] = [
 // Simulation length presets (with HMR 4fs timestep)
 const SIMULATION_PRESETS = [
   { id: 'short', name: 'Short', description: '~5 min, equilibration only' },
-  { id: 'medium', name: 'Medium', description: '~30 min, 10 ns production' },
-  { id: 'long', name: 'Long', description: '~60 min, 25 ns production' },
+  { id: 'medium', name: 'Medium', description: '~30 min, 10 ns run' },
+  { id: 'long', name: 'Long', description: '~60 min, 25 ns run' },
+  { id: 'custom', name: 'Custom', description: 'Manual settings' },
 ]
 
 export function MDOptimizationTool() {
@@ -340,8 +342,8 @@ export function MDOptimizationTool() {
                     }`}
                 >
                   <div className="font-medium text-white mb-1">Minimization Only</div>
-                  <div className="text-xs text-gray-400">
-                    Quick energy minimization to remove steric clashes. Fast (~1-2 min).
+                  <div className="text-sm leading-snug text-gray-400">
+                    Quick clash cleanup, ~1-2 min.
                   </div>
                 </button>
                 <button
@@ -352,23 +354,102 @@ export function MDOptimizationTool() {
                     }`}
                 >
                   <div className="font-medium text-white mb-1">Full Equilibration</div>
-                  <div className="text-xs text-gray-400">
-                    Complete MD protocol with NVT & NPT equilibration for production-ready structures.
+                  <div className="text-sm leading-snug text-gray-400">
+                    Full NVT + NPT equilibration workflow.
                   </div>
                 </button>
               </div>
             </div>
 
-            {/* Show equilibration settings only when not minimization-only */}
-            {!isMinimizationOnly && (
-              <>
+            {/* Simulation parameters */}
+            <>
+              {!isMinimizationOnly && (
+                <>
                 <PresetSelector
                   label="Simulation Length"
                   presets={SIMULATION_PRESETS}
                   selectedPreset={mdStore.mdParameters.simulation_length}
                   onPresetSelect={(preset: string) => mdStore.setSimulationLength(preset as any)}
                   accentColor="green"
+                  columnsClassName="grid-cols-1 sm:grid-cols-2 xl:grid-cols-4"
                 />
+
+                <ParameterSection title="Protocol Timing" collapsible defaultExpanded description="Any manual timing edit automatically switches to Custom.">
+                  <NumberParameter
+                    label="Heating Duration"
+                    value={Math.round(((mdStore.mdParameters.heating_steps_per_stage ?? 2500) * 0.006))}
+                    onChange={(v: number) => {
+                      const stepsPerStage = Math.max(500, Math.round(v / 0.006)) // total heating steps = 6 * stepsPerStage
+                      mdStore.setMDParameters({
+                        simulation_length: 'custom',
+                        heating_steps_per_stage: stepsPerStage,
+                      })
+                    }}
+                    min={5}
+                    max={60}
+                    step={1}
+                    unit="ps"
+                    description="Total heating time (estimated from 1 fs timestep + 6 temperature stages)."
+                    tooltip="Heating total = 6 * heating_steps_per_stage * 0.001 ps"
+                  />
+
+                  <div className="pt-2 space-y-4">
+                    <NumberParameter
+                      label="NVT Duration"
+                      value={Math.round(((mdStore.mdParameters.nvt_steps ?? 25000) * 0.004))}
+                      onChange={(v: number) => {
+                        const currentNptSteps = mdStore.mdParameters.npt_steps ?? 250000
+                        const nvtSteps = Math.max(1000, Math.round(v / 0.004)) // 4 fs timestep => 0.004 ps per step
+                        mdStore.setMDParameters({
+                          simulation_length: 'custom',
+                          nvt_steps: nvtSteps,
+                          npt_steps: currentNptSteps,
+                        })
+                      }}
+                      min={20}
+                      max={2000}
+                      step={10}
+                      unit="ps"
+                      description="NVT equilibration time."
+                    />
+
+                    <NumberParameter
+                      label="NPT Duration"
+                      value={Math.round(((mdStore.mdParameters.npt_steps ?? 250000) * 0.004))}
+                      onChange={(v: number) => {
+                        const currentNvtSteps = mdStore.mdParameters.nvt_steps ?? 25000
+                        const nptSteps = Math.max(1000, Math.round(v / 0.004))
+                        mdStore.setMDParameters({
+                          simulation_length: 'custom',
+                          nvt_steps: currentNvtSteps,
+                          npt_steps: nptSteps,
+                        })
+                      }}
+                      min={100}
+                      max={8000}
+                      step={50}
+                      unit="ps"
+                      description="NPT equilibration time."
+                    />
+
+                    <NumberParameter
+                      label="Production Duration"
+                      value={Math.round(((mdStore.mdParameters.production_steps ?? 0) * 0.004 / 1000))}
+                      onChange={(v: number) => {
+                        const productionSteps = Math.max(0, Math.round(v * 250000)) // 1 ns = 1000 ps => 250k steps at 4 fs/step
+                        mdStore.setProductionSteps(productionSteps)
+                        mdStore.setMDParameters({ simulation_length: 'custom' })
+                      }}
+                      min={0}
+                      max={50}
+                      step={1}
+                      unit="ns"
+                      description="Set to 0 to skip production MD."
+                    />
+                  </div>
+                </ParameterSection>
+                </>
+              )}
 
                 <ParameterSection title="Temperature & Pressure" collapsible defaultExpanded>
                   <SliderParameter
@@ -418,6 +499,17 @@ export function MDOptimizationTool() {
                     description="Dodecahedron uses ~29% fewer water molecules than cubic, significantly reducing computation time."
                     accentColor="green"
                   />
+                  <NumberParameter
+                    label="Solvent Padding"
+                    value={mdStore.mdParameters.padding_nm ?? 1.0}
+                    onChange={(v: number) => mdStore.setMDParameters({ padding_nm: v })}
+                    min={0.5}
+                    max={3.0}
+                    step={0.1}
+                    unit="nm"
+                    description="Extra solvent buffer around the protein-ligand complex."
+                    tooltip="Passed as padding_nm to the MD system builder."
+                  />
                 </ParameterSection>
 
                 {!isProteinOnly && (
@@ -437,10 +529,10 @@ export function MDOptimizationTool() {
                     />
                     <SelectParameter
                       label="Force Field"
-                      value={mdStore.mdParameters.forcefield_method || 'openff-2.2.0'}
+                      value={mdStore.mdParameters.forcefield_method || 'openff-2.2.1'}
                       onChange={(v: string) => mdStore.setMDParameters({ forcefield_method: v as any })}
                       options={[
-                        { value: 'openff-2.2.0', label: 'OpenFF-2.2.0 (Modern, limited atoms)' },
+                        { value: 'openff-2.2.1', label: 'openff-2.2.1 (recommended)' },
                         { value: 'gaff', label: 'GAFF (Classic, broad coverage)' },
                         { value: 'gaff2', label: 'GAFF2 (Modern GAFF, more atoms)' },
                       ]}
@@ -459,8 +551,7 @@ export function MDOptimizationTool() {
                     accentColor="green"
                   />
                 </ParameterSection>
-              </>
-            )}
+            </>
 
             {/* Info box based on selection */}
             {isMinimizationOnly ? (
@@ -483,35 +574,71 @@ export function MDOptimizationTool() {
           </div>
         )
 
-      case 3:
+      case 3: {
+        const heatingStepsPerStage = mdStore.mdParameters.heating_steps_per_stage ?? 2500
+        const nvtSteps = mdStore.mdParameters.nvt_steps ?? 25000
+        const nptSteps = mdStore.mdParameters.npt_steps ?? 250000
+        const productionSteps = mdStore.mdParameters.production_steps ?? 0
+        const heatingDurationPs = Math.round(heatingStepsPerStage * 0.006)
+        const nvtDurationPs = Math.round(nvtSteps * 0.004)
+        const nptDurationPs = Math.round(nptSteps * 0.004)
+        const productionDurationNs = (productionSteps * 0.004) / 1000
+
+        const mdConfigGroups: ConfigGroup[] = [
+          {
+            title: 'Structures',
+            items: [
+              { label: 'Protein', value: currentStructure?.structure_id || 'Current' },
+              isProteinOnly
+                ? { label: 'Mode', value: 'Protein Only (AMBER14)' }
+                : { label: 'Ligand', value: mdStore.ligandInput.ligand_id || mdStore.ligandInput.file_name || 'None' },
+            ],
+          },
+          {
+            title: 'Simulation',
+            items: [
+              { label: 'Workflow', value: mdStore.mdParameters.minimization_only ? 'Minimization Only' : 'Full Equilibration' },
+              ...(!mdStore.mdParameters.minimization_only ? [
+                { label: 'Simulation Length', value: mdStore.mdParameters.simulation_length?.charAt(0).toUpperCase() + mdStore.mdParameters.simulation_length?.slice(1) || 'Short' },
+                { label: 'Box Shape', value: mdStore.mdParameters.box_shape === 'cubic' ? 'Cubic' : 'Rhombic Dodecahedron' },
+                { label: 'Heating Duration', value: `${heatingDurationPs} ps (${heatingStepsPerStage} steps/stage)` },
+                { label: 'NVT Duration', value: `${nvtDurationPs} ps (${nvtSteps} steps)` },
+                { label: 'NPT Duration', value: `${nptDurationPs} ps (${nptSteps} steps)` },
+                { label: 'Production Duration', value: `${productionDurationNs.toFixed(1)} ns (${productionSteps} steps)` },
+              ] : []),
+              ...(!mdStore.mdParameters.minimization_only ? [
+                { label: 'Preview Before Equilibration', value: mdStore.mdParameters.preview_before_equilibration ? 'Enabled' : 'Disabled' },
+              ] : []),
+            ],
+          },
+          {
+            title: 'Environment',
+            items: [
+              { label: 'Temperature', value: `${mdStore.mdParameters.temperature} K` },
+              { label: 'Pressure', value: `${mdStore.mdParameters.pressure} bar` },
+              { label: 'Ionic Strength', value: `${mdStore.mdParameters.ionic_strength} M` },
+              { label: 'Solvent Padding', value: `${(mdStore.mdParameters.padding_nm ?? 1.0).toFixed(1)} nm` },
+              ...(!isProteinOnly
+                ? [
+                    { label: 'Charge Method', value: mdStore.mdParameters.charge_method || 'am1bcc' },
+                    { label: 'Force Field', value: mdStore.mdParameters.forcefield_method || 'openff-2.2.1' },
+                  ]
+                : []),
+            ],
+          },
+        ]
+
         return (
           <ExecutionPanel
             isRunning={false}
             progress={0}
             progressMessage=""
-            completedStages={[]}
             error={error}
             accentColor="green"
-            configSummary={[
-              { label: 'Protein', value: currentStructure?.structure_id || 'Current' },
-              isProteinOnly
-                ? { label: 'Mode', value: 'Protein Only (AMBER14)' }
-                : { label: 'Ligand', value: mdStore.ligandInput.ligand_id || mdStore.ligandInput.file_name || 'None' },
-              { label: 'Workflow', value: mdStore.mdParameters.minimization_only ? 'Minimization Only' : 'Full Equilibration' },
-              ...(!mdStore.mdParameters.minimization_only ? [
-                { label: 'Simulation Length', value: mdStore.mdParameters.simulation_length?.charAt(0).toUpperCase() + mdStore.mdParameters.simulation_length?.slice(1) || 'Short' },
-                { label: 'Box Shape', value: mdStore.mdParameters.box_shape === 'cubic' ? 'Cubic' : 'Rhombic Dodecahedron' },
-              ] : []),
-              { label: 'Temperature', value: `${mdStore.mdParameters.temperature} K` },
-              { label: 'Pressure', value: `${mdStore.mdParameters.pressure} bar` },
-              { label: 'Ionic Strength', value: `${mdStore.mdParameters.ionic_strength} M` },
-              ...(!isProteinOnly ? [{ label: 'Charge Method', value: (mdStore.mdParameters.charge_method || 'am1bcc').toUpperCase() }] : []),
-              ...(!mdStore.mdParameters.minimization_only && mdStore.mdParameters.preview_before_equilibration ? [
-                { label: 'Preview Before Equilibration', value: 'Yes' },
-              ] : []),
-            ]}
+            configGroups={mdConfigGroups}
           />
         )
+      }
 
       case 4:
         return (

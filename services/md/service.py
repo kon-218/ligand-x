@@ -620,6 +620,7 @@ class MDOptimizationService:
             config.system_id,
             nvt_steps=config.nvt_steps,
             npt_steps=config.npt_steps,
+            heating_steps_per_stage=getattr(config, "heating_steps_per_stage", 2500),
             pause_at_minimized=config.pause_at_minimized,
             minimization_only=config.minimization_only,
             skip_minimization=config.minimized_acknowledged,
@@ -658,21 +659,34 @@ class MDOptimizationService:
         if "output_files" in equilibration_result:
             result["output_files"].update(equilibration_result["output_files"])
 
-        # Post-hoc analytics: parse log + compute RMSD from NPT trajectory.
+        # Post-hoc analytics: parse log + compute RMSD from all trajectory phases.
         # Wrapped in try/except so a completed simulation result is never lost
         # due to an analytics bug.
         try:
             output_files = result["output_files"]
-            # Prefer production trajectory + log when available (longer, more informative).
-            # Fall back to NPT equilibration files for runs without production phase.
-            has_production = bool(output_files.get("production_trajectory"))
+            
+            # Use production PDB if available, otherwise NPT PDB
+            topology_pdb = output_files.get("production_pdb") or output_files.get("npt_pdb")
+            
+            # Use production log if available, otherwise equilibration log
+            log_path = output_files.get("production_log") or output_files.get("equilibration_log")
+            
             analytics = EquilibrationAnalytics().compute(
                 output_dir=self.output_dir,
                 system_id=config.system_id,
-                topology_pdb=output_files.get("production_pdb") or output_files.get("npt_pdb"),
-                npt_traj=output_files.get("production_trajectory") or output_files.get("npt_trajectory"),
-                log_path=output_files.get("production_log") or output_files.get("equilibration_log"),
+                topology_pdb=topology_pdb,
+                nvt_traj=output_files.get("nvt_trajectory"),
+                npt_traj=output_files.get("npt_trajectory"),
+                production_traj=output_files.get("production_trajectory"),
+                log_path=log_path,
                 ligand_id=config.ligand_id if not config.is_protein_only else "",
+                nvt_steps=config.nvt_steps,
+                npt_steps=config.npt_steps,
+                production_steps=config.production_steps,
+                nvt_report_interval=1000,
+                npt_report_interval=1000,
+                production_report_interval=config.production_report_interval,
+                dt_ps=0.004,
             )
             result["analytics"] = analytics
         except Exception as exc:

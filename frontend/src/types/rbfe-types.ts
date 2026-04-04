@@ -38,14 +38,34 @@ export interface RBFEParameters {
   timestep_fs?: number
   hydrogen_mass?: number
 
-  // System settings
+  // Environment settings
   temperature?: number
   pressure?: number
   ionic_strength?: number
+  solvent_model?: string
+  box_shape?: string
+  solvent_padding_nm?: number
+
+  // Advanced simulation settings
+  minimization_steps?: number
 
   // Charge settings
   charge_method?: 'am1bcc' | 'am1bccelf10' | 'nagl' | 'espaloma'
   ligand_forcefield?: string  // Forcefield for ligand (e.g., 'openff-2.0.0')
+
+  // Reference ligand and docking settings (Optional Docking Workflow)
+  reference_ligand_id?: string
+  reference_pose_source?: 'cocrystal' | 'vina' | 'prior_job'
+  reference_pose_pdb?: string | null
+  vina_exhaustiveness?: number
+  vina_grid_box?: {
+    center_x: number
+    center_y: number
+    center_z: number
+    size_x: number
+    size_y: number
+    size_z: number
+  }
 
   // Compute settings
   compute_platform?: 'CUDA' | 'OpenCL' | 'CPU'
@@ -80,10 +100,13 @@ export interface RBFETransformationResult {
   name: string
   ligand_a?: string
   ligand_b?: string
+  leg?: 'complex' | 'solvent'
   estimate_kcal_mol?: number
   uncertainty_kcal_mol?: number
   status: 'completed' | 'failed' | 'running' | 'pending'
   error?: string
+  overlap_matrix?: number[][] | null
+  overlap_matrix_path?: string
 }
 
 export interface RBFEDdGValue {
@@ -98,6 +121,8 @@ export interface RBFEResults {
   ddg_values: RBFEDdGValue[]
   relative_affinities: Record<string, number>  // ligand_name -> relative ddG
   reference_ligand?: string
+  // Per-transformation overlap matrices, keyed as "ligand_a|ligand_b"
+  overlap_matrices?: Record<string, { complex?: number[][] | null; solvent?: number[][] | null }>
 }
 
 export interface DockedPoseInfo {
@@ -149,6 +174,7 @@ export interface RBFEJob {
   created_at?: string
   updated_at?: string
   error?: string
+  ligand_smiles?: Record<string, string>
 }
 
 export interface RBFECalculationConfig {
@@ -198,6 +224,25 @@ export interface BatchDockingResult {
     best_affinity?: number
     error?: string
   }>
+}
+
+// Atom mapping preview types
+export interface MappingPairResult {
+  ligand_a: string
+  ligand_b: string
+  score: number
+  num_mapped: number
+  num_unique_a: number
+  num_unique_b: number
+  svgs: string[]  // [svg_mol_a, svg_mol_b] — raw SVG strings from RDKit
+}
+
+export interface MappingPreviewResult {
+  job_id: string
+  status: string
+  pairs: MappingPairResult[]
+  num_ligands: number
+  atom_mapper: string
 }
 
 // Store state types

@@ -191,12 +191,24 @@ const nextConfig: NextConfig = {
         destination: 'http://gateway:8000/api/molecules/:path*', // Proxy to Gateway
       },
       {
+        source: '/api/structure/:path*',
+        destination: 'http://gateway:8000/api/structure/:path*', // Proxy to Gateway
+      },
+      {
         source: '/api/structures/:path*',
         destination: 'http://gateway:8000/api/structures/:path*', // Proxy to Gateway
       },
       {
         source: '/api/alignment/:path*',
         destination: 'http://gateway:8000/api/alignment/:path*', // Proxy to Gateway
+      },
+      {
+        source: '/api/services/:path*',
+        destination: 'http://gateway:8000/api/services/:path*', // Proxy to Gateway
+      },
+      {
+        source: '/api/library/:path*',
+        destination: 'http://gateway:8000/api/library/:path*', // Proxy to Gateway
       },
     ];
   },

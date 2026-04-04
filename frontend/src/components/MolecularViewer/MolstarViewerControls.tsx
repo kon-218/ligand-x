@@ -61,7 +61,7 @@ export const MolstarViewerControls: React.FC<MolstarViewerControlsProps> = ({
         <div className="flex flex-col gap-2">
           <button
             onClick={() => viewerRef.current?.coloring.applyDefault()}
-            className="px-3 py-1.5 text-xs bg-blue-600 text-white rounded hover:bg-blue-500 transition-colors"
+            className="px-3 py-1.5 text-xs bg-cyan-600 text-white rounded hover:bg-cyan-500 transition-colors"
           >
             Default
           </button>

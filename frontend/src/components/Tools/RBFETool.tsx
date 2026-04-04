@@ -1,7 +1,7 @@
 'use client'
 
-import { useEffect, useState } from 'react'
-import { GitBranch } from 'lucide-react'
+import { useEffect, useRef, useState } from 'react'
+import { GitBranch, Loader2 } from 'lucide-react'
 import { useRBFEStore } from '@/store/rbfe-store'
 import { useMolecularStore } from '@/store/molecular-store'
 import { useUnifiedResultsStore } from '@/store/unified-results-store'
@@ -20,8 +20,11 @@ import {
 import RBFENetworkSelector from './RBFE/RBFENetworkSelector'
 import { RBFEResultsPanel } from './RBFE/RBFEResultsPanel'
 import { AlignmentPreview } from './RBFE/AlignmentPreview'
-import type { WorkflowStep } from './shared'
-import type { LigandSelection, AlignmentInfo } from '@/types/rbfe-types'
+import { AtomMappingPreview } from './RBFE/AtomMappingPreview'
+import { NetworkPreview } from './RBFE/NetworkPreview'
+import { RBFEReferenceSetup } from './RBFE/RBFEReferenceSetup'
+import type { WorkflowStep, ConfigGroup } from './shared'
+import type { LigandSelection, AlignmentInfo, MappingPreviewResult } from '@/types/rbfe-types'
 
 // Define workflow steps
 const RBFE_STEPS: WorkflowStep[] = [
@@ -29,7 +32,8 @@ const RBFE_STEPS: WorkflowStep[] = [
   { id: 2, label: 'Reference', description: 'Select reference binding pose' },
   { id: 3, label: 'Network', description: 'Set network topology' },
   { id: 4, label: 'Parameters', description: 'Configure simulation' },
-  { id: 5, label: 'Results', description: 'View results' },
+  { id: 5, label: 'Execute', description: 'Review and run' },
+  { id: 6, label: 'Results', description: 'View results' },
 ]
 
 // Simulation presets
@@ -37,19 +41,19 @@ const SIMULATION_PRESETS = [
   {
     id: 'fast',
     name: 'Fast Mode',
-    description: '~1-2 hours, lower precision',
+    description: '0.5 ns, 1 repeat, ~1-2 h/edge',
     icon: null,
   },
   {
     id: 'standard',
     name: 'Standard',
-    description: '~6-12 hours, balanced',
+    description: '2 ns, 3 repeats, ~4-8 h/edge',
     icon: null,
   },
   {
     id: 'production',
     name: 'Production',
-    description: '~24+ hours, high precision',
+    description: '5 ns, 3 repeats, ~12-24 h/edge',
     icon: null,
   },
 ]
@@ -64,9 +68,9 @@ const CHARGE_METHOD_OPTIONS = [
 
 // Forcefield options
 const FORCEFIELD_OPTIONS = [
-  { value: 'openff-2.0.0', label: 'OpenFF 2.0.0 (Sage)', description: 'Standard general-purpose force field' },
+  { value: 'openff-2.2.1', label: 'OpenFF 2.2.1 (Sage)', description: 'Latest Sage release (recommended)' },
   { value: 'openff-2.1.0', label: 'OpenFF 2.1.0', description: 'Improved torsions and charged groups' },
-  { value: 'openff-2.2.0', label: 'OpenFF 2.2.0', description: 'Latest stable Sage release' },
+  { value: 'openff-2.0.0', label: 'OpenFF 2.0.0 (Sage)', description: 'Standard general-purpose force field' },
   { value: 'gaff-2.11', label: 'GAFF 2.11', description: 'General Amber Force Field' },
   { value: 'espaloma-0.3.2', label: 'Espaloma 0.3.2', description: 'Machine learning force field' },
 ]
@@ -80,14 +84,17 @@ const NETWORK_TOPOLOGIES = [
 
 const getPresetMode = (params: any): string => {
   if (params.fast_mode) return 'fast'
-  if (params.production_length_ns && params.production_length_ns >= 5) return 'production'
-  return 'standard'
+  const prodNs = params.production_length_ns || 0.5
+  if (prodNs >= 5) return 'production'
+  if (prodNs >= 2) return 'standard'
+  return 'fast'
 }
 
 export function RBFETool() {
   const rbfeStore = useRBFEStore()
   const { currentStructure } = useMolecularStore()
   const [error, setError] = useState<string | null>(null)
+  const [isSubmitting, setIsSubmitting] = useState(false)
   const [pollingInterval, setPollingInterval] = useState<NodeJS.Timeout | null>(null)
 
   // Load persisted RBFE jobs on mount (from PostgreSQL via unified jobs API)
@@ -116,7 +123,7 @@ export function RBFETool() {
           output_files: j.result?.output_files,
           alignment_info: j.result?.alignment_info,
           reference_ligand: j.result?.reference_ligand,
-        })) : []
+        })).filter((j: any) => j.network_topology) : []
         rbfeStore.setJobs(jobsData)
 
         // Check for running jobs and resume polling
@@ -128,7 +135,9 @@ export function RBFETool() {
             (a: any, b: any) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
           )[0]
           rbfeStore.setJobId(mostRecentRunning.job_id)
+          rbfeStore.setActiveJob(mostRecentRunning.job_id)
           rbfeStore.setIsRunning(true)
+          rbfeStore.setStep(6)
         }
 
         // Check for docking_ready jobs (waiting for user validation)
@@ -140,7 +149,7 @@ export function RBFETool() {
           rbfeStore.setJobId(mostRecentDockingReady.job_id)
           rbfeStore.setActiveJob(mostRecentDockingReady.job_id)
           rbfeStore.setRBFEResult(mostRecentDockingReady)
-          rbfeStore.setStep(5) // Go to results step to show docked poses
+          rbfeStore.setStep(6) // Go to results step to show docked poses
         }
       } catch (err) {
         console.error('Failed to load persisted RBFE jobs:', err)
@@ -180,6 +189,7 @@ export function RBFETool() {
               id,
               name: ligand.residue_name || id,
               source: 'current_structure' as const,
+              smiles: ligand.smiles || ligand.canonical_smiles,
               sdf_data: ligand.sdf_data,
               pdb_data: ligand.pdb_data,
               has_docked_pose: true, // Assume structure ligands have docked poses
@@ -206,58 +216,104 @@ export function RBFETool() {
   useEffect(() => {
     if (rbfeStore.jobId && rbfeStore.isRunning) {
       const { loadAllJobs } = useUnifiedResultsStore.getState()
-      const interval = setInterval(async () => {
+      const polledJobId = rbfeStore.jobId
+
+      const pollOnce = async () => {
         try {
-          const status = await api.getRBFEStatus(rbfeStore.jobId!)
+          const status = await api.getRBFEStatus(polledJobId) as any
+          const resultPayload = status.result || {}
+          const dbStatus = status.status
+          const dbStage = status.stage || ''
 
-          // Handle wrapped result structure from Celery task
-          const actualResult = (status as any).result || status
-
-          rbfeStore.updateJob(rbfeStore.jobId!, {
-            status: actualResult.status,
-            progress: actualResult.progress,
-            message: actualResult.message,
-            network: actualResult.network,
-            results: actualResult.results,
-            error: actualResult.error,
-            // Include alignment/docking results if available
-            docked_poses: actualResult.docked_poses,
-            docking_scores: actualResult.docking_scores,
-            docking_log: actualResult.docking_log,
-            output_files: actualResult.output_files,
-            alignment_info: actualResult.alignment_info,
-            reference_ligand: actualResult.reference_ligand,
-          } as any)
-
-          if (rbfeStore.activeJobId === rbfeStore.jobId) {
-            rbfeStore.setRBFEResult(actualResult)
+          // Determine the effective status. If the DB says the job is running
+          // but the stale result field still has docking_ready data, only treat
+          // it as docking_ready if the DB stage actually matches.
+          const resultStatus = resultPayload.status
+          let effectiveStatus: string
+          if (dbStatus === 'running' && resultStatus === 'docking_ready' && dbStage === 'docking_ready') {
+            effectiveStatus = 'docking_ready'
+          } else {
+            effectiveStatus = dbStatus
           }
 
-          // Stop polling if completed, failed, or docking_ready (waiting for user action)
-          if (actualResult.status === 'completed' || actualResult.status === 'failed' || actualResult.status === 'docking_ready') {
-            rbfeStore.setIsRunning(false)
-            // Refresh unified results store to show job in completed section
-            if (actualResult.status === 'completed' || actualResult.status === 'failed') {
+          // Build a normalized job object that the UI can render
+          const normalizedJob = {
+            ...status,
+            ...resultPayload,
+            job_id: status.id || resultPayload.job_id || polledJobId,
+            status: effectiveStatus,
+            progress: status.progress ?? resultPayload.progress ?? 0,
+            message: dbStage || resultPayload.message || status.message || '',
+            // Only carry forward pose data for docking_ready or completed (for the "View Alignment" button)
+            docked_poses: (effectiveStatus === 'docking_ready' || effectiveStatus === 'completed') ? resultPayload.docked_poses : undefined,
+            docking_scores: (effectiveStatus === 'docking_ready' || effectiveStatus === 'completed') ? resultPayload.docking_scores : undefined,
+            docking_log: (effectiveStatus === 'docking_ready' || effectiveStatus === 'completed') ? resultPayload.docking_log : undefined,
+          }
+
+          const { activeJobId, updateJob, setRBFEResult, setIsRunning } = useRBFEStore.getState()
+
+          updateJob(polledJobId, {
+            status: effectiveStatus,
+            progress: normalizedJob.progress,
+            message: normalizedJob.message,
+            network: resultPayload.network,
+            results: resultPayload.results,
+            error: resultPayload.error || status.error_message,
+            docked_poses: normalizedJob.docked_poses,
+            docking_scores: normalizedJob.docking_scores,
+            docking_log: normalizedJob.docking_log,
+            output_files: resultPayload.output_files,
+            alignment_info: resultPayload.alignment_info,
+            reference_ligand: resultPayload.reference_ligand,
+          } as any)
+
+          if (activeJobId === polledJobId) {
+            setRBFEResult(normalizedJob)
+          }
+
+          if (effectiveStatus === 'completed' || effectiveStatus === 'failed' || effectiveStatus === 'docking_ready') {
+            setIsRunning(false)
+            if (effectiveStatus === 'completed' || effectiveStatus === 'failed') {
               loadAllJobs()
             }
           }
         } catch (err) {
           console.error('Error polling RBFE status:', err)
         }
-      }, 30000) // RBFE calculations take hours - poll every 30 seconds
+      }
+
+      // Fetch immediately, then poll every 30s
+      pollOnce()
+      const interval = setInterval(pollOnce, 30000)
 
       setPollingInterval(interval)
       return () => clearInterval(interval)
     }
   }, [rbfeStore.jobId, rbfeStore.isRunning])
 
+  // Default radial central ligand to the selected reference when entering step 3.
+  useEffect(() => {
+    if (
+      rbfeStore.currentStep === 3 &&
+      rbfeStore.networkTopology === 'radial' &&
+      rbfeStore.centralLigand === null &&
+      rbfeStore.referenceLigandId !== null
+    ) {
+      rbfeStore.setCentralLigand(rbfeStore.referenceLigandId)
+    }
+  }, [
+    rbfeStore.currentStep,
+    rbfeStore.networkTopology,
+    rbfeStore.centralLigand,
+    rbfeStore.referenceLigandId,
+    rbfeStore.setCentralLigand,
+  ])
+
   const runRBFE = async () => {
     setError(null)
-    rbfeStore.setIsRunning(true)
-    rbfeStore.setStep(5)
+    setIsSubmitting(true)
 
     try {
-      // Prepare ligand data
       const selectedLigands = rbfeStore.availableLigands.filter((lig) =>
         rbfeStore.selectedLigandIds.includes(lig.id)
       )
@@ -270,15 +326,11 @@ export function RBFETool() {
         throw new Error('No protein structure available')
       }
 
-      rbfeStore.setProgress(10, 'Preparing ligands...')
-
-      // Convert ligands to the format expected by the API
       const ligandData = await Promise.all(
         selectedLigands.map(async (lig) => {
           let data = lig.sdf_data || ''
           let format: 'sdf' | 'mol' | 'pdb' = 'sdf'
 
-          // If no SDF data but have SMILES, convert
           if (!data && lig.smiles) {
             try {
               const result = await api.uploadSmiles(lig.smiles, lig.name)
@@ -288,14 +340,14 @@ export function RBFETool() {
             }
           }
 
-          // Fall back to PDB data
           if (!data && lig.pdb_data) {
             data = lig.pdb_data
             format = 'pdb'
           }
 
           return {
-            id: lig.name || lig.id,
+            // Keep stable internal IDs so reference_ligand_id matches backend lookup.
+            id: lig.id || lig.name,
             data,
             format,
             has_docked_pose: lig.has_docked_pose || false,
@@ -304,9 +356,6 @@ export function RBFETool() {
         })
       )
 
-      rbfeStore.setProgress(20, 'Submitting RBFE calculation...')
-
-      // Submit new job
       const requestBody = {
         protein_pdb: currentStructure.pdb_data,
         ligands: ligandData,
@@ -316,11 +365,19 @@ export function RBFETool() {
         atom_mapper: rbfeStore.rbfeParameters.atom_mapper || 'kartograf',
         atom_map_hydrogens: rbfeStore.rbfeParameters.atom_map_hydrogens !== false,
         lomap_max3d: rbfeStore.rbfeParameters.lomap_max3d || 1.0,
-        simulation_settings: rbfeStore.rbfeParameters,
+        simulation_settings: {
+          ...rbfeStore.rbfeParameters,
+          reference_ligand_id: rbfeStore.referenceLigandId || undefined,
+          reference_pose_source: rbfeStore.referencePoseSource || undefined,
+          reference_pose_pdb: rbfeStore.referencePosePdb || undefined,
+          vina_exhaustiveness: rbfeStore.vinaExhaustiveness,
+          vina_grid_box: rbfeStore.vinaGridBox || undefined,
+        },
       }
 
       const result = await api.submitRBFECalculation(requestBody)
       rbfeStore.setJobId(result.job_id)
+      rbfeStore.setProgress(0, result.message || 'Calculation submitted')
       rbfeStore.addJob({
         job_id: result.job_id,
         status: result.status || 'submitted',
@@ -330,11 +387,12 @@ export function RBFETool() {
       })
       rbfeStore.setActiveJob(result.job_id)
       rbfeStore.setRBFEResult(result)
-
-      rbfeStore.setProgress(30, result.message || 'Calculation submitted')
+      rbfeStore.setIsRunning(true)
+      rbfeStore.setStep(6)
     } catch (err: any) {
       setError(err.message)
-      rbfeStore.setIsRunning(false)
+    } finally {
+      setIsSubmitting(false)
     }
   }
 
@@ -353,25 +411,22 @@ export function RBFETool() {
     }
 
     setError(null)
-    rbfeStore.setIsRunning(true)
+
+    // Immediately show the resuming state (clear docked poses from display)
+    // but don't start polling yet — wait for the backend to clear stale data first.
+    rbfeStore.updateJob(existingJobId, { status: 'resuming' })
+    rbfeStore.setRBFEResult({
+      ...rbfeStore.rbfeResult,
+      status: 'resuming',
+      docked_poses: undefined,
+      docking_scores: undefined,
+      docking_log: undefined,
+    } as any)
 
     try {
-      // Update UI to show resuming state
-      rbfeStore.updateJob(existingJobId, {
-        status: 'resuming',
-      })
-      rbfeStore.setRBFEResult({
-        ...rbfeStore.rbfeResult,
-        status: 'resuming',
-        docked_poses: undefined, // Clear docking preview
-        docking_scores: undefined,
-        docking_log: undefined,
-      } as any)
-
-      // Call the resume endpoint directly with existing job ID
+      // Backend clears stale Celery result + DB result, then submits new task
       const result = await api.continueRBFEAfterDocking(existingJobId)
 
-      // Update job status
       const jobId = result.job_id || existingJobId
       rbfeStore.updateJob(jobId, {
         status: result.status || 'running',
@@ -385,15 +440,17 @@ export function RBFETool() {
         ...result,
         job_id: jobId,
       })
-
       rbfeStore.setProgress(30, result.message || 'Calculation resumed')
+
+      // Start polling only AFTER the backend has cleared stale data
+      rbfeStore.setIsRunning(true)
     } catch (err: any) {
       setError(err.message || 'Failed to continue RBFE calculation')
-      rbfeStore.setIsRunning(false)
       // Restore the docking_ready state so user can try again
-      if (rbfeStore.rbfeResult) {
+      const currentResult = useRBFEStore.getState().rbfeResult
+      if (currentResult) {
         rbfeStore.setRBFEResult({
-          ...rbfeStore.rbfeResult,
+          ...currentResult,
           status: 'docking_ready',
         } as any)
       }
@@ -410,16 +467,126 @@ export function RBFETool() {
     }
   }
 
+  // Mapping preview polling ref
+  const mappingPreviewPollRef = useRef<NodeJS.Timeout | null>(null)
+
+  const stopMappingPreviewPoll = () => {
+    if (mappingPreviewPollRef.current) {
+      clearInterval(mappingPreviewPollRef.current)
+      mappingPreviewPollRef.current = null
+    }
+  }
+
+  // Start polling for mapping preview job
+  const startMappingPreviewPoll = (jobId: string) => {
+    stopMappingPreviewPoll()
+    mappingPreviewPollRef.current = setInterval(async () => {
+      // Guard against stale closure — use getState() to check current store value
+      const currentJobId = useRBFEStore.getState().mappingPreviewJobId
+      if (currentJobId !== jobId) {
+        stopMappingPreviewPoll()
+        return
+      }
+      try {
+        const status = await api.getJobDetails(jobId)
+        const s = status?.status?.toLowerCase()
+        
+        if (s === 'completed') {
+          stopMappingPreviewPoll()
+          
+          // Unwrap task envelope: status.result might be wrapped or unwrapped
+          // Wrapped: status.result = { status, result: { pairs, ... }, ... }
+          // Unwrapped: status.result = { pairs, ... }
+          const resultData = status?.result
+          const previewData: MappingPreviewResult | null = 
+            resultData?.result || resultData || null
+            
+          // Verify we have the actual data (check for pairs array)
+          if (previewData && Array.isArray(previewData.pairs)) {
+            rbfeStore.setMappingPreviewResult(previewData)
+            rbfeStore.setMappingPreviewStatus('completed')
+          } else {
+            console.error('Mapping preview completed but result format invalid:', status)
+            rbfeStore.setMappingPreviewStatus('failed')
+          }
+        } else if (s === 'failed') {
+          stopMappingPreviewPoll()
+          rbfeStore.setMappingPreviewStatus('failed')
+        }
+      } catch (err) {
+        console.error('Error polling mapping preview:', err)
+      }
+    }, 5000) // poll every 5s (preview finishes in ~30-90s)
+  }
+
+  // Clean up on unmount
+  useEffect(() => () => stopMappingPreviewPoll(), [])
+
+  const handlePreviewMapping = async () => {
+    const selectedLigands = rbfeStore.availableLigands.filter((lig) =>
+      rbfeStore.selectedLigandIds.includes(lig.id)
+    )
+
+    if (selectedLigands.length < 2) return
+
+    rbfeStore.setMappingPreviewStatus('running')
+    rbfeStore.setMappingPreviewResult(null)
+
+    try {
+      const ligandData = await Promise.all(
+        selectedLigands.map(async (lig) => {
+          let data = lig.sdf_data || ''
+          let format = 'sdf'
+
+          if (!data && lig.smiles) {
+            try {
+              const result = await api.uploadSmiles(lig.smiles, lig.name)
+              data = result.sdf_data || ''
+            } catch (e) {
+              console.error(`Failed to convert SMILES for ${lig.name}:`, e)
+            }
+          }
+          if (!data && lig.pdb_data) {
+            data = lig.pdb_data
+            format = 'pdb'
+          }
+
+          return { id: lig.name || lig.id, data, format }
+        })
+      )
+
+      const response = await api.submitMappingPreview({
+        ligands: ligandData,
+        atom_mapper: rbfeStore.rbfeParameters.atom_mapper || 'kartograf',
+        atom_map_hydrogens: rbfeStore.rbfeParameters.atom_map_hydrogens !== false,
+        lomap_max3d: rbfeStore.rbfeParameters.lomap_max3d || 1.0,
+        charge_method: rbfeStore.rbfeParameters.charge_method || 'am1bcc',
+      })
+
+      rbfeStore.setMappingPreviewJobId(response.job_id)
+      startMappingPreviewPoll(response.job_id)
+    } catch (err: any) {
+      console.error('Failed to submit mapping preview:', err)
+      rbfeStore.setMappingPreviewStatus('failed')
+    }
+  }
+
   // Check if can proceed to next step
   const canProceed = (() => {
     switch (rbfeStore.currentStep) {
       case 1:
         return rbfeStore.selectedLigandIds.length >= 2 && isValidProtein(currentStructure)
       case 2:
-        return true // Docking is optional
+        return (
+          rbfeStore.referenceLigandId !== null &&
+          rbfeStore.referencePoseSource !== null &&
+          (rbfeStore.referencePoseSource === 'vina' || rbfeStore.referencePosePdb !== null)
+        )
       case 3:
         return rbfeStore.networkTopology !== undefined
       case 4:
+        return true
+      case 5:
         return true
       default:
         return true
@@ -431,7 +598,7 @@ export function RBFETool() {
     switch (rbfeStore.currentStep) {
       case 1:
         return (
-          <div className="space-y-6 overflow-y-auto max-h-[calc(100vh-300px)]">
+          <div className="space-y-6">
             <RBFENetworkSelector
               availableLigands={rbfeStore.availableLigands}
               selectedLigandIds={rbfeStore.selectedLigandIds}
@@ -453,13 +620,35 @@ export function RBFETool() {
         )
 
       case 2:
+        return <RBFEReferenceSetup />
+
+      case 3: {
+        const canPreview = rbfeStore.selectedLigandIds.length >= 2
+        const previewStatus = rbfeStore.mappingPreviewStatus
+        const previewRunning = previewStatus === 'running'
+
+        // Resolve central ligand name for NetworkPreview
+        const centralLigandName = rbfeStore.centralLigand
+          ? rbfeStore.availableLigands.find((l) => l.id === rbfeStore.centralLigand)?.name || rbfeStore.centralLigand
+          : null
+
+        const selectedLigandNames = rbfeStore.selectedLigandIds.map(
+          (id) => rbfeStore.availableLigands.find((l) => l.id === id)?.name || id,
+        )
+
         return (
           <div className="space-y-6">
-            <ParameterSection title="Atom Mapper (Network Creation)" collapsible defaultExpanded>
+            <ParameterSection title="Atom Mapper" collapsible defaultExpanded>
               <SelectParameter
                 label="Atom Mapper"
                 value={rbfeStore.rbfeParameters.atom_mapper || 'kartograf'}
-                onChange={(v: string) => rbfeStore.setRBFEParameters({ atom_mapper: v as any })}
+                onChange={(v: string) => {
+                  rbfeStore.setRBFEParameters({ atom_mapper: v as any })
+                  if (rbfeStore.mappingPreviewStatus !== 'idle') {
+                    stopMappingPreviewPoll()
+                    rbfeStore.clearMappingPreview()
+                  }
+                }}
                 options={[
                   { value: 'kartograf', label: 'Kartograf (Recommended - 3D geometry)' },
                   { value: 'lomap', label: 'LOMAP (2D MCS-based)' },
@@ -484,36 +673,42 @@ export function RBFETool() {
               )}
             </ParameterSection>
 
-            <InfoBox variant="info" title="Atom Mapper Selection (OpenFE Best Practices)">
-              <div className="space-y-2 text-sm">
-                <p>
-                  <strong>The atom mapper creates the network AND handles alignment automatically.</strong> No pre-alignment is needed.
-                </p>
-                <ul className="list-disc ml-4 space-y-1 mt-2">
-                  <li><strong>Kartograf</strong>: Geometry-based, preserves 3D binding mode from docked poses. Use for ligands with 3D coordinates (95% identical mappings in research studies).</li>
-                  <li><strong>LOMAP</strong>: 2D MCS-based, may realign structures. Use for 2D structures or when Kartograf fails.</li>
-                </ul>
-                <p className="text-green-400 mt-2">
-                  Network quality scores guide decisions - low scores indicate challenging transformations, not failures.
+            {/* Preview Mappings button */}
+            {previewStatus !== 'completed' && (
+              <div className="flex flex-col gap-2">
+                <button
+                  onClick={handlePreviewMapping}
+                  disabled={!canPreview || previewRunning}
+                  className="flex items-center justify-center gap-2 w-full px-4 py-2.5 rounded-lg bg-cyan-700 hover:bg-cyan-600 disabled:opacity-50 disabled:cursor-not-allowed text-sm font-medium text-white transition-colors"
+                >
+                  {previewRunning ? (
+                    <>
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                      Computing atom mappings...
+                    </>
+                  ) : (
+                    'Preview Atom Mappings'
+                  )}
+                </button>
+                {previewStatus === 'failed' && (
+                  <p className="text-xs text-red-400 text-center">
+                    Mapping preview failed. Check that your ligands have valid 3D structures and try again.
+                  </p>
+                )}
+                <p className="text-xs text-gray-500 text-center">
+                  Preview is optional — you can proceed without running it.
                 </p>
               </div>
-            </InfoBox>
-
-            {rbfeStore.rbfeParameters.atom_mapper && (
-              <InfoBox variant="success" title="Selected Mapper">
-                <p>
-                  Using <strong>{rbfeStore.rbfeParameters.atom_mapper === 'kartograf' ? 'Kartograf' : rbfeStore.rbfeParameters.atom_mapper === 'lomap' ? 'LOMAP' : 'LOMAP Relaxed'}</strong> for network creation.
-                  {rbfeStore.rbfeParameters.atom_mapper === 'kartograf' && ' This will preserve 3D binding modes from your ligand coordinates.'}
-                  {rbfeStore.rbfeParameters.atom_mapper === 'lomap' && ' This uses 2D MCS matching (may realign structures).'}
-                </p>
-              </InfoBox>
             )}
-          </div>
-        )
 
-      case 3:
-        return (
-          <div className="space-y-6">
+            {/* Completed preview */}
+            {previewStatus === 'completed' && rbfeStore.mappingPreviewResult && (
+              <AtomMappingPreview
+                result={rbfeStore.mappingPreviewResult}
+                onClear={() => rbfeStore.clearMappingPreview()}
+              />
+            )}
+
             <ParameterSection title="Network Topology" collapsible defaultExpanded>
               <SelectParameter
                 label="Topology Type"
@@ -540,6 +735,20 @@ export function RBFETool() {
               )}
             </ParameterSection>
 
+            {/* Live network preview — always shown when ≥2 ligands selected */}
+            {selectedLigandNames.length >= 2 && (
+              <div>
+                <div className="text-sm font-medium text-gray-300 mb-2">Network Preview</div>
+                <NetworkPreview
+                  pairs={rbfeStore.mappingPreviewResult?.pairs ?? []}
+                  topology={rbfeStore.networkTopology}
+                  centralLigand={centralLigandName}
+                  ligandNames={selectedLigandNames}
+                  availableLigands={rbfeStore.availableLigands}
+                />
+              </div>
+            )}
+
             <InfoBox variant="info" title="Network Topology Guide">
               <ul className="list-disc ml-4 space-y-1 text-sm">
                 <li><strong>MST:</strong> Minimizes edges, best for small-medium sets</li>
@@ -549,6 +758,7 @@ export function RBFETool() {
             </InfoBox>
           </div>
         )
+      }
 
       case 4:
         return (
@@ -562,6 +772,7 @@ export function RBFETool() {
                   rbfeStore.setRBFEParameters({
                     fast_mode: true,
                     production_length_ns: 0.5,
+                    equilibration_length_ns: 0.1,
                     lambda_windows: 11,
                     protocol_repeats: 1,
                   })
@@ -569,6 +780,7 @@ export function RBFETool() {
                   rbfeStore.setRBFEParameters({
                     fast_mode: false,
                     production_length_ns: 5,
+                    equilibration_length_ns: 1.0,
                     lambda_windows: 11,
                     protocol_repeats: 3,
                   })
@@ -576,6 +788,7 @@ export function RBFETool() {
                   rbfeStore.setRBFEParameters({
                     fast_mode: false,
                     production_length_ns: 2,
+                    equilibration_length_ns: 0.5,
                     lambda_windows: 11,
                     protocol_repeats: 3,
                   })
@@ -603,7 +816,18 @@ export function RBFETool() {
                 max={10}
                 step={0.1}
                 unit="ns"
-                description="Production simulation time per window"
+                description="Production simulation time per lambda window"
+                accentColor="cyan"
+              />
+              <SliderParameter
+                label="Equilibration Length"
+                value={rbfeStore.rbfeParameters.equilibration_length_ns || 0.1}
+                onChange={(v: number) => rbfeStore.setRBFEParameters({ equilibration_length_ns: v })}
+                min={0.05}
+                max={2}
+                step={0.05}
+                unit="ns"
+                description="Equilibration time before production per window"
                 accentColor="cyan"
               />
               <SliderParameter
@@ -618,50 +842,10 @@ export function RBFETool() {
               />
             </ParameterSection>
 
-            <ParameterSection title="Robustness Settings" collapsible defaultExpanded>
-              <ToggleParameter
-                label="Robust Mode"
-                value={rbfeStore.rbfeParameters.robust || false}
-                onChange={(v: boolean) => {
-                  rbfeStore.setRBFEParameters({
-                    robust: v,
-                    // Auto-adjust timestep when robust mode changes
-                    timestep_fs: v ? 2.0 : 4.0
-                  })
-                }}
-                description="Use safer simulation settings (2.0 fs) for unstable systems"
-                accentColor="cyan"
-              />
-
-              <ParameterSection title="Advanced Dynamics" collapsible={true} defaultExpanded={false}>
-                <SliderParameter
-                  label="Timestep (fs)"
-                  value={rbfeStore.rbfeParameters.timestep_fs || (rbfeStore.rbfeParameters.robust ? 2.0 : 4.0)}
-                  onChange={(v: number) => rbfeStore.setRBFEParameters({ timestep_fs: v })}
-                  min={0.5}
-                  max={4.0}
-                  step={0.5}
-                  description="Integration timestep (lower = more stable)"
-                  accentColor="cyan"
-                />
-
-                <SliderParameter
-                  label="Hydrogen Mass (amu)"
-                  value={rbfeStore.rbfeParameters.hydrogen_mass || 3.0}
-                  onChange={(v: number) => rbfeStore.setRBFEParameters({ hydrogen_mass: v })}
-                  min={1.0}
-                  max={4.0}
-                  step={0.1}
-                  description="Mass repartitioning (3.0 = HMR, 1.0 = standard)"
-                  accentColor="cyan"
-                />
-              </ParameterSection>
-            </ParameterSection>
-
-            <ParameterSection title="Ligand Preparation Settings" collapsible defaultExpanded>
+            <ParameterSection title="Ligand Preparation" collapsible defaultExpanded>
               <SelectParameter
                 label="Ligand Forcefield"
-                value={rbfeStore.rbfeParameters.ligand_forcefield || 'openff-2.0.0'}
+                value={rbfeStore.rbfeParameters.ligand_forcefield || 'openff-2.2.1'}
                 onChange={(v: string) => rbfeStore.setRBFEParameters({ ligand_forcefield: v })}
                 options={FORCEFIELD_OPTIONS}
                 description="Force field for small molecule parameterization"
@@ -674,10 +858,235 @@ export function RBFETool() {
                 description="Method for assigning partial charges to ligands"
               />
             </ParameterSection>
+
+            <ParameterSection title="Environment" collapsible defaultExpanded={false}>
+              <SliderParameter
+                label="Temperature"
+                value={rbfeStore.rbfeParameters.temperature || 298.15}
+                onChange={(v: number) => rbfeStore.setRBFEParameters({ temperature: v })}
+                min={273}
+                max={373}
+                step={0.5}
+                unit="K"
+                description="Simulation temperature"
+                accentColor="cyan"
+              />
+              <SliderParameter
+                label="Pressure"
+                value={rbfeStore.rbfeParameters.pressure || 1.0}
+                onChange={(v: number) => rbfeStore.setRBFEParameters({ pressure: v })}
+                min={0.5}
+                max={2.0}
+                step={0.1}
+                unit="bar"
+                description="Simulation pressure"
+                accentColor="cyan"
+              />
+              <SelectParameter
+                label="Solvent Model"
+                value={rbfeStore.rbfeParameters.solvent_model || 'tip3p'}
+                onChange={(v: string) => rbfeStore.setRBFEParameters({ solvent_model: v })}
+                options={[
+                  { value: 'tip3p', label: 'TIP3P (standard)' },
+                  { value: 'spce', label: 'SPC/E' },
+                  { value: 'tip4pew', label: 'TIP4P-Ew' },
+                ]}
+                description="Water model for solvation"
+              />
+              <SelectParameter
+                label="Box Shape"
+                value={rbfeStore.rbfeParameters.box_shape || 'dodecahedron'}
+                onChange={(v: string) => rbfeStore.setRBFEParameters({ box_shape: v })}
+                options={[
+                  { value: 'dodecahedron', label: 'Dodecahedron (recommended)' },
+                  { value: 'cube', label: 'Cube' },
+                  { value: 'octahedron', label: 'Octahedron' },
+                ]}
+                description="Periodic box shape"
+              />
+              <SliderParameter
+                label="Ionic Strength"
+                value={rbfeStore.rbfeParameters.ionic_strength || 0.15}
+                onChange={(v: number) => rbfeStore.setRBFEParameters({ ionic_strength: v })}
+                min={0.0}
+                max={0.5}
+                step={0.01}
+                unit="M"
+                description="NaCl concentration for charge neutralization"
+                accentColor="cyan"
+              />
+            </ParameterSection>
+
+            <ParameterSection title="Advanced Settings" collapsible defaultExpanded={false}>
+              <ToggleParameter
+                label="Robust Mode"
+                value={rbfeStore.rbfeParameters.robust || false}
+                onChange={(v: boolean) => {
+                  rbfeStore.setRBFEParameters({
+                    robust: v,
+                    timestep_fs: v ? 2.0 : 4.0,
+                  })
+                }}
+                description="Use safer simulation settings (2.0 fs timestep) for unstable systems"
+                accentColor="cyan"
+              />
+              <SliderParameter
+                label="Timestep"
+                value={rbfeStore.rbfeParameters.timestep_fs || 4.0}
+                onChange={(v: number) => rbfeStore.setRBFEParameters({ timestep_fs: v })}
+                min={0.5}
+                max={4.0}
+                step={0.5}
+                unit="fs"
+                description="Integration timestep (lower = more stable but slower)"
+                accentColor="cyan"
+              />
+              <SliderParameter
+                label="Hydrogen Mass"
+                value={rbfeStore.rbfeParameters.hydrogen_mass || 3.0}
+                onChange={(v: number) => rbfeStore.setRBFEParameters({ hydrogen_mass: v })}
+                min={1.0}
+                max={4.0}
+                step={0.1}
+                unit="amu"
+                description="Mass repartitioning (3.0 = HMR standard, 1.0 = no HMR)"
+                accentColor="cyan"
+              />
+              <SliderParameter
+                label="Minimization Steps"
+                value={rbfeStore.rbfeParameters.minimization_steps || 10000}
+                onChange={(v: number) => rbfeStore.setRBFEParameters({ minimization_steps: v })}
+                min={1000}
+                max={50000}
+                step={1000}
+                description="Energy minimization steps before simulation"
+                accentColor="cyan"
+              />
+              <SliderParameter
+                label="Solvent Padding"
+                value={rbfeStore.rbfeParameters.solvent_padding_nm || 1.5}
+                onChange={(v: number) => rbfeStore.setRBFEParameters({ solvent_padding_nm: v })}
+                min={0.8}
+                max={2.5}
+                step={0.1}
+                unit="nm"
+                description="Minimum distance from solute to box edge"
+                accentColor="cyan"
+              />
+            </ParameterSection>
           </div>
         )
 
-      case 5:
+      case 5: {
+        const params = rbfeStore.rbfeParameters
+        const prodNs = params.production_length_ns || 0.5
+        const equilNs = params.equilibration_length_ns || 0.1
+        const repeats = params.protocol_repeats || 1
+        const lambdaWindows = params.lambda_windows || 11
+        const mode = params.fast_mode ? 'Fast' : prodNs >= 5 ? 'Production' : 'Standard'
+        const modeColor = mode === 'Fast' ? 'text-yellow-300' : mode === 'Production' ? 'text-green-300' : 'text-blue-300'
+        const numLigands = rbfeStore.selectedLigandIds.length
+        const topology = rbfeStore.networkTopology || 'mst'
+        const rawEdges = topology === 'maximal'
+          ? numLigands * (numLigands - 1) / 2
+          : topology === 'radial'
+            ? numLigands - 1
+            : numLigands - 1
+        const estimatedEdges = Math.max(0, rawEdges)
+
+        const selectedNames = rbfeStore.selectedLigandIds
+          .map((id) => rbfeStore.availableLigands.find((l) => l.id === id)?.name || id)
+          .slice(0, 6)
+        const selectedNamesLabel =
+          selectedNames.length > 0
+            ? selectedNames.join(', ') + (numLigands > 6 ? ` +${numLigands - 6} more` : '')
+            : 'No ligands selected'
+
+        const refLigandName = rbfeStore.referenceLigandId
+          ? rbfeStore.availableLigands.find((l) => l.id === rbfeStore.referenceLigandId)?.name || rbfeStore.referenceLigandId
+          : 'Not selected'
+        const poseSourceLabel = rbfeStore.referencePoseSource === 'cocrystal'
+          ? 'Co-crystal from PDB'
+          : rbfeStore.referencePoseSource === 'vina'
+            ? 'Vina docking'
+            : rbfeStore.referencePoseSource === 'prior_job'
+              ? 'Imported from prior job'
+              : 'Not selected'
+
+        const configGroups: ConfigGroup[] = [
+          {
+            title: 'Structures',
+            items: [
+              { label: 'Protein', value: currentStructure?.structure_id || 'Current structure' },
+              { label: 'Ligands', value: `${numLigands} selected` },
+              { label: 'Names', value: selectedNamesLabel },
+            ],
+          },
+          {
+            title: 'Reference Pose',
+            items: [
+              { label: 'Reference Ligand', value: refLigandName },
+              { label: 'Pose Source', value: poseSourceLabel },
+              ...(rbfeStore.referencePoseSource === 'vina'
+                ? [{ label: 'Vina Exhaustiveness', value: `${rbfeStore.vinaExhaustiveness}` }]
+                : []),
+            ],
+          },
+          {
+            title: 'Network',
+            items: [
+              { label: 'Topology', value: topology === 'mst' ? 'Minimum Spanning Tree' : topology.charAt(0).toUpperCase() + topology.slice(1) },
+              { label: 'Atom Mapper', value: (params.atom_mapper || 'kartograf').charAt(0).toUpperCase() + (params.atom_mapper || 'kartograf').slice(1) },
+              { label: 'Estimated Edges', value: estimatedEdges === 0 ? 'N/A (select 2+ ligands)' : `~${estimatedEdges} transformations (${estimatedEdges * 2} legs)` },
+            ],
+          },
+          {
+            title: 'Simulation',
+            items: [
+              { label: 'Preset', value: mode, valueColor: modeColor },
+              { label: 'Production', value: `${prodNs} ns per window` },
+              { label: 'Equilibration', value: `${equilNs} ns` },
+              { label: 'Lambda Windows', value: `${lambdaWindows}` },
+              { label: 'Repeats', value: `${repeats}` },
+            ],
+          },
+          {
+            title: 'Environment',
+            items: [
+              { label: 'Temperature', value: `${params.temperature || 298.15} K` },
+              { label: 'Pressure', value: `${params.pressure || 1.0} bar` },
+              { label: 'Solvent', value: (params.solvent_model || 'tip3p').toUpperCase() },
+              { label: 'Forcefield', value: params.ligand_forcefield || 'openff-2.2.1' },
+              { label: 'Timestep', value: `${params.timestep_fs || 4.0} fs ${params.robust ? '(robust)' : '(HMR)'}` },
+            ],
+          },
+        ]
+
+        const runtimeValue = estimatedEdges === 0
+          ? 'N/A (select 2+ ligands)'
+          : mode === 'Fast'
+            ? `~${Math.ceil(estimatedEdges * 2 * 1)} - ${Math.ceil(estimatedEdges * 2 * 2)} hours`
+            : mode === 'Standard'
+              ? `~${Math.ceil(estimatedEdges * 2 * 4)} - ${Math.ceil(estimatedEdges * 2 * 8)} hours`
+              : `~${Math.ceil(estimatedEdges * 2 * 12)} - ${Math.ceil(estimatedEdges * 2 * 24)} hours`
+
+        return (
+          <ExecutionPanel
+            isRunning={false}
+            progress={0}
+            progressMessage=""
+            error={error}
+            accentColor="cyan"
+            configGroups={configGroups}
+            runtimeEstimate={{
+              value: runtimeValue,
+              detail: `${estimatedEdges} edges × 2 legs (complex + solvent) × ${repeats} repeat${repeats > 1 ? 's' : ''} · GPU accelerated`,
+            }}
+          />
+        )
+      }
+
+      case 6:
         return (
           <RBFEResultsPanel
             result={rbfeStore.rbfeResult}
@@ -688,35 +1097,52 @@ export function RBFETool() {
             activeJobId={rbfeStore.activeJobId}
             onSelectJob={async (jobId) => {
               rbfeStore.setActiveJob(jobId)
-              // Fetch full job status for the selected job
+              if (!jobId) {
+                rbfeStore.setRBFEResult(null)
+                rbfeStore.setIsRunning(false)
+                rbfeStore.setJobId(null)
+                return
+              }
               try {
-                const status = await api.getRBFEStatus(jobId)
-                // Handle wrapped result structure and normalize to RBFEJob
+                const status = await api.getRBFEStatus(jobId) as any
                 const resultPayload = status.result || {}
+                const dbStatus = status.status
+                const dbStage = status.stage || ''
+                const resultStatus = resultPayload.status
+
+                // Only treat as docking_ready if DB stage actually matches
+                let effectiveStatus: string
+                if (dbStatus === 'running' && resultStatus === 'docking_ready' && dbStage === 'docking_ready') {
+                  effectiveStatus = 'docking_ready'
+                } else {
+                  effectiveStatus = dbStatus
+                }
+
+                const showPoses = effectiveStatus === 'docking_ready' || effectiveStatus === 'completed'
                 const rbfeJob = {
                   ...status,
                   ...resultPayload,
                   job_id: status.id || resultPayload.job_id || jobId,
-                  // Ensure status is authoritative from DB, unless it's 'running' and payload has 'docking_ready'
-                  status: (status.status === 'running' && resultPayload.status === 'docking_ready')
-                    ? 'docking_ready'
-                    : status.status,
-                  // Ensure docked_poses are at top level
-                  docked_poses: resultPayload.docked_poses,
-                  docking_scores: resultPayload.docking_scores,
-                  docking_log: resultPayload.docking_log,
-                  results: resultPayload.results || resultPayload, // Some payloads put results at top, some nested
+                  status: effectiveStatus,
+                  docked_poses: showPoses ? resultPayload.docked_poses : undefined,
+                  docking_scores: showPoses ? resultPayload.docking_scores : undefined,
+                  docking_log: showPoses ? resultPayload.docking_log : undefined,
+                  results: resultPayload.results || resultPayload,
                 }
 
-                // If results are nested in the payload (common in completed jobs), unwrap them
                 if (rbfeJob.results?.results) {
                   rbfeJob.results = rbfeJob.results.results
                 }
 
-                rbfeStore.setRBFEResult(rbfeJob as any) // Cast to any to avoid strict type checks on status string
+                rbfeStore.setRBFEResult(rbfeJob as any)
+
+                // If job is running, start tracking it
+                if (effectiveStatus === 'running' || effectiveStatus === 'preparing' || effectiveStatus === 'submitted' || effectiveStatus === 'resuming') {
+                  rbfeStore.setJobId(jobId)
+                  rbfeStore.setIsRunning(true)
+                }
               } catch (err) {
                 console.error('Failed to fetch job status:', err)
-                // Fallback to cached job data
                 const job = rbfeStore.jobs.find((j) => j.job_id === jobId)
                 if (job) {
                   rbfeStore.setRBFEResult(job)
@@ -750,10 +1176,10 @@ export function RBFETool() {
       onReset={rbfeStore.reset}
       onExecute={() => runRBFE()}
       canProceed={canProceed}
-      isRunning={rbfeStore.isRunning}
+      isRunning={isSubmitting}
       allowStepNavigationWhileRunning={true}
       executeLabel="Start RBFE"
-      showExecuteOnStep={4}
+      showExecuteOnStep={5}
       accentColor="cyan"
       error={error}
     >

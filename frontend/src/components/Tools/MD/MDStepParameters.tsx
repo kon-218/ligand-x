@@ -40,6 +40,17 @@ export function MDStepParameters({
     }
   }
 
+  const simulationOptions: Array<{
+    value: SimulationLength
+    title: string
+    subtitle: string
+  }> = [
+      { value: 'short', title: 'Short', subtitle: '50 ps equilibration' },
+      { value: 'medium', title: 'Medium', subtitle: '100 ps equilibration' },
+      { value: 'long', title: 'Long', subtitle: '200 ps equilibration' },
+      { value: 'custom', title: 'Custom', subtitle: 'Set NVT/NPT steps manually' },
+    ]
+
   return (
     <div className="space-y-6">
       <h3 className="text-lg font-semibold mb-4">Step 2: MD Parameters</h3>
@@ -106,22 +117,33 @@ export function MDStepParameters({
           {/* Simulation Length */}
           <div>
             <Label className="mb-2 block">Simulation Length</Label>
-            <select
-              value={parameters.simulation_length}
-              onChange={(e) => onSimulationLengthChange(e.target.value as SimulationLength)}
-              className="w-full p-2 bg-gray-700 border border-gray-600 rounded text-white"
-            >
-              <option value="short">Short (50 ps equilibration)</option>
-              <option value="medium">Medium (100 ps equilibration)</option>
-              <option value="long">Long (200 ps equilibration)</option>
-              <option value="custom">Custom</option>
-            </select>
+            <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-2">
+              {simulationOptions.map((option) => {
+                const isActive = parameters.simulation_length === option.value
+                return (
+                  <button
+                    key={option.value}
+                    type="button"
+                    onClick={() => onSimulationLengthChange(option.value)}
+                    className={`rounded border p-3 text-left transition-all ${isActive
+                      ? 'border-blue-500 bg-blue-900/30'
+                      : 'border-gray-600 bg-gray-800/50 hover:border-gray-500'
+                      }`}
+                  >
+                    <p className="text-sm font-medium text-gray-100">{option.title}</p>
+                    <p className="text-xs text-gray-400">{option.subtitle}</p>
+                  </button>
+                )
+              })}
+            </div>
             <p className="text-xs text-gray-400 mt-1">Longer simulations provide better relaxation</p>
           </div>
 
           {/* Custom Steps */}
           {parameters.simulation_length === 'custom' && (
-            <div className="grid grid-cols-2 gap-4">
+            <div className="rounded border border-blue-900/40 bg-blue-950/10 p-3">
+              <p className="text-xs text-blue-300 mb-3">Manual equilibration steps</p>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <div>
                 <Label className="mb-2 block">NVT Steps</Label>
                 <Input
@@ -143,6 +165,7 @@ export function MDStepParameters({
                   max={1000000}
                   className="bg-gray-700 border-gray-600"
                 />
+              </div>
               </div>
             </div>
           )}

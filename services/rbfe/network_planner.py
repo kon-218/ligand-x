@@ -4,7 +4,7 @@ Handles ligand network topology planning for relative binding free energy calcul
 """
 from __future__ import annotations
 import logging
-from typing import Dict, Any, Optional, List, Tuple
+from typing import Dict, Any, Optional, List, Tuple  # noqa: F401 – Tuple used in generate_edge_svg
 from dataclasses import dataclass, field
 
 logger = logging.getLogger(__name__)
@@ -390,6 +390,117 @@ class NetworkPlanner:
             'quality': quality
         }
     
+    def generate_edge_svg(self, edge) -> List[str]:
+        """Generate [svg_a, svg_b] SVG strings for one atom mapping edge.
+
+        Atoms in the shared mapping are highlighted green; atoms unique to each
+        molecule are highlighted red.
+
+        Returns:
+            List of 2 SVG strings [svg_mol_a, svg_mol_b], or empty list on failure.
+        """
+        try:
+            from rdkit.Chem.Draw import rdMolDraw2D
+            from rdkit.Chem import Draw, AllChem
+            import copy
+
+            mol_a = edge.componentA.to_rdkit()
+            mol_b = edge.componentB.to_rdkit()
+            mapping: Dict[int, int] = edge.componentA_to_componentB if hasattr(edge, 'componentA_to_componentB') else {}
+
+            mapped_a = list(mapping.keys())
+            unique_a = [i for i in range(mol_a.GetNumAtoms()) if i not in mapping]
+            mapped_b = list(mapping.values())
+            unique_b = [i for i in range(mol_b.GetNumAtoms()) if i not in set(mapped_b)]
+
+            GREEN = (0.2, 0.8, 0.2)
+            RED = (0.8, 0.2, 0.2)
+
+            svgs = []
+            for mol, mapped, unique in [(mol_a, mapped_a, unique_a), (mol_b, mapped_b, unique_b)]:
+                # Work on a copy so we don't mutate the original
+                mol2d = copy.copy(mol)
+                # Remove any existing conformers (3D) and generate fresh 2D coords
+                mol2d.RemoveAllConformers()
+                AllChem.Compute2DCoords(mol2d)
+
+                # DrawMoleculeWithHighlights expects dict[int, list[color_tuple]]
+                hl_atoms: Dict[int, List] = {a: [GREEN] for a in mapped}
+                hl_atoms.update({a: [RED] for a in unique})
+
+                drawer = rdMolDraw2D.MolDraw2DSVG(250, 250)
+                Draw.PrepareMolForDrawing(mol2d)
+                drawer.DrawMoleculeWithHighlights(mol2d, '', hl_atoms, {}, {}, {})
+                drawer.FinishDrawing()
+                svgs.append(drawer.GetDrawingText())
+
+            return svgs
+        except Exception as e:
+            logger.warning(f"Failed to generate mapping SVG: {e}", exc_info=True)
+            return []
+
+    def compute_all_pairwise_mappings(self, ligands: List) -> List[Dict[str, Any]]:
+        """Compute all pairwise atom mappings and return per-pair data with SVGs.
+
+        Uses the primary mapper to generate a maximal network, then extracts
+        per-edge mapping data and renders highlight SVGs.
+
+        Args:
+            ligands: List of OpenFE SmallMoleculeComponent objects (at least 2).
+
+        Returns:
+            List of dicts with keys:
+                ligand_a, ligand_b, score, num_mapped,
+                num_unique_a, num_unique_b, svgs
+        """
+        if len(ligands) < 2:
+            raise ValueError("At least 2 ligands are required for pairwise mapping")
+
+        logger.info(f"Computing all pairwise mappings for {len(ligands)} ligands using {self.atom_mapper_type}")
+
+        network = generate_maximal_network(
+            ligands=ligands,
+            mappers=[self.primary_mapper],
+            scorer=self.scorer,
+        )
+
+        pairs: List[Dict[str, Any]] = []
+        for edge in network.edges:
+            mapping: Dict[int, int] = {}
+            if hasattr(edge, 'componentA_to_componentB'):
+                mapping = edge.componentA_to_componentB
+
+            score = 0.0
+            if hasattr(edge, 'annotations'):
+                score = edge.annotations.get('score', 0.0)
+
+            mapped_a = list(mapping.keys())
+            mapped_b = list(mapping.values())
+
+            try:
+                mol_a = edge.componentA.to_rdkit()
+                mol_b = edge.componentB.to_rdkit()
+                num_unique_a = mol_a.GetNumAtoms() - len(mapped_a)
+                num_unique_b = mol_b.GetNumAtoms() - len(mapped_b)
+            except Exception:
+                num_unique_a = 0
+                num_unique_b = 0
+
+            svgs = self.generate_edge_svg(edge)
+
+            pairs.append({
+                'ligand_a': edge.componentA.name,
+                'ligand_b': edge.componentB.name,
+                'score': float(score),
+                'num_mapped': len(mapped_a),
+                'num_unique_a': num_unique_a,
+                'num_unique_b': num_unique_b,
+                'svgs': svgs,
+            })
+
+        logger.info(f"Computed {len(pairs)} pairwise mappings")
+        return pairs
+
     def network_data_to_dict(self, network_data: LigandNetworkData) -> Dict[str, Any]:
         """Convert LigandNetworkData to JSON-serializable dict."""
         return {

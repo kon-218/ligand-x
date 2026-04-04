@@ -117,12 +117,12 @@ export function UnifiedProgressDisplay({
             <div className="space-y-2">
                 <div className="flex justify-between text-xs text-gray-400">
                     <span>Progress</span>
-                    <span>{progress.toFixed(0)}%</span>
+                    <span>{Number(progress ?? 0).toFixed(0)}%</span>
                 </div>
                 <div className="relative w-full h-4 bg-gray-800 rounded-full overflow-hidden shadow-inner">
                     <div
                         className={`absolute inset-0 bg-gradient-to-r ${colors.gradient} transition-all duration-500 ease-out`}
-                        style={{ width: `${progress}%` }}
+                        style={{ width: `${Number(progress ?? 0)}%` }}
                     >
                         <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/30 to-transparent animate-shimmer" />
                     </div>

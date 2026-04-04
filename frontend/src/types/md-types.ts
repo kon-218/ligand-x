@@ -6,7 +6,7 @@ export type LigandInputMethod = 'existing' | 'smiles' | 'structure' | 'none'
 
 export type ChargeMethod = 'mmff94' | 'gasteiger' | 'am1bcc' | 'orca'
 
-export type ForcefieldMethod = 'openff-2.2.0' | 'gaff' | 'gaff2'
+export type ForcefieldMethod = 'openff-2.2.1' | 'openff-2.2.0' | 'gaff' | 'gaff2'
 
 export type BoxShape = 'dodecahedron' | 'cubic'
 
@@ -26,6 +26,7 @@ export interface MDParameters {
   production_steps?: number
   production_report_interval?: number
   padding_nm?: number
+  heating_steps_per_stage?: number
 }
 
 export interface LigandInput {

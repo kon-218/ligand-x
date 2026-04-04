@@ -6,6 +6,7 @@ import type {
     StructureOption,
     ABFEParsedResults,
 } from '@/types/abfe-types'
+import { mergeJobs } from '@/lib/job-utils'
 
 // Preloaded ligand from external source (e.g., MD equilibration output)
 interface PreloadedLigand {
@@ -43,8 +44,10 @@ interface ABFEStore {
     progressMessage: string
     jobId: string | null
     parsedResults: ABFEParsedResults | null
-    isLoadingResults: boolean
-    isLoadingParsed: boolean
+    // ABFE has two-phase result loading: raw results first, then parsed analysis
+    // This is intentional and different from MD/RBFE which combine results+parsing
+    isLoadingResults: boolean  // Loading raw ABFE results
+    isLoadingParsed: boolean   // Loading/parsing analysis data
     parseError: string | null
 
     // Actions - Navigation
@@ -83,32 +86,28 @@ interface ABFEStore {
 }
 
 const initialABFEParameters: ABFEParameters = {
-    simulation_time_ns: 1.0, // Short for POC
-    fast_mode: true, // Fast mode by default - reduces iterations significantly
+    fast_mode: true,
 
-    // New fine-grained control parameters
-    equilibration_length_ns: 0.1, // 0.1 ns for fast mode
-    production_length_ns: 0.5, // 0.5 ns for fast mode (200 iterations * 2.5 ps)
-    n_checkpoints: 10, // 10 checkpoints by default (deprecated, use production_n_checkpoints)
-    protocol_repeats: 1, // 1 independent repetition for fast mode
+    // Core simulation (fast mode defaults)
+    equilibration_length_ns: 0.1,
+    production_length_ns: 0.5,
+    protocol_repeats: 1,
 
-    // Production checkpoint settings
-    production_n_checkpoints: 10, // 10 checkpoints for production
-    production_checkpoint_mode: 'number', // Use number of checkpoints by default
+    // Checkpoint settings
+    production_n_checkpoints: 10,
+    production_checkpoint_mode: 'number',
+    equilibration_n_checkpoints: 5,
+    equilibration_checkpoint_mode: 'number',
 
-    // Equilibration checkpoint settings
-    equilibration_n_checkpoints: 5, // 5 checkpoints for equilibration
-    equilibration_checkpoint_mode: 'number', // Use number of checkpoints by default
-
-    // Legacy parameters (still supported for backward compatibility)
-    n_iterations: 200, // Fast mode: 200 iterations (~15-30 min) vs 4000 (~5+ hours)
-    steps_per_iteration: 1000, // Reduced steps per iteration for speed
-
-    temperature: 300,
-    pressure: 1.0,
-    ionic_strength: 0.15,
-    ligand_forcefield: 'openff-2.0.0',
+    // Ligand preparation (OpenFE defaults)
+    ligand_forcefield: 'openff-2.2.1',
     charge_method: 'am1bcc',
+
+    // Environment (OpenFE defaults)
+    temperature: 298.15,
+    pressure: 1.0,
+    solvent_model: 'tip3p',
+    ionic_strength: 0.15,
 }
 
 export const useABFEStore = create<ABFEStore>((set, get) => ({
@@ -177,23 +176,13 @@ export const useABFEStore = create<ABFEStore>((set, get) => ({
         const incomingJobs = Array.isArray(jobs) ? jobs : []
         const currentJobs = Array.isArray(state.jobs) ? state.jobs : []
 
-        // Create a map of incoming jobs by ID for quick lookup
-        const incomingJobsMap = new Map(incomingJobs.map(job => [job.job_id, job]))
-
-        // Merge: Keep local pending/running jobs that aren't in the incoming data yet
-        const localOnlyJobs = currentJobs.filter((job: ABFEJob) => {
-            const isLocalOnly = !incomingJobsMap.has(job.job_id)
-            const isPendingOrRunning = job.status === 'running' || job.status === 'preparing' || job.status === 'submitted'
-            return isLocalOnly && isPendingOrRunning
-        })
-
-        // Combine: incoming jobs (with latest status from backend) + local-only pending jobs
-        const mergedJobs = [...incomingJobs, ...localOnlyJobs]
+        // Use shared merge utility to preserve local pending/running jobs
+        const isRunningStatus = (status: string) =>
+            status === 'running' || status === 'preparing' || status === 'submitted'
+        const mergedJobs = mergeJobs(currentJobs, incomingJobs, isRunningStatus)
 
         // Automatically update isRunning based on job status
-        const hasRunningJobs = mergedJobs.some(job =>
-            job.status === 'running' || job.status === 'preparing' || job.status === 'submitted'
-        )
+        const hasRunningJobs = mergedJobs.some(job => isRunningStatus(job.status))
         return { jobs: mergedJobs, isRunning: hasRunningJobs }
     }),
 

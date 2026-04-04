@@ -119,16 +119,16 @@ def convert_to_simple_xyz(molecule_data: str) -> str:
                     mol = Chem.AddHs(mol)
                     AllChem.EmbedMolecule(mol, randomSeed=42)
                     AllChem.MMFFOptimizeMolecule(mol)
-            except:
-                pass
-        
+            except Exception as e:
+                logger.debug("SMILES parsing failed: %s", e)
+
         # Try SDF/MOL format
         if not mol:
             try:
                 mol = Chem.MolFromMolBlock(molecule_data)
-            except:
-                pass
-        
+            except Exception as e:
+                logger.debug("MOL block parsing failed: %s", e)
+
         # Try PDB format
         if not mol:
             try:
@@ -136,8 +136,8 @@ def convert_to_simple_xyz(molecule_data: str) -> str:
                 if mol:
                     is_from_pdb = True
                     het_id = _extract_het_id_from_pdb(molecule_data)
-            except:
-                pass
+            except Exception as e:
+                logger.debug("PDB parsing failed: %s", e)
         
         if not mol:
             # If it looks like XYZ, return it

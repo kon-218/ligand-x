@@ -38,6 +38,24 @@ router = APIRouter(prefix="/api/jobs", tags=["jobs"])
 _celery_app = None
 _qc_celery_app = None
 _job_repo = None
+_abfe_service = None
+_rbfe_service = None
+
+
+def _get_abfe_service():
+    global _abfe_service
+    if _abfe_service is None:
+        from services.abfe.service import ABFEService
+        _abfe_service = ABFEService()
+    return _abfe_service
+
+
+def _get_rbfe_service():
+    global _rbfe_service
+    if _rbfe_service is None:
+        from services.rbfe.service import RBFEService
+        _rbfe_service = RBFEService()
+    return _rbfe_service
 
 
 def get_celery_app():
@@ -145,6 +163,7 @@ async def submit_job(job_type: str, request: Request):
         md_optimize,
         abfe_calculate,
         rbfe_calculate,
+        rbfe_mapping_preview,
         boltz_predict,
         boltz_batch,
         admet_predict,
@@ -216,6 +235,7 @@ async def submit_job(job_type: str, request: Request):
             'boltz2': boltz_predict,
             'boltz2_batch': boltz_batch,
             'admet': admet_predict,
+            'rbfe_mapping_preview': rbfe_mapping_preview,
         }
         
         if job_type not in task_map:
@@ -300,19 +320,37 @@ async def resume_rbfe_job(job_id: str):
             detail=f"Job {job_id} has no stored input parameters. Cannot resume."
         )
     
-    # Add docking_acknowledged flag
+    # Add docking_acknowledged flag to protocol settings (RBFE service reads
+    # this from simulation_settings/protocol_settings, not top-level input).
+    protocol_settings = input_params.get('protocol_settings')
+    if not isinstance(protocol_settings, dict):
+        protocol_settings = {}
+    protocol_settings['docking_acknowledged'] = True
+    input_params['protocol_settings'] = protocol_settings
+
+    # Keep top-level flag too for backward compatibility with older readers.
     input_params['docking_acknowledged'] = True
     input_params['job_id'] = job_id  # Use the same job_id
     
     logger.info(f"Resuming RBFE job {job_id} with docking_acknowledged=True")
     
-    # Submit to Celery with the same job_id
-    # Note: Using apply_async with task_id to preserve the job_id
+    # Clear stale Celery result from Phase 1 (docking_ready) before resubmitting.
+    # Without this, the SSE stream sees the old SUCCESS/docking_ready result
+    # immediately and terminates before the new task even starts.
+    try:
+        celery_app = get_celery_app()
+        old_result = celery_app.AsyncResult(job_id)
+        old_result.forget()
+        logger.info(f"Cleared stale Celery result for RBFE job {job_id}")
+    except Exception as e:
+        logger.warning(f"Failed to clear stale Celery result for {job_id}: {e}")
+    
     task = rbfe_calculate.apply_async(args=[input_params], task_id=job_id)
     
-    # Update job status in database
+    # Update job status and clear the stale docking_ready result from the DB
+    # so that polling doesn't re-display the docked poses preview.
     try:
-        await repo.update_status(job_id, 'running', progress=20, stage='Resuming after docking validation')
+        await repo.update_status(job_id, 'running', progress=20, stage='Resuming after docking validation', result={})
     except Exception as e:
         logger.warning(f"Failed to update job status in database: {e}")
     
@@ -382,13 +420,23 @@ async def resume_md_job(job_id: str):
 
     logger.info(f"Resuming MD job {job_id} with preview_acknowledged=True")
 
-    # Submit to Celery with the same job_id
-    # Note: Using apply_async with task_id to preserve the job_id
+    # Clear stale Celery result from the preview_ready phase before resubmitting.
+    # Without this, the SSE stream sees the old SUCCESS/preview_ready result
+    # immediately and terminates before the new task even starts.
+    try:
+        celery_app = get_celery_app()
+        old_result = celery_app.AsyncResult(job_id)
+        old_result.forget()
+        logger.info(f"Cleared stale Celery result for MD job {job_id}")
+    except Exception as e:
+        logger.warning(f"Failed to clear stale Celery result for {job_id}: {e}")
+    
     task = md_optimize.apply_async(args=[input_params], task_id=job_id)
 
-    # Update job status in database
+    # Update job status and clear the stale preview_ready result from the DB
+    # so that polling doesn't re-display the preview data.
     try:
-        await repo.update_status(job_id, 'running', progress=30, stage='resuming_from_preview')
+        await repo.update_status(job_id, 'running', progress=30, stage='resuming_from_preview', result={})
     except Exception as e:
         logger.warning(f"Failed to update job status in database: {e}")
 
@@ -465,11 +513,26 @@ async def stream_job_progress(job_id: str, request: Request):
                 last_step = current_step
 
                 if state == 'PENDING':
-                    data = {
-                        'status': 'pending',
-                        'progress': 0,
-                        'message': 'Job queued, waiting for worker'
-                    }
+                    # Celery returns PENDING when it has no record (e.g. after Redis wipe).
+                    # Always fall back to the DB to avoid showing 'queued' for completed jobs.
+                    db_job = await repo.get_job(job_id)
+                    db_status = db_job.get('status') if db_job else None
+                    if db_status in ('completed', 'failed', 'cancelled'):
+                        # Job is done — send terminal state and stop streaming
+                        data = {
+                            'status': db_status,
+                            'progress': db_job.get('progress', 100),
+                            'message': db_job.get('error_message') or 'Job completed',
+                            'result': db_job.get('result'),
+                        }
+                        yield f"data: {json.dumps(data)}\n\n"
+                        break
+                    else:
+                        data = {
+                            'status': 'pending',
+                            'progress': 0,
+                            'message': 'Job queued, waiting for worker'
+                        }
 
                 elif state == 'STARTED' or state == 'RUNNING':
                     # Update database with clamped progress (never regress)
@@ -509,9 +572,23 @@ async def stream_job_progress(job_id: str, request: Request):
                     inner_status = inner_result.get('status') if isinstance(inner_result, dict) else None
                     
                     # Special handling for docking_ready (checkpoint)
+                    # Note: preview_ready block below has identical structure but different
+                    # checkpoint names, progress defaults, and messages.
                     if inner_status == 'docking_ready':
-                        # This is a checkpoint, not a failure
-                        # Update DB as 'running' (since docking_ready isn't in DB enum) but with specific stage
+                        # Guard against stale Celery results: if the job was already
+                        # resumed (DB stage moved past docking_ready), this is a leftover
+                        # Phase 1 result — ignore it and keep polling for the new task.
+                        try:
+                            current_job = await repo.get_job(job_id)
+                            current_stage = current_job.get('stage', '') if current_job else ''
+                        except Exception:
+                            current_stage = ''
+                        
+                        if current_stage and current_stage != 'docking_ready':
+                            logger.info(f"Ignoring stale docking_ready result for job {job_id} (DB stage: {current_stage})")
+                            await asyncio.sleep(2)
+                            continue
+                        
                         try:
                             actual_result = task_result.get('result') if isinstance(task_result, dict) else task_result
                             if isinstance(actual_result, dict) and 'result' in actual_result and 'success' in actual_result:
@@ -538,8 +615,18 @@ async def stream_job_progress(job_id: str, request: Request):
 
                     # Special handling for preview_ready (MD checkpoint)
                     if inner_status == 'preview_ready':
-                        # This is a checkpoint, not a failure
-                        # Update DB as 'running' (since preview_ready isn't in DB enum) but with specific stage
+                        # Guard against stale Celery results after resume
+                        try:
+                            current_job = await repo.get_job(job_id)
+                            current_stage = current_job.get('stage', '') if current_job else ''
+                        except Exception:
+                            current_stage = ''
+                        
+                        if current_stage and current_stage != 'preview_ready':
+                            logger.info(f"Ignoring stale preview_ready result for job {job_id} (DB stage: {current_stage})")
+                            await asyncio.sleep(2)
+                            continue
+                        
                         try:
                             actual_result = task_result.get('result') if isinstance(task_result, dict) else task_result
                             if isinstance(actual_result, dict) and 'result' in actual_result and 'success' in actual_result:
@@ -860,9 +947,8 @@ async def list_jobs(
                     if not inner_status and isinstance(inner_result, dict) and 'result' in inner_result:
                          inner_status = inner_result['result'].get('status') if isinstance(inner_result['result'], dict) else None
                     
-                    if inner_status == 'docking_ready':
-                        live_status = 'running'  # Map to running in DB
-                        # Note: We rely on the stage='docking_ready' update to distinguish
+                    if inner_status in ('docking_ready', 'preview_ready'):
+                        live_status = 'running'
                     else:
                         live_status = 'completed'
                 except Exception:
@@ -879,18 +965,23 @@ async def list_jobs(
                 try:
                     if live_status == 'running':
                         info = result.info or {}
-                        # If it's SUCCESS (docking_ready), info might be empty, use result
-                        if celery_state == 'SUCCESS' and inner_status == 'docking_ready':
-                             # Extract actual result, handling potential double nesting
-                             actual_result = task_result.get('result') if isinstance(task_result, dict) else None
-                             if isinstance(actual_result, dict) and 'result' in actual_result and 'success' in actual_result:
-                                 actual_result = actual_result.get('result')
+                        # If it's SUCCESS with docking_ready/preview_ready, only
+                        # overwrite the DB if the stage hasn't moved past it (i.e.,
+                        # the job hasn't already been resumed).
+                        if celery_state == 'SUCCESS' and inner_status in ('docking_ready', 'preview_ready'):
+                             db_stage = job.get('stage', '')
+                             if db_stage and db_stage != inner_status:
+                                 pass  # Stale result; DB stage already advanced past checkpoint
+                             else:
+                                 actual_result = task_result.get('result') if isinstance(task_result, dict) else None
+                                 if isinstance(actual_result, dict) and 'result' in actual_result and 'success' in actual_result:
+                                     actual_result = actual_result.get('result')
 
-                             await repo.update_status(
-                                job_id, 'running',
-                                stage='docking_ready',
-                                result=actual_result
-                            )
+                                 await repo.update_status(
+                                    job_id, 'running',
+                                    stage=inner_status,
+                                    result=actual_result
+                                )
                         else:
                             raw_progress = info.get('progress', 0) if isinstance(info, dict) else 0
                             progress_int = raw_progress.get('percent', 0) if isinstance(raw_progress, dict) else (int(raw_progress) if raw_progress else 0)
@@ -906,8 +997,15 @@ async def list_jobs(
                 except Exception as e:
                     logger.debug(f"Failed to update job {job_id} status in DB: {e}")
 
-                # Update the returned job object with live status
-                job['status'] = live_status
+                # Don't override terminal DB status with Celery PENDING (Redis may have been cleared).
+                # Celery returns PENDING when it has no record of the task, not necessarily when the task is queued.
+                db_status = job.get('status')
+                if live_status == 'pending' and db_status in ('completed', 'failed', 'cancelled'):
+                    # Trust the DB for terminal states when Celery has no record
+                    pass
+                else:
+                    # Update the returned job object with live status
+                    job['status'] = live_status
 
             elif live_status == 'running' and job.get('status') == 'running' and celery_state in ('STARTED', 'RUNNING'):
                 # Job is already running in both Celery and DB — propagate progress updates.
@@ -988,21 +1086,26 @@ async def get_job(job_id: str):
                     if not inner_status:
                         inner_status = inner_result.get('status')
                     
-                    # Special handling for docking_ready
-                    if inner_status == 'docking_ready':
-                         actual_result = task_result.get('result') if 'result' in task_result else task_result
-                         if isinstance(actual_result, dict) and 'result' in actual_result and 'success' in actual_result:
-                            actual_result = actual_result.get('result')
-                         
-                         # Update DB
-                         await repo.update_status(job_id, 'running', stage='docking_ready', result=actual_result)
-                         
-                         # Return as docking_ready
-                         job['status'] = 'docking_ready'
-                         job['stage'] = 'docking_ready'
-                         job['result'] = actual_result
-                         job['progress'] = inner_result.get('progress', 15)
-                         return job
+                    # Special handling for docking_ready / preview_ready checkpoints
+                    if inner_status in ('docking_ready', 'preview_ready'):
+                         # If DB stage already moved past the checkpoint (job was
+                         # resumed), this is a stale Celery result — skip it and let
+                         # the normal running-job response be returned.
+                         db_stage = job.get('stage', '')
+                         if db_stage and db_stage != inner_status:
+                             pass  # Stale — fall through to return running job as-is
+                         else:
+                             actual_result = task_result.get('result') if 'result' in task_result else task_result
+                             if isinstance(actual_result, dict) and 'result' in actual_result and 'success' in actual_result:
+                                actual_result = actual_result.get('result')
+                             
+                             await repo.update_status(job_id, 'running', stage=inner_status, result=actual_result)
+                             
+                             job['status'] = inner_status
+                             job['stage'] = inner_status
+                             job['result'] = actual_result
+                             job['progress'] = inner_result.get('progress', 15 if inner_status == 'docking_ready' else 30)
+                             return job
 
                     is_failed = (
                         task_result.get('status') == 'FAILED' or
@@ -1045,13 +1148,16 @@ async def get_job(job_id: str):
                         actual_result = actual_result.get('result')
                     
                     if actual_result:
-                        # Check if it's actually docking_ready
                         res_status = actual_result.get('status') if isinstance(actual_result, dict) else None
                         
-                        if res_status == 'docking_ready':
-                             await repo.update_status(job_id, 'running', stage='docking_ready', result=actual_result)
-                             job['status'] = 'docking_ready'
-                             job['stage'] = 'docking_ready'
+                        if res_status in ('docking_ready', 'preview_ready'):
+                             db_stage = job.get('stage', '')
+                             if db_stage and db_stage != res_status:
+                                 pass  # Stale checkpoint result — don't regress
+                             else:
+                                 await repo.update_status(job_id, 'running', stage=res_status, result=actual_result)
+                                 job['status'] = res_status
+                                 job['stage'] = res_status
                         else:
                             # Save to PostgreSQL
                             await repo.update_status(job_id, 'completed', result=actual_result)
@@ -1193,6 +1299,54 @@ async def recompute_analytics(job_id: str):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@router.post("/recover/{job_id}")
+async def recover_job(job_id: str):
+    """
+    Recover a stuck ABFE/RBFE job by reading completed results from disk.
+
+    Use when computation finished on disk but the DB still shows running/failed
+    due to a Celery/RabbitMQ timeout. Read-only on disk — does not interrupt
+    any running process.
+    """
+    repo = await get_job_repo()
+    job = await repo.get_job(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail=f"Job {job_id} not found")
+
+    job_type = job.get('job_type')
+    if job_type not in ('abfe', 'rbfe'):
+        raise HTTPException(status_code=400, detail=f"Recovery only supported for abfe/rbfe, got: {job_type}")
+
+    db_status = job.get('status')
+    if db_status == 'completed':
+        return {"job_id": job_id, "recovered": False, "status": "already_completed",
+                "message": "Job is already marked completed in the database"}
+    if db_status not in ('running', 'failed'):
+        raise HTTPException(status_code=400,
+            detail=f"Job status is '{db_status}'; recovery requires running or failed")
+
+    try:
+        if job_type == 'abfe':
+            parsed = _get_abfe_service().parse_results_from_job(job_id)
+        else:
+            parsed = _get_rbfe_service().parse_results_from_job(job_id)
+    except Exception as e:
+        logger.error(f"Job recovery failed for {job_id}: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Failed to read results from disk: {e}")
+
+    has_results = (bool(parsed.get('dg_results')) if job_type == 'abfe'
+                   else bool(parsed.get('ddg_values') or parsed.get('transformation_results')))
+
+    if parsed.get('error') or not has_results:
+        return {"job_id": job_id, "recovered": False, "status": "no_results",
+                "message": parsed.get('error', 'No completed results on disk — job may still be running')}
+
+    await repo.update_status(job_id, 'completed', result=parsed)
+    logger.info(f"Recovered {job_type} job {job_id} from disk results")
+    return {"job_id": job_id, "recovered": True, "status": "completed",
+            "message": "Job recovered successfully from disk results", "result": parsed}
+
+
 @router.delete("/{job_id}")
 async def delete_job(job_id: str):
     """
@@ -1214,6 +1368,55 @@ async def delete_job(job_id: str):
     except Exception as e:
         logger.error(f"Failed to delete job {job_id}: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+# ============================================================
+# Job Log Access
+# ============================================================
+
+@router.get("/{job_id}/log")
+async def get_job_log(job_id: str):
+    """
+    Return the last 512 KB of the log file for a running or completed job.
+
+    Looks for job.log in rbfe_outputs or abfe_outputs directories.
+    Returns 404 if no log file exists yet.
+    """
+    import re
+    import os
+    from pathlib import Path
+    from fastapi.responses import PlainTextResponse
+
+    # Reject job_ids that contain path separators or traversal sequences
+    if not re.match(r'^[a-zA-Z0-9_\-]+$', job_id):
+        raise HTTPException(status_code=400, detail="Invalid job ID")
+
+    data_root = Path(os.getenv('RBFE_OUTPUT_DIR', 'data/rbfe_outputs')).resolve().parent
+    log_candidates = [
+        data_root / 'rbfe_outputs' / job_id / 'job.log',
+        data_root / 'abfe_outputs' / job_id / 'job.log',
+    ]
+    for path in log_candidates:
+        # Ensure the resolved path is still within data_root
+        if not path.resolve().is_relative_to(data_root):
+            raise HTTPException(status_code=403, detail="Access denied")
+        if path.exists():
+            try:
+                # Read last 512 KB to avoid loading multi-GB logs into memory
+                MAX_BYTES = 512 * 1024
+                size = path.stat().st_size
+                with open(path, 'rb') as f:
+                    if size > MAX_BYTES:
+                        f.seek(-MAX_BYTES, 2)
+                    content = f.read().decode('utf-8', errors='replace')
+                if size > MAX_BYTES:
+                    content = f'[...log truncated, showing last {MAX_BYTES // 1024} KB...]\n' + content
+                return PlainTextResponse(content)
+            except Exception as e:
+                logger.warning(f"Failed to read log file {path}: {e}")
+                raise HTTPException(status_code=500, detail="Failed to read log file")
+
+    raise HTTPException(status_code=404, detail="Log file not found")
 
 
 # ============================================================

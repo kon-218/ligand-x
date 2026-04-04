@@ -4,6 +4,16 @@ import { Loader2, CheckCircle2, XCircle, Clock, AlertTriangle } from 'lucide-rea
 import type { AccentColor, ExecutionState } from './types'
 import { accentColorClasses } from './types'
 
+export interface ConfigGroup {
+  title: string
+  items: Array<{ label: string; value: string; valueColor?: string }>
+}
+
+export interface RuntimeEstimate {
+  value: string
+  detail?: string
+}
+
 interface ExecutionPanelProps {
   // Execution state
   isRunning: boolean
@@ -12,8 +22,10 @@ interface ExecutionPanelProps {
   completedStages?: string[]
   error?: string | null
 
-  // Configuration summary
+  // Configuration — grouped sections (preferred) or flat list (backward compat)
+  configGroups?: ConfigGroup[]
   configSummary?: Array<{ label: string; value: string }>
+  runtimeEstimate?: RuntimeEstimate
 
   // Styling
   accentColor?: AccentColor
@@ -28,28 +40,54 @@ export function ExecutionPanel({
   progressMessage,
   completedStages = [],
   error,
+  configGroups,
   configSummary,
-  accentColor = 'blue',
+  runtimeEstimate,
+  accentColor = 'cyan',
   children,
 }: ExecutionPanelProps) {
   const colors = accentColorClasses[accentColor]
 
+  // Convert flat configSummary to a single group for unified rendering
+  const groups: ConfigGroup[] = configGroups
+    ? configGroups
+    : configSummary && configSummary.length > 0
+      ? [{ title: 'Configuration', items: configSummary }]
+      : []
+
   return (
-    <div className="space-y-6">
-      {/* Configuration Summary */}
-      {configSummary && configSummary.length > 0 && (
-        <div className="space-y-3">
-          <h4 className="text-sm font-medium text-gray-300">Configuration Summary</h4>
-          <div className="p-4 bg-gray-800/50 rounded-lg border border-gray-700">
-            <div className="grid grid-cols-2 gap-3">
-              {configSummary.map((item, idx) => (
-                <div key={idx} className="flex justify-between">
-                  <span className="text-gray-400 text-sm">{item.label}:</span>
-                  <span className="text-white text-sm font-medium">{item.value}</span>
-                </div>
-              ))}
-            </div>
+    <div className="space-y-4 pb-6">
+      {/* Header */}
+      {groups.length > 0 && (
+        <div className={`p-3 ${colors.bgLight} border ${colors.borderLight} rounded-lg`}>
+          <h4 className={`${colors.text} font-semibold text-sm`}>Review Configuration</h4>
+          <p className="text-xs text-gray-400 mt-0.5">Verify your settings before starting.</p>
+        </div>
+      )}
+
+      {/* Config Groups */}
+      {groups.map((group, gIdx) => (
+        <div key={gIdx} className="space-y-1.5">
+          <h5 className="text-xs font-medium text-gray-400 uppercase tracking-wider">{group.title}</h5>
+          <div className="p-3 bg-gray-800/50 rounded-lg border border-gray-700 grid grid-cols-2 gap-y-1.5 gap-x-6 text-sm">
+            {group.items.map((item, idx) => (
+              <div key={idx} className="contents">
+                <span className="text-gray-400">{item.label}</span>
+                <span className={`font-medium ${item.valueColor || 'text-white'}`}>{item.value}</span>
+              </div>
+            ))}
           </div>
+        </div>
+      ))}
+
+      {/* Runtime Estimate */}
+      {runtimeEstimate && (
+        <div className="p-3 bg-gray-800/50 rounded-lg border border-gray-700">
+          <span className="text-xs font-medium text-gray-400">Estimated Runtime</span>
+          <p className={`text-base font-semibold ${colors.text} mt-0.5`}>{runtimeEstimate.value}</p>
+          {runtimeEstimate.detail && (
+            <p className="text-xs text-gray-500 mt-0.5">{runtimeEstimate.detail}</p>
+          )}
         </div>
       )}
 
@@ -96,23 +134,23 @@ export function ExecutionPanel({
 
       {/* Error Display */}
       {error && (
-        <div className="p-4 bg-red-900/20 border border-red-700/50 rounded-lg">
-          <div className="flex items-start gap-3">
-            <XCircle className="w-5 h-5 text-red-400 flex-shrink-0 mt-0.5" />
+        <div className="p-3 bg-red-900/20 border border-red-700/50 rounded-lg">
+          <div className="flex items-start gap-2">
+            <XCircle className="w-4 h-4 text-red-400 flex-shrink-0 mt-0.5" />
             <div>
-              <h5 className="text-red-400 font-medium mb-1">Error</h5>
-              <p className="text-red-300 text-sm">{error}</p>
+              <p className="text-red-400 text-sm font-medium">Error</p>
+              <p className="text-red-300 text-xs">{error}</p>
             </div>
           </div>
         </div>
       )}
 
       {/* Ready State (not running, no error) */}
-      {!isRunning && !error && (
-        <div className="p-4 bg-gray-800/50 border border-gray-700 rounded-lg">
-          <div className="flex items-center gap-3">
-            <Clock className={`w-5 h-5 ${colors.text}`} />
-            <span className="text-gray-300">
+      {!isRunning && !error && groups.length > 0 && (
+        <div className="p-3 bg-gray-800/50 border border-gray-700 rounded-lg">
+          <div className="flex items-center gap-2">
+            <Clock className={`w-4 h-4 ${colors.text}`} />
+            <span className="text-gray-300 text-sm">
               Ready to start. Click the button below to begin.
             </span>
           </div>
@@ -135,7 +173,7 @@ interface StageProgressProps {
   accentColor?: AccentColor
 }
 
-export function StageProgress({ stages, accentColor = 'blue' }: StageProgressProps) {
+export function StageProgress({ stages, accentColor = 'cyan' }: StageProgressProps) {
   const colors = accentColorClasses[accentColor]
 
   const getStatusIcon = (status: string) => {

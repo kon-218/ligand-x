@@ -33,6 +33,9 @@ class OptimizeRequest(BaseModel):
     npt_steps: int = 175000
     temperature: float = 300.0
     pressure: float = 1.0
+    # Thermal heating protocol runs as 6 temperature stages (50K increments) with 1 fs timestep.
+    # Total heating duration (ps) = 6 * heating_steps_per_stage * 0.001
+    heating_steps_per_stage: int = 2500
     ionic_strength: float = 0.15
     charge_method: str = "am1bcc"
     forcefield_method: str = "openff-2.2.0"
@@ -64,27 +67,63 @@ async def get_job(job_id: str):
     return job
 
 
-class AnalyticsRequest(BaseModel):
-    output_files: Dict[str, Any]
-    ligand_id: Optional[str] = "ligand"
-    is_protein_only: bool = False
+class AnalyticsRecomputeRequest(BaseModel):
+    output_files: Dict[str, str]
     system_id: Optional[str] = None
+    ligand_id: str = "ligand"
+    is_protein_only: bool = False
+    nvt_steps: int = 0
+    npt_steps: int = 0
+    production_steps: int = 0
 
 
 @router.post("/jobs/{job_id}/analytics")
-async def recompute_analytics(job_id: str, request: AnalyticsRequest):
+async def recompute_analytics(job_id: str, request: AnalyticsRecomputeRequest):
     """Re-run post-hoc analytics given output_files paths. Called by the gateway."""
     try:
         from .workflow.analytics import EquilibrationAnalytics
+        
+        # Fetch job to get parameters
+        service = MDOptimizationService()
+        job = service.get_job(job_id)
+        
+        # Extract step counts and report intervals from job request
+        nvt_steps = 0
+        npt_steps = 0
+        production_steps = 0
+        production_report_interval = 2500
+        
+        if job and 'request' in job:
+            req = job['request']
+            nvt_steps = req.get('nvt_steps', 0)
+            npt_steps = req.get('npt_steps', 0)
+            production_steps = req.get('production_steps', 0)
+            production_report_interval = req.get('production_report_interval', 2500)
+        
         output_files = request.output_files
-        has_production = bool(output_files.get("production_trajectory"))
+        
+        # Use production PDB if available, otherwise NPT PDB
+        topology_pdb = output_files.get("production_pdb") or output_files.get("npt_pdb")
+        
+        # Use production log if available, otherwise equilibration log
+        log_path = output_files.get("production_log") or output_files.get("equilibration_log")
+        
         analytics = EquilibrationAnalytics().compute(
             output_dir="",
             system_id=request.system_id or job_id,
-            topology_pdb=output_files.get("production_pdb") or output_files.get("npt_pdb"),
-            npt_traj=output_files.get("production_trajectory") or output_files.get("npt_trajectory"),
-            log_path=output_files.get("production_log") or output_files.get("equilibration_log"),
+            topology_pdb=topology_pdb,
+            nvt_traj=output_files.get("nvt_trajectory"),
+            npt_traj=output_files.get("npt_trajectory"),
+            production_traj=output_files.get("production_trajectory"),
+            log_path=log_path,
             ligand_id=request.ligand_id if not request.is_protein_only else "",
+            nvt_steps=nvt_steps,
+            npt_steps=npt_steps,
+            production_steps=production_steps,
+            nvt_report_interval=1000,
+            npt_report_interval=1000,
+            production_report_interval=production_report_interval,
+            dt_ps=0.004,
         )
         return {"success": True, "analytics": analytics}
     except Exception as e:
@@ -148,6 +187,7 @@ async def optimize(request: OptimizeRequest):
             'npt_steps': request.npt_steps,
             'production_steps': request.production_steps,
             'production_report_interval': request.production_report_interval,
+            'heating_steps_per_stage': request.heating_steps_per_stage,
             'padding_nm': request.padding_nm,
             'temperature': request.temperature,
             'pressure': request.pressure,
@@ -182,6 +222,7 @@ async def optimize(request: OptimizeRequest):
                 "nvt_steps": request.nvt_steps,
                 "npt_steps": request.npt_steps,
                 "temperature": request.temperature,
+                    "heating_steps_per_stage": request.heating_steps_per_stage,
                 "protein_name": request.protein_name,
                 "ligand_name": request.ligand_name
             }
@@ -419,6 +460,7 @@ async def stream_optimize(request: OptimizeRequest):
                 'npt_steps': request.npt_steps,
                 'production_steps': request.production_steps,
                 'production_report_interval': request.production_report_interval,
+                'heating_steps_per_stage': request.heating_steps_per_stage,
                 'padding_nm': request.padding_nm,
                 'temperature': request.temperature,
                 'pressure': request.pressure,
@@ -755,6 +797,89 @@ async def get_trajectory_frames(request: TrajectoryRequest):
             frame_count = traj.n_frames
             logger.info(f"Loaded {frame_count} frames from trajectory")
             
+            # Determine which frames to extract
+            if request.frame_indices:
+                frame_indices = sorted([idx for idx in request.frame_indices if 0 <= idx < frame_count])
+            else:
+                # Default: sample frames (max 100 frames)
+                max_frames = 100
+                step = max(1, frame_count // max_frames) if frame_count > max_frames else 1
+                frame_indices = list(range(0, frame_count, step))
+            
+            if not frame_indices:
+                frame_indices = [0]  # At least one frame
+                
+            # Create a sub-trajectory with only the requested frames for efficient processing
+            sub_traj = traj[frame_indices]
+            logger.info(f"Processing sub-trajectory with {sub_traj.n_frames} frames")
+            
+            # Apply robust PBC handling and alignment
+            try:
+                # Check for unit cell info first
+                if sub_traj.unitcell_lengths is None:
+                    logger.warning("No unit cell information found in trajectory. Skipping PBC imaging.")
+                else:
+                    # 1. Identify anchors (protein or largest molecule)
+                    anchor_molecules = []
+                    
+                    # Try protein selection first
+                    protein_sel = sub_traj.topology.select('protein')
+                    molecules = sub_traj.topology.find_molecules()
+                    
+                    if len(protein_sel) > 10: # Threshold to ensure valid protein selection
+                        protein_atom_set = set(protein_sel)
+                        # Fix: check atom.index against protein_atom_set (which contains indices)
+                        # Convert sets of Atoms to sorted lists of Atoms for image_molecules
+                        anchor_molecules = [sorted(list(mol), key=lambda a: a.index) for mol in molecules if any(atom.index in protein_atom_set for atom in mol)]
+                        if anchor_molecules:
+                            logger.info(f"Anchoring PBC imaging to {len(anchor_molecules)} protein molecules")
+                    
+                    # Fallback to largest molecule if no protein found
+                    if not anchor_molecules and len(molecules) > 0:
+                        # Find largest molecule by atom count
+                        largest_mol = max(molecules, key=len)
+                        anchor_molecules = [sorted(list(largest_mol), key=lambda a: a.index)]
+                        logger.info(f"Fallback: Anchoring PBC imaging to largest molecule ({len(largest_mol)} atoms)")
+                    
+                    # Apply imaging
+                    if anchor_molecules:
+                        # image_molecules accepts list of iterable of Atoms
+                        sub_traj.image_molecules(inplace=True, anchor_molecules=anchor_molecules)
+                    else:
+                        # Last resort fallback
+                        logger.info("No suitable anchor molecules found, using default imaging")
+                        sub_traj.image_molecules(inplace=True)
+                        
+                    # 2. Superpose (Align)
+                    # Try to align on protein CA, then protein, then largest molecule, then backbone/alpha carbons of largest
+                    align_indices = []
+                    
+                    if len(protein_sel) > 0:
+                        protein_ca = sub_traj.topology.select('protein and name CA')
+                        if len(protein_ca) > 0:
+                            align_indices = protein_ca
+                            logger.info("Aligning trajectory on protein alpha carbons")
+                        else:
+                            align_indices = protein_sel
+                            logger.info("Aligning trajectory on protein atoms")
+                    elif anchor_molecules:
+                        # Flatten anchor molecules to get atom indices
+                        anchor_atoms = [atom.index for mol in anchor_molecules for atom in mol]
+                        # Try to find backbone-like atoms in the anchor
+                        # This is a bit manual, but safer than aligning on all atoms if there are floppy tails
+                        align_indices = anchor_atoms
+                        logger.info(f"Aligning trajectory on anchor molecule ({len(anchor_atoms)} atoms)")
+                    
+                    if len(align_indices) > 0:
+                        sub_traj.superpose(sub_traj, 0, atom_indices=align_indices)
+                    else:
+                        sub_traj.superpose(sub_traj, 0)
+                        
+                    logger.info("PBC imaging and alignment applied successfully")
+            except Exception as e:
+                logger.warning(f"Failed to apply PBC correction/alignment: {e}")
+                # Continue with raw coordinates if processing fails
+            
             # Extract CRYST1 record from topology PDB for periodic boundary visualization
             cryst1_record = None
             try:
@@ -781,19 +906,7 @@ async def get_trajectory_frames(request: TrajectoryRequest):
                 except Exception as e:
                     logger.warning(f"Could not generate CRYST1 from trajectory unit cell: {e}")
             
-            # Determine which frames to extract
-            if request.frame_indices:
-                frame_indices = sorted([idx for idx in request.frame_indices if 0 <= idx < frame_count])
-            else:
-                # Default: sample frames (max 100 frames)
-                max_frames = 100
-                step = max(1, frame_count // max_frames) if frame_count > max_frames else 1
-                frame_indices = list(range(0, frame_count, step))
-            
-            if not frame_indices:
-                frame_indices = [0]  # At least one frame
-            
-            # Convert to multi-model PDB
+            # Convert processed sub-trajectory to multi-model PDB
             pdb_content = []
             
             # Add CRYST1 record at the beginning if available (before first MODEL)
@@ -803,18 +916,15 @@ async def get_trajectory_frames(request: TrajectoryRequest):
                     pdb_content.append('\n')
             
             model_index = 0
-            for frame_idx in frame_indices:
-                if frame_idx >= frame_count:
-                    continue
-                
+            # Iterate through the processed sub-trajectory
+            for i, frame in enumerate(sub_traj):
                 try:
-                    frame = traj[frame_idx]
-                    
                     # Write MODEL header
                     pdb_content.append(f"MODEL        {model_index+1:8d}\n")
                     model_index += 1
                     
                     # Save frame to temporary PDB and read it
+                    # Note: We use frame.save_pdb to get PDB formatting, then strip headers/footers
                     import tempfile
                     with tempfile.NamedTemporaryFile(mode='w', suffix='.pdb', delete=False) as tmp:
                         frame.save_pdb(tmp.name)
@@ -823,7 +933,12 @@ async def get_trajectory_frames(request: TrajectoryRequest):
                         os.unlink(tmp.name)
                     
                     # Remove END from frame PDB and add MODEL/ENDMDL
-                    frame_lines = [line for line in frame_pdb.split('\n') if not line.strip().startswith('END')]
+                    # Also skip CRYST1/REMARK/etc if we handle them globally
+                    frame_lines = [line for line in frame_pdb.split('\n') 
+                                  if not line.strip().startswith('END') 
+                                  and not line.strip().startswith('CRYST1')
+                                  and not line.strip().startswith('REMARK')]
+                                  
                     # Ensure each line ends with newline
                     for line in frame_lines:
                         if line and not line.endswith('\n'):
@@ -833,7 +948,7 @@ async def get_trajectory_frames(request: TrajectoryRequest):
                     pdb_content.append("ENDMDL\n")
                     
                 except Exception as frame_error:
-                    logger.warning(f"Failed to read frame {frame_idx} from trajectory: {str(frame_error)}")
+                    logger.warning(f"Failed to read frame {i} from processed trajectory: {str(frame_error)}")
                     continue
             
             if model_index == 0:
@@ -901,8 +1016,8 @@ async def get_trajectory_frames(request: TrajectoryRequest):
                     for frame_idx in range(100000):  # reasonable upper limit
                         dcd_file.readStep(frame_idx)
                         frame_count = frame_idx + 1
-                except:
-                    pass
+                except Exception as e:
+                    logger.debug("DCD frame reading completed or failed: %s", e)
         finally:
             dcd_stream.close()
         
@@ -981,8 +1096,9 @@ async def get_trajectory_frames(request: TrajectoryRequest):
                                     x = float(pos[0]) * 10.0
                                     y = float(pos[1]) * 10.0
                                     z = float(pos[2]) * 10.0
-                            except:
+                            except (AttributeError, TypeError, ValueError) as e:
                                 # Last resort: direct conversion
+                                logger.debug("Position conversion fallback: %s", e)
                                 x = float(pos[0]) * 10.0
                                 y = float(pos[1]) * 10.0
                                 z = float(pos[2]) * 10.0
@@ -1156,6 +1272,76 @@ async def get_trajectory_as_pdb(trajectory_path: str, max_frames: int = 100, bac
         step = max(1, traj.n_frames // max_frames) if traj.n_frames > max_frames else 1
         frame_indices = list(range(0, traj.n_frames, step))
         
+        # Create a sub-trajectory with only the requested frames for efficient processing
+        sub_traj = traj[frame_indices]
+        logger.info(f"Processing sub-trajectory with {sub_traj.n_frames} frames")
+        
+        # Apply robust PBC handling and alignment
+        try:
+            # Check for unit cell info first
+            if sub_traj.unitcell_lengths is None:
+                logger.warning("No unit cell information found in trajectory. Skipping PBC imaging.")
+            else:
+                # 1. Identify anchors (protein or largest molecule)
+                anchor_molecules = []
+                
+                # Try protein selection first
+                protein_sel = sub_traj.topology.select('protein')
+                molecules = sub_traj.topology.find_molecules()
+                
+                if len(protein_sel) > 10: # Threshold to ensure valid protein selection
+                    protein_atom_set = set(protein_sel)
+                    # Fix: check atom.index against protein_atom_set (which contains indices)
+                    # Convert sets of Atoms to sorted lists of Atoms for image_molecules
+                    anchor_molecules = [sorted(list(mol), key=lambda a: a.index) for mol in molecules if any(atom.index in protein_atom_set for atom in mol)]
+                    if anchor_molecules:
+                        logger.info(f"Anchoring PBC imaging to {len(anchor_molecules)} protein molecules")
+                
+                # Fallback to largest molecule if no protein found
+                if not anchor_molecules and len(molecules) > 0:
+                    # Find largest molecule by atom count
+                    largest_mol = max(molecules, key=len)
+                    anchor_molecules = [sorted(list(largest_mol), key=lambda a: a.index)]
+                    logger.info(f"Fallback: Anchoring PBC imaging to largest molecule ({len(largest_mol)} atoms)")
+                
+                # Apply imaging
+                if anchor_molecules:
+                    # image_molecules accepts list of iterable of Atoms
+                    sub_traj.image_molecules(inplace=True, anchor_molecules=anchor_molecules)
+                else:
+                    # Last resort fallback
+                    logger.info("No suitable anchor molecules found, using default imaging")
+                    sub_traj.image_molecules(inplace=True)
+                    
+                # 2. Superpose (Align)
+                # Try to align on protein CA, then protein, then largest molecule, then backbone/alpha carbons of largest
+                align_indices = []
+                
+                if len(protein_sel) > 0:
+                    protein_ca = sub_traj.topology.select('protein and name CA')
+                    if len(protein_ca) > 0:
+                        align_indices = protein_ca
+                        logger.info("Aligning trajectory on protein alpha carbons")
+                    else:
+                        align_indices = protein_sel
+                        logger.info("Aligning trajectory on protein atoms")
+                elif anchor_molecules:
+                    # Flatten anchor molecules to get atom indices
+                    anchor_atoms = [atom.index for mol in anchor_molecules for atom in mol]
+                    # Try to find backbone-like atoms in the anchor
+                    # This is a bit manual, but safer than aligning on all atoms if there are floppy tails
+                    align_indices = anchor_atoms
+                    logger.info(f"Aligning trajectory on anchor molecule ({len(anchor_atoms)} atoms)")
+                
+                if len(align_indices) > 0:
+                    sub_traj.superpose(sub_traj, 0, atom_indices=align_indices)
+                else:
+                    sub_traj.superpose(sub_traj, 0)
+                    
+                logger.info("PBC imaging and alignment applied successfully")
+        except Exception as e:
+            logger.warning(f"Failed to apply PBC correction/alignment: {e}")
+        
         # Convert to multi-model PDB
         import tempfile
         with tempfile.NamedTemporaryFile(mode='w', suffix='.pdb', delete=False) as tmp:
@@ -1165,10 +1351,9 @@ async def get_trajectory_as_pdb(trajectory_path: str, max_frames: int = 100, bac
                 tmp.write(cryst1_record)
                 if not cryst1_record.endswith('\n'):
                     tmp.write('\n')
-            for i, frame_idx in enumerate(frame_indices):
-                if frame_idx >= traj.n_frames:
-                    continue
-                frame = traj[frame_idx]
+            
+            # Iterate through processed sub-trajectory
+            for i, frame in enumerate(sub_traj):
                 tmp.write(f"MODEL        {i+1:8d}\n")
                 # Save frame and read it
                 with tempfile.NamedTemporaryFile(mode='w', suffix='.pdb', delete=False) as frame_tmp:
@@ -1188,8 +1373,8 @@ async def get_trajectory_as_pdb(trajectory_path: str, max_frames: int = 100, bac
             if tmp_path and os.path.exists(tmp_path):
                 try:
                     os.unlink(tmp_path)
-                except:
-                    pass
+                except OSError as e:
+                    logger.debug("Temp file cleanup failed: %s", e)
         
         background_tasks.add_task(cleanup)
         
@@ -1212,8 +1397,8 @@ async def get_trajectory_as_pdb(trajectory_path: str, max_frames: int = 100, bac
         if tmp_path and os.path.exists(tmp_path):
             try:
                 os.unlink(tmp_path)
-            except:
-                pass
+            except OSError as cleanup_err:
+                logger.debug("Temp file cleanup on error failed: %s", cleanup_err)
         error_msg = f"Error converting trajectory: {str(e)}"
         error_traceback = traceback.format_exc()
         logger.error(f"{error_msg}\n{error_traceback}")

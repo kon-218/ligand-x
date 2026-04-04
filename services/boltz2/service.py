@@ -619,15 +619,15 @@ class Boltz2Service:
             if len(ligand_data.strip()) < 200 and '\n' not in ligand_data.strip():
                 try:
                     mol = Chem.MolFromSmiles(ligand_data.strip())
-                except:
-                    pass
-            
+                except Exception as e:
+                    logger.debug("SMILES parsing failed: %s", e)
+
             # If SMILES parsing failed, try SDF/MOL format
             if mol is None:
                 try:
                     mol = Chem.MolFromMolBlock(ligand_data)
-                except:
-                    pass
+                except Exception as e:
+                    logger.debug("MOL block parsing failed: %s", e)
             
             # If SDF/MOL parsing failed, try PDB format (for ligands extracted from complexes)
             if mol is None:
@@ -649,8 +649,8 @@ class Boltz2Service:
                 # This ensures a clean molecule state
                 try:
                     mol = Chem.RemoveHs(mol)
-                except:
-                    pass
+                except Exception as e:
+                    logger.debug("RemoveHs failed: %s", e)
                 
                 # Step 2: Handle multi-fragment molecules (salts, etc.)
                 # Choose largest fragment ourselves to avoid Boltz-2's internal error
@@ -670,8 +670,8 @@ class Boltz2Service:
                     # Try partial sanitization if full sanitization fails
                     try:
                         Chem.SanitizeMol(mol, sanitizeOps=Chem.SanitizeFlags.SANITIZE_ALL ^ Chem.SanitizeFlags.SANITIZE_PROPERTIES)
-                    except:
-                        pass
+                    except Exception as partial_err:
+                        logger.debug("Partial sanitization also failed: %s", partial_err)
                 
                 # Step 4: Generate canonical SMILES from the processed molecule
                 # This ensures consistent, valid input for Boltz-2
@@ -1522,8 +1522,8 @@ class Boltz2Service:
             # Cleanup temporary files
             try:
                 os.unlink(yaml_file)
-            except:
-                pass
+            except OSError as e:
+                logger.debug("Temp file cleanup failed: %s", e)
             
             logger.info("Boltz-2 prediction completed successfully")
             return results
@@ -1564,12 +1564,12 @@ class Boltz2Service:
     def _get_boltz2_version(self) -> Optional[str]:
         """Get Boltz-2 version information."""
         try:
-            result = subprocess.run(['boltz', '--version'], 
+            result = subprocess.run(['boltz', '--version'],
                                   capture_output=True, text=True, encoding='utf-8', errors='replace', timeout=10)
             if result.returncode == 0:
                 return result.stdout.strip()
-        except:
-            pass
+        except Exception as e:
+            logger.debug("Boltz version check failed: %s", e)
         return None
     
     def cleanup(self):

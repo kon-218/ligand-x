@@ -11,6 +11,8 @@ interface ParameterSectionProps {
   description?: string
   collapsible?: boolean
   defaultExpanded?: boolean
+  expanded?: boolean
+  onExpandedChange?: (expanded: boolean) => void
   accentColor?: AccentColor
   children: ReactNode
 }
@@ -20,10 +22,19 @@ export function ParameterSection({
   description,
   collapsible = false,
   defaultExpanded = true,
-  accentColor = 'blue',
+  expanded,
+  onExpandedChange,
+  accentColor = 'cyan',
   children,
 }: ParameterSectionProps) {
-  const [isExpanded, setIsExpanded] = useState(defaultExpanded)
+  const [internalExpanded, setInternalExpanded] = useState(defaultExpanded)
+  const isExpanded = expanded ?? internalExpanded
+  const setIsExpanded = (next: boolean) => {
+    if (expanded === undefined) {
+      setInternalExpanded(next)
+    }
+    onExpandedChange?.(next)
+  }
   const colors = accentColorClasses[accentColor]
 
   return (
@@ -129,7 +140,7 @@ export function SliderParameter({
   unit,
   description,
   tooltip,
-  accentColor = 'blue',
+  accentColor = 'cyan',
 }: SliderParameterProps) {
   const colors = accentColorClasses[accentColor]
 
@@ -247,7 +258,7 @@ export function ToggleParameter({
   onChange,
   description,
   tooltip,
-  accentColor = 'blue',
+  accentColor = 'cyan',
 }: ToggleParameterProps) {
   const colors = accentColorClasses[accentColor]
 
@@ -299,6 +310,7 @@ interface PresetSelectorProps {
   selectedPreset: string
   onPresetSelect: (presetId: string) => void
   accentColor?: AccentColor
+  columnsClassName?: string
 }
 
 export function PresetSelector({
@@ -306,31 +318,44 @@ export function PresetSelector({
   presets,
   selectedPreset,
   onPresetSelect,
-  accentColor = 'blue',
+  accentColor = 'cyan',
+  columnsClassName = 'grid-cols-1 sm:grid-cols-3',
 }: PresetSelectorProps) {
   const colors = accentColorClasses[accentColor]
+  const renderDescription = (description: string) => {
+    const segments = description.split(', ')
+    if (segments.length === 1) return description
+
+    return segments.map((segment, index) => (
+      <span key={`${segment}-${index}`} className="inline-block whitespace-nowrap">
+        {segment}
+        {index < segments.length - 1 && ','}
+        {index < segments.length - 1 && ' '}
+      </span>
+    ))
+  }
 
   return (
     <div className="space-y-3">
       <Label className="text-gray-300">{label}</Label>
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+      <div className={`grid ${columnsClassName} gap-3`}>
         {presets.map((preset) => (
           <button
             key={preset.id}
             onClick={() => onPresetSelect(preset.id)}
-            className={`p-4 rounded-lg border text-left transition-all ${
+            className={`h-full min-h-[104px] p-4 rounded-lg border text-left transition-all ${
               selectedPreset === preset.id
                 ? `${colors.border} ${colors.bgLight}`
                 : 'border-gray-700 bg-gray-800 hover:bg-gray-700'
             }`}
           >
-            <div className="flex items-center gap-2 mb-1">
+            <div className="flex items-center gap-2 mb-1.5">
               {preset.icon}
-              <span className={`font-medium ${selectedPreset === preset.id ? colors.text : 'text-white'}`}>
+              <span className={`text-base font-semibold leading-tight ${selectedPreset === preset.id ? colors.text : 'text-white'}`}>
                 {preset.name}
               </span>
             </div>
-            <p className="text-xs text-gray-400">{preset.description}</p>
+            <p className="text-sm leading-snug text-gray-400">{renderDescription(preset.description)}</p>
           </button>
         ))}
       </div>

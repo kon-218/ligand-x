@@ -3,6 +3,7 @@
 import { useState, useMemo } from 'react'
 import { Download, Copy, Check, Search, X, ChevronUp, ChevronDown, FileText, Terminal, Code } from 'lucide-react'
 import { cn } from '@/lib/utils'
+import { useBaseColor } from '@/hooks/use-base-color'
 
 interface TextFileViewerProps {
   content: string
@@ -61,6 +62,7 @@ function getFileDescription(name: string, fileType: FileType): string {
 }
 
 export function TextFileViewer({ content, name, onClose }: TextFileViewerProps) {
+  const bc = useBaseColor()
   const [copied, setCopied] = useState(false)
   const [searchQuery, setSearchQuery] = useState('')
   const [showSearch, setShowSearch] = useState(false)
@@ -188,68 +190,81 @@ export function TextFileViewer({ content, name, onClose }: TextFileViewerProps) 
 
   return (
     <div className="w-full h-full flex flex-col bg-gray-900 text-gray-300">
-      {/* Header */}
-      <div className="flex items-center justify-between px-4 py-3 bg-gray-800 border-b border-gray-700">
-        <div className="flex items-center gap-3">
-          <div className="p-2 bg-blue-600/20 rounded-lg">
-            <FileIcon className="w-5 h-5 text-blue-400" />
+      {/* Header: 52px = sidebar New Experiment row (py-2.5 + h-8); fixed height avoids text line-box stretching */}
+      <div
+        className="h-[52px] min-h-[52px] max-h-[52px] shrink-0 box-border flex items-center justify-between gap-2 px-3 bg-gray-800 border-b border-gray-800/50"
+        title={description}
+      >
+        <div className="flex h-8 max-h-8 min-w-0 items-center gap-2">
+          <div
+            className={cn('flex h-8 w-8 shrink-0 items-center justify-center rounded-md', !bc.isCustom && bc.bgLighter)}
+            style={bc.isCustom ? bc.styles?.bgLighter : undefined}
+          >
+            <FileIcon
+              className={cn('h-4 w-4', !bc.isCustom && bc.text)}
+              style={bc.isCustom ? bc.styles?.text : undefined}
+            />
           </div>
-          <div>
-            <h3 className="text-base font-semibold text-white">{name}</h3>
-            <p className="text-xs text-gray-400">{description}</p>
-          </div>
+          <span className="truncate text-sm font-semibold leading-none text-white">{name}</span>
         </div>
-        
-        <div className="flex items-center gap-2">
-          {/* Line count badge */}
-          <span className="text-xs text-gray-500 bg-gray-700 px-2 py-1 rounded">
+
+        <div className="flex items-center gap-1 shrink-0">
+          <span className="text-[10px] tabular-nums text-gray-500 bg-gray-700 px-1.5 h-8 inline-flex items-center rounded">
             {lines.length} lines
           </span>
-          
-          {/* Search toggle */}
+
           <button
+            type="button"
             onClick={() => setShowSearch(!showSearch)}
             className={cn(
-              'p-2 rounded-lg transition-colors',
-              showSearch 
-                ? 'bg-blue-600 text-white' 
-                : 'bg-gray-700 text-gray-300 hover:bg-gray-600'
+              'inline-flex h-8 w-8 items-center justify-center rounded-md transition-colors',
+              showSearch && !bc.isCustom && `${bc.buttonBg} text-white`,
+              !showSearch && 'bg-gray-700 text-gray-300 hover:bg-gray-600'
             )}
+            style={
+              showSearch && bc.isCustom
+                ? { backgroundColor: bc.hexValue, color: 'white' }
+                : undefined
+            }
             title="Search (Ctrl+F)"
           >
-            <Search className="w-4 h-4" />
+            <Search className="w-3.5 h-3.5" />
           </button>
-          
-          {/* Line numbers toggle */}
+
           <button
+            type="button"
             onClick={() => setShowLineNumbers(!showLineNumbers)}
             className={cn(
-              'p-2 rounded-lg transition-colors text-xs font-mono',
-              showLineNumbers 
-                ? 'bg-blue-600 text-white' 
-                : 'bg-gray-700 text-gray-300 hover:bg-gray-600'
+              'inline-flex h-8 w-8 items-center justify-center rounded-md transition-colors text-[11px] font-mono leading-none',
+              showLineNumbers && !bc.isCustom && `${bc.buttonBg} text-white`,
+              !showLineNumbers && 'bg-gray-700 text-gray-300 hover:bg-gray-600'
             )}
+            style={
+              showLineNumbers && bc.isCustom
+                ? { backgroundColor: bc.hexValue, color: 'white' }
+                : undefined
+            }
             title="Toggle line numbers"
           >
             #
           </button>
-          
-          {/* Copy button */}
+
           <button
+            type="button"
             onClick={handleCopy}
-            className="p-2 bg-gray-700 text-gray-300 rounded-lg hover:bg-gray-600 transition-colors"
+            className="inline-flex h-8 w-8 items-center justify-center rounded-md bg-gray-700 text-gray-300 hover:bg-gray-600 transition-colors"
             title="Copy to clipboard"
           >
-            {copied ? <Check className="w-4 h-4 text-green-400" /> : <Copy className="w-4 h-4" />}
+            {copied ? <Check className="w-3.5 h-3.5 text-green-400" /> : <Copy className="w-3.5 h-3.5" />}
           </button>
-          
-          {/* Download button */}
+
           <button
+            type="button"
             onClick={handleDownload}
-            className="p-2 bg-gray-700 text-gray-300 rounded-lg hover:bg-gray-600 transition-colors"
+            className="inline-flex h-8 w-8 items-center justify-center rounded-md bg-gray-700 text-gray-300 hover:bg-gray-600 transition-colors"
             title="Download file"
           >
-            <Download className="w-4 h-4" />
+            <Download className="w-3.5 h-3.5" />
           </button>
         </div>
       </div>
@@ -266,7 +281,7 @@ export function TextFileViewer({ content, name, onClose }: TextFileViewerProps) 
               setCurrentMatch(0)
             }}
             placeholder="Search in file..."
-            className="flex-1 bg-gray-700 text-white text-sm px-3 py-1.5 rounded border border-gray-600 focus:border-blue-500 focus:outline-none"
+            className="flex-1 bg-gray-700 text-white text-sm px-3 py-1.5 rounded border border-gray-600 focus:outline-none focus:border-gray-500"
             autoFocus
           />
           {matches.length > 0 && (

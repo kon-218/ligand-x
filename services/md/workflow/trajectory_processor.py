@@ -84,16 +84,66 @@ class TrajectoryProcessorRunner:
             if align:
                 logger.info("Applying periodic boundary imaging and alignment...")
                 try:
-                    traj.image_molecules(inplace=True)
-                    logger.info("[COMPLETE] Periodic boundary imaging completed")
-                except (ValueError, RuntimeError) as e:
-                    logger.warning(f"Could not apply periodic boundary imaging: {e}")
-                
-                try:
-                    traj.superpose(traj, 0)
-                    logger.info("[COMPLETE] Structural alignment completed")
+                    # Check for unit cell info first
+                    if traj.unitcell_lengths is None:
+                        logger.warning("No unit cell information found in trajectory. Skipping PBC imaging.")
+                    else:
+                        # 1. Identify anchors (protein or largest molecule)
+                        anchor_molecules = []
+                        
+                        # Try protein selection first
+                        protein_sel = traj.topology.select('protein')
+                        molecules = traj.topology.find_molecules()
+                        
+                        if len(protein_sel) > 10: # Threshold to ensure valid protein selection
+                            protein_atom_set = set(protein_sel)
+                            # Fix: check atom.index against protein_atom_set (which contains indices)
+                            # Convert sets of Atoms to sorted lists of Atoms for image_molecules
+                            anchor_molecules = [sorted(list(mol), key=lambda a: a.index) for mol in molecules if any(atom.index in protein_atom_set for atom in mol)]
+                            if anchor_molecules:
+                                logger.info(f"Anchoring PBC imaging to {len(anchor_molecules)} protein molecules")
+                        
+                        # Fallback to largest molecule if no protein found
+                        if not anchor_molecules and len(molecules) > 0:
+                            # Find largest molecule by atom count
+                            largest_mol = max(molecules, key=len)
+                            anchor_molecules = [sorted(list(largest_mol), key=lambda a: a.index)]
+                            logger.info(f"Fallback: Anchoring PBC imaging to largest molecule ({len(largest_mol)} atoms)")
+                        
+                        # Apply imaging
+                        if anchor_molecules:
+                            traj.image_molecules(inplace=True, anchor_molecules=anchor_molecules)
+                        else:
+                            # Last resort fallback
+                            logger.info("No suitable anchor molecules found, using default imaging")
+                            traj.image_molecules(inplace=True)
+                            
+                        # 2. Superpose (Align)
+                        # Try to align on protein CA, then protein, then largest molecule
+                        align_indices = []
+                        
+                        if len(protein_sel) > 0:
+                            protein_ca = traj.topology.select('protein and name CA')
+                            if len(protein_ca) > 0:
+                                align_indices = protein_ca
+                                logger.info("Aligning trajectory on protein alpha carbons")
+                            else:
+                                align_indices = protein_sel
+                                logger.info("Aligning trajectory on protein atoms")
+                        elif anchor_molecules:
+                            # Flatten anchor molecules to get atom indices
+                            anchor_atoms = [atom.index for mol in anchor_molecules for atom in mol]
+                            align_indices = anchor_atoms
+                            logger.info(f"Aligning trajectory on anchor molecule ({len(anchor_atoms)} atoms)")
+                        
+                        if len(align_indices) > 0:
+                            traj.superpose(traj, 0, atom_indices=align_indices)
+                        else:
+                            traj.superpose(traj, 0)
+                            
+                        logger.info("[COMPLETE] Periodic boundary imaging and alignment completed")
                 except Exception as e:
-                    logger.warning(f"Could not align trajectory frames: {e}")
+                    logger.warning(f"Could not apply periodic boundary imaging/alignment: {e}")
             
             # Convert to multi-model PDB string
             with tempfile.NamedTemporaryFile(mode='w', suffix='.pdb', delete=False) as temp_file:

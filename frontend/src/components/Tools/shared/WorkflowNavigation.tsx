@@ -29,7 +29,7 @@ export function WorkflowNavigation({
   canProceed = true,
   isRunning = false,
   executeLabel = 'Start',
-  accentColor = 'blue',
+  accentColor = 'cyan',
   showExecuteOnStep = totalSteps - 1,
 }: WorkflowNavigationProps) {
   const colors = accentColorClasses[accentColor]
@@ -86,6 +86,24 @@ export function WorkflowNavigation({
         >
           Continue
           <ChevronRight className="w-4 h-4" />
+        </Button>
+      ) : onExecute ? (
+        <Button
+          onClick={onExecute}
+          disabled={isRunning || !canProceed}
+          className={`gap-2 ${colors.bg} ${colors.bgHover} text-white`}
+        >
+          {isRunning ? (
+            <>
+              <Loader2 className="w-4 h-4 animate-spin" />
+              Running...
+            </>
+          ) : (
+            <>
+              <Play className="w-4 h-4" />
+              Rerun
+            </>
+          )}
         </Button>
       ) : (
         <div /> // Empty placeholder for results step

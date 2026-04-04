@@ -33,6 +33,7 @@ import {
 } from 'lucide-react'
 import { useMolecularStore } from '@/store/molecular-store'
 import { useUIStore } from '@/store/ui-store'
+import { useBaseColor } from '@/hooks/use-base-color'
 import { api, apiClient } from '@/lib/api-client'
 import { getStructServiceProvider } from '@/lib/ketcher-service-provider'
 import { KetcherErrorBoundary } from './KetcherErrorBoundary'
@@ -91,6 +92,7 @@ export function MoleculeEditorTool() {
   const [saveDialogOpen, setSaveDialogOpen] = useState(false)
   const [saveDialogName, setSaveDialogName] = useState('New Molecule')
   const [pendingSaveData, setPendingSaveData] = useState<{ smiles: string; molfile: string; inchi: string } | null>(null)
+  const [currentEditorMoleculeName, setCurrentEditorMoleculeName] = useState<string | null>(null)
 
   const fetchLibraryMolecules = useCallback(async () => {
     // Skip if already fetched
@@ -109,8 +111,9 @@ export function MoleculeEditorTool() {
     }
   }, [])
 
-  const { currentStructure, setCurrentStructure, addStructureTab, pendingEditorImport, setPendingEditorImport } = useMolecularStore()
+  const { currentStructure, setCurrentStructure, addStructureTab, pendingEditorImport, setPendingEditorImport, refreshLibrary } = useMolecularStore()
   const { activeTool, setEditorMessage, setEditorHasChanges, editorSidePanelWidth } = useUIStore()
+  const bc_active = useBaseColor()
   const containerRef = useRef<HTMLDivElement>(null)
   // Responsive button sizing: 'full' | 'compact' | 'icons' | 'minimal'
   const [buttonSize, setButtonSize] = useState<'full' | 'compact' | 'icons' | 'minimal'>('full')
@@ -126,11 +129,11 @@ export function MoleculeEditorTool() {
       // Calculated requirements:
       // - Full text mode needs ~800px+ to fit all buttons without cramping
       // - Icons mode fits comfortably down to ~300px
-      if (width >= 1000) {
+      if (width >= 900) {
         setButtonSize('full')      // Full size with text and loose padding
-      } else if (width >= 800) {
+      } else if (width >= 700) {
         setButtonSize('compact')   // Text with tight padding
-      } else if (width >= 400) {
+      } else if (width >= 360) {
         setButtonSize('icons')     // Icons only
       } else {
         setButtonSize('minimal')   // Smaller icons, tight spacing
@@ -381,6 +384,7 @@ export function MoleculeEditorTool() {
       setError(null)
 
       let loaded = false
+      let loadedMoleculeName: string | null = null
 
       // Priority 1: Try to load ligand if available
       if (currentStructure.ligands && Object.keys(currentStructure.ligands).length > 0) {
@@ -430,6 +434,10 @@ export function MoleculeEditorTool() {
             loaded = true
           }
         }
+
+        if (loaded) {
+          loadedMoleculeName = selectedLigand.name || selectedLigand.residue_name || selectedLigandId
+        }
       }
 
       // Priority 2: If no ligands, try to load from structure's SMILES directly
@@ -438,6 +446,7 @@ export function MoleculeEditorTool() {
         await centerAndZoomMolecule(true) // true = apply layout for SMILES
         setSuccess('Loaded structure from viewer (SMILES)')
         loaded = true
+        loadedMoleculeName = currentStructure.filename || null
       }
 
       // Priority 3: If no SMILES, try to load from structure's SDF data
@@ -446,6 +455,7 @@ export function MoleculeEditorTool() {
         await centerAndZoomMolecule(false) // false = SDF has coordinates
         setSuccess('Loaded structure from viewer (SDF)')
         loaded = true
+        loadedMoleculeName = currentStructure.filename || null
       }
 
       // Priority 4: If still not loaded, try to convert PDB to SDF via backend
@@ -463,6 +473,7 @@ export function MoleculeEditorTool() {
             await centerAndZoomMolecule(false) // false = molfile has coordinates
             setSuccess('Loaded structure from viewer (converted from PDB)')
             loaded = true
+            loadedMoleculeName = currentStructure.filename || null
           }
         } catch (convertErr) {
           console.warn('Could not convert PDB to SDF:', convertErr)
@@ -473,6 +484,8 @@ export function MoleculeEditorTool() {
         setError('No importable molecule data found in viewer. Structure may be too large or in an unsupported format.')
         return
       }
+
+      setCurrentEditorMoleculeName(loadedMoleculeName)
 
       // Wait for Ketcher to stabilize after loading structure before updating molecule data
       setTimeout(() => {
@@ -698,7 +711,7 @@ export function MoleculeEditorTool() {
 
       // Open in-app dialog instead of browser prompt
       setPendingSaveData({ smiles, molfile, inchi })
-      setSaveDialogName('New Molecule')
+      setSaveDialogName(currentEditorMoleculeName || 'New Molecule')
       setSaveDialogOpen(true)
       setIsLoading(false)
     } catch (err: any) {
@@ -745,6 +758,7 @@ export function MoleculeEditorTool() {
         console.log(response.data.already_exists ? 'Molecule already exists:' : 'Molecule saved successfully:', response.data.molecule)
 
         fetchLibraryMolecules()
+        refreshLibrary()
 
         if (smiles) {
           try {
@@ -851,6 +865,7 @@ export function MoleculeEditorTool() {
       }
 
       setImportedLibraryName(molecule.name || null)
+      setCurrentEditorMoleculeName(molecule.name || null)
 
       // Wait for Ketcher to process the structure
       await new Promise(resolve => setTimeout(resolve, 500))
@@ -918,7 +933,7 @@ export function MoleculeEditorTool() {
       const moleculeName = importedLibraryName || smiles.substring(0, 20) + (smiles.length > 20 ? '...' : '')
 
       // Call backend to generate 3D structure directly from SMILES
-      const response = await apiClient.post('/api/structure/smiles_to_3d',{
+      const response = await apiClient.post('/api/structure/smiles_to_3d', {
         smiles
       })
 
@@ -951,19 +966,19 @@ export function MoleculeEditorTool() {
   // Helper functions for responsive button styling
   const showText = buttonSize === 'full' || buttonSize === 'compact'
   const buttonPadding = {
-    full: 'px-3',
-    compact: 'px-2.5',
-    icons: 'px-2',
-    minimal: 'px-1.5'
+    full: 'px-2',
+    compact: 'px-1.5',
+    icons: 'px-1.5',
+    minimal: 'px-1'
   }[buttonSize]
   const buttonGap = {
-    full: 'gap-0.5',
-    compact: 'gap-2',
-    icons: 'gap-1.5',
-    minimal: 'gap-1'
+    full: 'gap-1',
+    compact: 'gap-1',
+    icons: 'gap-1',
+    minimal: 'gap-0.5'
   }[buttonSize]
-  const iconSize = buttonSize === 'minimal' ? 'h-3.5 w-3.5' : 'h-4 w-4'
-  const iconMargin = showText ? 'mr-1.5' : ''
+  const iconSize = buttonSize === 'minimal' ? 'h-3 w-3' : 'h-3.5 w-3.5'
+  const iconMargin = showText ? 'mr-1' : ''
 
   return (
     <div ref={containerRef} className="flex flex-col h-full bg-gray-50 relative">
@@ -987,7 +1002,7 @@ export function MoleculeEditorTool() {
                   if (e.key === 'Escape') { setSaveDialogOpen(false); setPendingSaveData(null) }
                 }}
                 autoFocus
-                className="flex h-10 w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 placeholder:text-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                className="flex h-10 w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 placeholder:text-gray-400 focus:outline-none focus:ring-2 focus:ring-cyan-500"
               />
             </div>
             <div className="flex gap-2 justify-end">
@@ -1003,7 +1018,7 @@ export function MoleculeEditorTool() {
                 size="sm"
                 onClick={handleConfirmSave}
                 disabled={!saveDialogName.trim()}
-                className="bg-blue-600 hover:bg-blue-700 text-white"
+                className="bg-cyan-600 hover:bg-cyan-700 text-white"
               >
                 Save
               </Button>
@@ -1013,16 +1028,16 @@ export function MoleculeEditorTool() {
       )}
 
       {/* Compact Header with All Controls */}
-      <div className="flex items-center justify-between px-2 sm:px-3 py-2.5 bg-white border-b border-gray-200 shadow-sm z-10 relative">
+      <div className="flex items-center justify-between px-2 sm:px-3 py-2.5 bg-gray-950 border-b border-gray-800/50 shadow-sm z-10 relative">
         {/* Left: First 4 buttons (Import, From Viewer, From Library, Export) */}
-        <div className={`flex items-center ${buttonGap} flex-1 min-w-0`}>
+        <div className={`flex items-center gap-1 flex-1 min-w-0`}>
           <Button
             size="sm"
             variant="outline"
             onClick={() => document.getElementById('import-file')?.click()}
             disabled={isLoading}
             title="Import structure from file"
-            className={`bg-white hover:bg-gray-50 border-gray-300 text-gray-700 ${buttonPadding} flex-shrink-0 whitespace-nowrap`}
+            className="flex-shrink-0 whitespace-nowrap bg-white hover:bg-gray-50 text-gray-700"
           >
             <Upload className={`${iconSize} ${iconMargin}`} />
             {showText && <span>Import</span>}
@@ -1043,7 +1058,7 @@ export function MoleculeEditorTool() {
                 onClick={() => setIsLigandSelectorOpen(!isLigandSelectorOpen)}
                 disabled={isLoading || !currentStructure}
                 title="Select ligand to import from viewer"
-                className={`bg-white hover:bg-gray-50 border-gray-300 text-gray-700 ${buttonPadding} flex-shrink-0 whitespace-nowrap`}
+                className="flex-shrink-0 whitespace-nowrap bg-gray-900 border-gray-800 text-gray-300 hover:bg-gray-800 hover:text-white"
               >
                 <ArrowDown className={`${iconSize} ${iconMargin}`} />
                 {showText && <span>From Viewer</span>}
@@ -1058,14 +1073,14 @@ export function MoleculeEditorTool() {
                   />
                   {/* Dropdown Menu */}
                   <div className="absolute top-full left-0 mt-1 w-64 bg-white border border-gray-200 rounded-lg shadow-lg z-[9999] max-h-80 overflow-y-auto">
-                    <div className="px-3 py-2 text-xs font-semibold text-gray-500 border-b border-gray-200">
+                    <div className="px-3 py-2 text-xs font-semibold text-gray-400 border-b border-gray-800">
                       Select Ligand ({availableLigands.length} found)
                     </div>
                     {availableLigands.map((ligand) => (
                       <button
                         key={ligand.id}
                         onClick={() => handleImportFromViewer(ligand.id)}
-                        className="w-full px-4 py-2 text-left text-sm text-gray-700 hover:bg-blue-50 hover:text-blue-700 flex items-center gap-2 transition-colors border-b border-gray-100 last:border-b-0"
+                        className="w-full px-4 py-2 text-left text-xs text-gray-700 hover:bg-blue-50 hover:text-blue-700 flex items-center gap-2 transition-colors border-b border-gray-100 last:border-b-0"
                         title={`Import ${ligand.id}`}
                       >
                         <Beaker className="h-4 w-4 flex-shrink-0" />
@@ -1088,7 +1103,7 @@ export function MoleculeEditorTool() {
               onClick={() => handleImportFromViewer()}
               disabled={isLoading || !currentStructure}
               title={!currentStructure ? "No structure in viewer" : "Import current molecule from viewer"}
-              className={`bg-white hover:bg-gray-50 border-gray-300 text-gray-700 ${buttonPadding} flex-shrink-0 whitespace-nowrap`}
+              className="flex-shrink-0 whitespace-nowrap bg-gray-900 border-gray-800 text-gray-300 hover:bg-gray-800 hover:text-white"
             >
               <ArrowDown className={`${iconSize} ${iconMargin}`} />
               {showText && <span>From Viewer</span>}
@@ -1103,7 +1118,7 @@ export function MoleculeEditorTool() {
               onClick={() => setIsLibraryDropdownOpen(!isLibraryDropdownOpen)}
               disabled={isLoading || isLoadingLibrary}
               title="Import molecule from library"
-              className={`bg-white hover:bg-gray-50 border-gray-300 text-gray-700 ${buttonPadding} flex-shrink-0 whitespace-nowrap`}
+              className="flex-shrink-0 whitespace-nowrap bg-gray-900 border-gray-800 text-gray-300 hover:bg-gray-800 hover:text-white"
             >
               <Library className={`${iconSize} ${iconMargin}`} />
               {showText && <span>From Library</span>}
@@ -1117,14 +1132,14 @@ export function MoleculeEditorTool() {
                   onClick={() => setIsLibraryDropdownOpen(false)}
                 />
                 {/* Dropdown Menu */}
-                <div className="absolute top-full left-0 mt-1 w-64 bg-white border border-gray-200 rounded-lg shadow-lg z-[9999] max-h-80 overflow-y-auto">
+                <div className="absolute left-0 mt-1 w-48 bg-gray-900 border border-gray-800 rounded-lg shadow-xl opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all z-10">
                   {isLoadingLibrary ? (
-                    <div className="px-4 py-3 text-sm text-gray-500 flex items-center gap-2">
+                    <div className="px-4 py-3 text-xs text-gray-500 flex items-center gap-2">
                       <Loader2 className="h-4 w-4 animate-spin" />
                       Loading molecules...
                     </div>
                   ) : libraryMolecules.length === 0 ? (
-                    <div className="px-4 py-3 text-sm text-gray-500">
+                    <div className="px-4 py-3 text-xs text-gray-500">
                       No molecules in library
                     </div>
                   ) : (
@@ -1132,7 +1147,7 @@ export function MoleculeEditorTool() {
                       <button
                         key={molecule.id}
                         onClick={() => handleImportFromLibrary(molecule)}
-                        className="w-full px-4 py-2 text-left text-sm text-gray-700 hover:bg-blue-50 hover:text-blue-700 flex items-center gap-2 transition-colors border-b border-gray-100 last:border-b-0"
+                        className="w-full px-4 py-2 text-left text-xs text-gray-700 hover:bg-blue-50 hover:text-blue-700 flex items-center gap-2 transition-colors border-b border-gray-100 last:border-b-0"
                         title={molecule.canonical_smiles}
                       >
                         <Beaker className="h-4 w-4 flex-shrink-0" />
@@ -1147,42 +1162,44 @@ export function MoleculeEditorTool() {
 
           {/* Export Dropdown */}
           <div className="relative group">
-            <button
-              className={`inline-flex items-center justify-center rounded-md text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 disabled:pointer-events-none disabled:opacity-50 border border-gray-300 bg-white hover:bg-gray-50 text-gray-700 h-9 ${buttonPadding} flex-shrink-0 whitespace-nowrap`}
+            <Button
+              size="sm"
+              variant="outline"
+              className="flex-shrink-0 whitespace-nowrap bg-gray-900 border-gray-800 text-gray-300 hover:bg-gray-800 hover:text-white"
               disabled={isLoading}
               title="Export structure"
             >
               <Download className={`${iconSize} ${iconMargin}`} />
               {showText && <span>Export</span>}
-            </button>
+            </Button>
             <div className="absolute left-0 mt-1 w-40 bg-white border border-gray-200 rounded-lg shadow-lg opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all z-10">
               <button
                 onClick={() => handleExport('smiles')}
-                className="w-full px-4 py-2 text-left text-sm text-gray-700 hover:bg-gray-50 rounded-t-lg"
+                className="w-full px-4 py-2 text-left text-xs text-gray-300 hover:bg-gray-800 rounded-t-lg"
               >
                 SMILES (.smi)
               </button>
               <button
                 onClick={() => handleExport('mol')}
-                className="w-full px-4 py-2 text-left text-sm text-gray-700 hover:bg-gray-50"
+                className="w-full px-4 py-2 text-left text-xs text-gray-700 hover:bg-gray-50"
               >
                 MOL (.mol)
               </button>
               <button
                 onClick={() => handleExport('sdf')}
-                className="w-full px-4 py-2 text-left text-sm text-gray-700 hover:bg-gray-50"
+                className="w-full px-4 py-2 text-left text-xs text-gray-700 hover:bg-gray-50"
               >
                 SDF (.sdf)
               </button>
               <button
                 onClick={() => handleExport('inchi')}
-                className="w-full px-4 py-2 text-left text-sm text-gray-700 hover:bg-gray-50"
+                className="w-full px-4 py-2 text-left text-xs text-gray-700 hover:bg-gray-50"
               >
                 InChI (.inchi)
               </button>
               <button
                 onClick={() => handleExport('ket')}
-                className="w-full px-4 py-2 text-left text-sm text-gray-700 hover:bg-gray-50 rounded-b-lg"
+                className="w-full px-4 py-2 text-left text-xs text-gray-700 hover:bg-gray-50 rounded-b-lg"
               >
                 KET (.ket)
               </button>
@@ -1191,27 +1208,29 @@ export function MoleculeEditorTool() {
         </div>
 
         {/* Middle: View Tools Dropdown */}
-        <div className={`flex items-center ml-2`}>
+        <div className="flex items-center ml-2">
           <div className="relative group">
-            <button
-              className={`inline-flex items-center justify-center rounded-md text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 disabled:pointer-events-none disabled:opacity-50 border border-gray-300 bg-white hover:bg-gray-50 text-gray-700 h-9 ${buttonPadding} flex-shrink-0 whitespace-nowrap`}
+            <Button
+              size="sm"
+              variant="outline"
+              className="flex-shrink-0 whitespace-nowrap bg-gray-900 border-gray-800 text-gray-300 hover:bg-gray-800 hover:text-white"
               disabled={isLoading || !isKetcherReady}
               title="View adjustment tools"
             >
               <Maximize2 className={`${iconSize} ${iconMargin}`} />
               {showText && <span>View</span>}
-            </button>
+            </Button>
             <div className="absolute left-0 mt-1 w-48 bg-white border border-gray-200 rounded-lg shadow-lg opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all z-10">
               <button
                 onClick={handleCenterZoom}
-                className="w-full px-4 py-2 text-left text-sm text-gray-700 hover:bg-gray-50 rounded-t-lg"
+                className="w-full px-4 py-2 text-left text-xs text-gray-700 hover:bg-gray-50 rounded-t-lg"
                 disabled={isLoading}
               >
                 Center & Zoom
               </button>
               <button
                 onClick={handleLayout}
-                className="w-full px-4 py-2 text-left text-sm text-gray-700 hover:bg-gray-50 rounded-b-lg"
+                className="w-full px-4 py-2 text-left text-xs text-gray-700 hover:bg-gray-50 rounded-b-lg"
                 disabled={isLoading}
               >
                 Auto Layout
@@ -1221,14 +1240,14 @@ export function MoleculeEditorTool() {
         </div>
 
         {/* Right: Clear, Save, Generate 3D - Grouped */}
-        <div className={`flex items-center ${buttonGap} flex-shrink-0 ml-2`}>
+        <div className="flex items-center gap-1 flex-shrink-0 ml-2">
           <Button
             size="sm"
             variant="outline"
             onClick={handleClear}
             disabled={isLoading}
             title="Clear editor"
-            className={`bg-white hover:bg-gray-50 border-gray-300 text-gray-700 ${buttonPadding} flex-shrink-0 whitespace-nowrap`}
+            className="flex-shrink-0 whitespace-nowrap bg-gray-900 border-gray-800 text-gray-300 hover:bg-gray-800 hover:text-white"
           >
             <Trash2 className={`${iconSize} ${iconMargin}`} />
             {showText && <span>Clear</span>}
@@ -1236,10 +1255,11 @@ export function MoleculeEditorTool() {
 
           <Button
             size="sm"
+            variant="primary"
             onClick={handleSaveToLibrary}
             disabled={isLoading || !moleculeData.smiles}
             title={!moleculeData.smiles ? "Please draw a molecule first" : "Save to molecular library"}
-            className={`bg-green-600 hover:bg-green-700 text-white border-0 ${buttonPadding} flex-shrink-0 whitespace-nowrap`}
+            className="flex-shrink-0 whitespace-nowrap bg-green-600 hover:bg-green-700 text-white border-0"
           >
             {isLoading ? (
               <Loader2 className={`${iconSize} ${iconMargin} animate-spin`} />
@@ -1251,10 +1271,24 @@ export function MoleculeEditorTool() {
 
           <Button
             size="sm"
+            variant="primary"
             onClick={handleGenerate3D}
             disabled={isLoading}
             title="Generate 3D structure and add to viewer"
-            className={`bg-blue-600 hover:bg-blue-700 text-white border-0 ${buttonPadding} flex-shrink-0 whitespace-nowrap`}
+            className={`flex-shrink-0 whitespace-nowrap ${!bc_active.isCustom ? `${bc_active.buttonBg} ${bc_active.buttonBgHover}` : ''}`}
+            style={bc_active.isCustom ? {
+              backgroundColor: bc_active.hexValue,
+            } : undefined}
+            onMouseEnter={(e) => {
+              if (bc_active.isCustom) {
+                (e.target as HTMLElement).style.backgroundColor = `rgba(${bc_active.rgbString}, 0.8)`
+              }
+            }}
+            onMouseLeave={(e) => {
+              if (bc_active.isCustom) {
+                (e.target as HTMLElement).style.backgroundColor = bc_active.hexValue
+              }
+            }}
           >
             {isLoading ? (
               <Loader2 className={`${iconSize} ${iconMargin} animate-spin`} />

@@ -1,6 +1,6 @@
 'use client'
 
-import React, { useState, useEffect } from 'react'
+import React, { useState, useEffect, useRef } from 'react'
 import { Target, Loader2, Play, Layers, Check, FlaskConical, X, Search } from 'lucide-react'
 import { useMolecularStore } from '@/store/molecular-store'
 import { useUIStore } from '@/store/ui-store'
@@ -20,7 +20,7 @@ import {
   ResultMetric,
   ResultsTable,
 } from './shared'
-import type { WorkflowStep, StructureOption } from './shared'
+import type { WorkflowStep, StructureOption, ConfigGroup } from './shared'
 import { convertPDBQTtoPDB, parsePDBQT, parseSDF, convertSDFtoPDB, calculateBindingStrength } from './Docking/utils'
 import { DockingStepResults } from './Docking/DockingStepResults'
 import { DockingPocketFinder } from './Docking/DockingPocketFinder'
@@ -33,7 +33,8 @@ const DOCKING_STEPS: WorkflowStep[] = [
   { id: 1, label: 'Selection', description: 'Choose protein and ligand' },
   { id: 2, label: 'Parameters', description: 'Configure docking settings' },
   { id: 3, label: 'Grid Box', description: 'Define search space' },
-  { id: 4, label: 'Results', description: 'View docking results' },
+  { id: 4, label: 'Execute', description: 'Review and run docking' },
+  { id: 5, label: 'Results', description: 'View docking results' },
 ]
 
 // Chain IDs assigned to docked poses so Mol* can select them distinctly from native cofactors.
@@ -204,7 +205,7 @@ export function DockingTool() {
     try {
       setError(null)
       setIsDockingRunning(true)
-      setCurrentStep(4)
+      setCurrentStep(5)
       setDockingStatus('Initializing batch docking...')
 
       // Prepare ligand data for batch
@@ -406,6 +407,7 @@ export function DockingTool() {
             size_z: Number(preparation.grid_box.size_z.toFixed(2)),
           })
           setShowManualGrid(true)
+          setPreviewGridBox(true)
         }
       } else if (uploadedLigandsData[ligandToUse]) {
         const uploaded = uploadedLigandsData[ligandToUse]
@@ -429,6 +431,7 @@ export function DockingTool() {
             size_z: Number(preparation.grid_box.size_z.toFixed(2)),
           })
           setShowManualGrid(true)
+          setPreviewGridBox(true)
         }
       } else {
         const ligand = currentStructure.ligands?.[ligandToUse]
@@ -446,6 +449,7 @@ export function DockingTool() {
           size_z: dockingParams.gridPadding * 4,
         })
         setShowManualGrid(true)
+        setPreviewGridBox(true)
       }
       setDockingStatus('Grid box calculated')
     } catch (err: any) {
@@ -475,6 +479,7 @@ export function DockingTool() {
           size_z: Number(result.grid_box.size_z.toFixed(2)),
         })
         setShowManualGrid(true)
+        setPreviewGridBox(true)
       }
       setDockingStatus('Grid box calculated')
     } catch (err: any) {
@@ -521,7 +526,7 @@ export function DockingTool() {
       }
 
       setIsDockingRunning(true)
-      setCurrentStep(4)
+      setCurrentStep(5)
       setError(null)
       setDockingProgress(0)
       setDockingStatus('Initializing...')
@@ -960,18 +965,24 @@ export function DockingTool() {
     setSaveMessage(null)
   }
 
-  const handleJobSelected = async (jobId: string) => {
-    try {
-      const job = await api.getDockingJob(jobId)
-      // PostgreSQL stores result in job.result, but docking service wraps it in another 'result' field
-      // So actual data is at job.result.result
-      const rawResult = job?.result
-      const results = rawResult?.result || rawResult // Handle both nested and flat structures
+  const dockingFetchControllerRef = useRef<AbortController | null>(null)
 
-      console.log('[DockingTool] handleJobSelected - rawResult:', rawResult)
-      console.log('[DockingTool] handleJobSelected - results:', results)
-      console.log('[DockingTool] handleJobSelected - poses_pdbqt exists:', !!results?.poses_pdbqt)
-      console.log('[DockingTool] handleJobSelected - poses_sdf exists:', !!results?.poses_sdf)
+  const handleJobSelected = async (jobId: string | null) => {
+    dockingFetchControllerRef.current?.abort()
+    if (!jobId) {
+      setDockingResults(null)
+      return
+    }
+
+    const controller = new AbortController()
+    dockingFetchControllerRef.current = controller
+
+    try {
+      const job = await api.getDockingJob(jobId, { signal: controller.signal })
+      if (controller.signal.aborted) return
+
+      const rawResult = job?.result
+      const results = rawResult?.result || rawResult
 
       if (job && results && results.success) {
         // Extract PDBQT data - check multiple possible locations
@@ -1006,7 +1017,8 @@ export function DockingTool() {
         // For now, we assume the user might need to reload the protein if it's different.
         // But DockingStepResults handles the visualization request.
       }
-    } catch (err) {
+    } catch (err: any) {
+      if (controller.signal.aborted) return
       console.error("Failed to load job results:", err)
     }
   }
@@ -1020,6 +1032,7 @@ export function DockingTool() {
         return proteinLoaded && selectedLigand !== ''
       case 2: return true
       case 3: return gridBox !== null
+      case 4: return gridBox !== null
       default: return true
     }
   }
@@ -1050,7 +1063,7 @@ export function DockingTool() {
                 <button
                   onClick={() => setIsBatchMode(false)}
                   className={`p-4 rounded-lg border-2 transition-all text-left ${!isBatchMode
-                    ? 'border-blue-500 bg-blue-500/10'
+                    ? 'border-indigo-500 bg-indigo-500/10'
                     : 'border-gray-700 bg-gray-800/50 hover:border-gray-600'
                     }`}
                 >
@@ -1065,7 +1078,7 @@ export function DockingTool() {
                 <button
                   onClick={() => setIsBatchMode(true)}
                   className={`p-4 rounded-lg border-2 transition-all text-left ${isBatchMode
-                    ? 'border-blue-500 bg-blue-500/10'
+                    ? 'border-indigo-500 bg-indigo-500/10'
                     : 'border-gray-700 bg-gray-800/50 hover:border-gray-600'
                     }`}
                 >
@@ -1088,7 +1101,7 @@ export function DockingTool() {
               selectedLigand={!isBatchMode ? selectedLigand : null}
               onLigandSelect={(id: string | null) => setSelectedLigand(id || '')}
               availableLigands={availableLigands.map(l => ({ id: l.id, name: l.name, source: l.id?.startsWith('library_') ? 'library' as const : 'current_structure' as const }))}
-              accentColor="blue"
+              accentColor="indigo"
               showLigandInput={!isBatchMode}
               ligandInputMethod={ligandInputMethod}
               onLigandMethodChange={setLigandInputMethod}
@@ -1181,7 +1194,7 @@ export function DockingTool() {
                 max={64}
                 step={1}
                 description="Higher = more thorough but slower (32 recommended)"
-                accentColor="blue"
+                accentColor="indigo"
               />
               <SliderParameter
                 label="Number of Poses"
@@ -1191,7 +1204,7 @@ export function DockingTool() {
                 max={20}
                 step={1}
                 description="Maximum poses to generate"
-                accentColor="blue"
+                accentColor="indigo"
               />
             </ParameterSection>
 
@@ -1306,7 +1319,7 @@ export function DockingTool() {
                 step={0.5}
                 unit="Å"
                 description="Extra space around ligand"
-                accentColor="blue"
+                accentColor="indigo"
               />
               <SliderParameter
                 label="Energy Range"
@@ -1317,7 +1330,7 @@ export function DockingTool() {
                 step={1}
                 unit="kcal/mol"
                 description="Max energy difference from best pose"
-                accentColor="blue"
+                accentColor="indigo"
               />
             </ParameterSection>
           </div>
@@ -1353,11 +1366,14 @@ export function DockingTool() {
             {showPocketFinder && (
               <DockingPocketFinder
                 proteinPdbData={currentStructure?.pdb_data ?? null}
-                onPocketSelected={(center, size) => {
+                onPocketPreviewed={(center, size) => {
                   setGridBox({
                     center_x: center.x, center_y: center.y, center_z: center.z,
                     size_x: size, size_y: size, size_z: size,
                   })
+                  setPreviewGridBox(true)
+                }}
+                onPocketSelected={(_center, _size) => {
                   setShowPocketFinder(false)
                 }}
               />
@@ -1399,7 +1415,7 @@ export function DockingTool() {
                   value={previewGridBox}
                   onChange={setPreviewGridBox}
                   description="Show grid box in 3D viewer"
-                  accentColor="blue"
+                  accentColor="indigo"
                 />
               </div>
             )}
@@ -1412,7 +1428,51 @@ export function DockingTool() {
           </div>
         )
 
-      case 4:
+      case 4: {
+        const ligandLabel = isBatchMode
+          ? `${batchLigands.length} ligand(s)`
+          : availableLigands.find(l => l.id === selectedLigand)?.name || selectedLigand || 'None'
+
+        const dockingConfigGroups: ConfigGroup[] = [
+          {
+            title: 'Structures',
+            items: [
+              { label: 'Protein', value: currentStructure?.structure_id || 'Current' },
+              { label: 'Mode', value: isBatchMode ? 'Batch Docking' : 'Single Docking' },
+              { label: 'Ligand', value: ligandLabel },
+            ],
+          },
+          {
+            title: 'Parameters',
+            items: [
+              { label: 'Scoring Function', value: dockingParams.scoringFunction.toUpperCase() },
+              { label: 'Exhaustiveness', value: dockingParams.exhaustiveness.toString() },
+              { label: 'Max Poses', value: dockingParams.numPoses.toString() },
+              { label: 'Energy Range', value: `${dockingParams.energyRange} kcal/mol` },
+            ],
+          },
+          ...(gridBox ? [{
+            title: 'Grid Box',
+            items: [
+              { label: 'Center', value: `(${gridBox.center_x}, ${gridBox.center_y}, ${gridBox.center_z})` },
+              { label: 'Size', value: `${gridBox.size_x} × ${gridBox.size_y} × ${gridBox.size_z} Å` },
+            ],
+          }] : []),
+        ]
+
+        return (
+          <ExecutionPanel
+            isRunning={false}
+            progress={0}
+            progressMessage=""
+            error={error}
+            accentColor="indigo"
+            configGroups={dockingConfigGroups}
+          />
+        )
+      }
+
+      case 5:
         // Both single and batch jobs now use the same results component
         // Batch jobs appear in the JobList with "Batch" tags
         return (
@@ -1424,7 +1484,6 @@ export function DockingTool() {
             selectedPoseIndex={selectedPoseIndex}
             savingPose={savingPose}
             saveMessage={saveMessage}
-            onRunDocking={handleRunDocking}
             onVisualizePose={handleVisualizePose}
             onVisualizeMultiplePoses={handleVisualizeMultiplePoses}
             onSavePose={handleSavePose}
@@ -1485,15 +1544,15 @@ export function DockingTool() {
       currentStep={currentStep}
       onStepClick={(step: number) => setCurrentStep(step)}
       onBack={() => setCurrentStep(Math.max(1, currentStep - 1))}
-      onNext={() => setCurrentStep(Math.min(4, currentStep + 1))}
+      onNext={() => setCurrentStep(Math.min(5, currentStep + 1))}
       onReset={handleReset}
-      onExecute={currentStep === 3 ? (isBatchMode ? handleRunBatchDocking : handleRunDocking) : undefined}
+      onExecute={isBatchMode ? handleRunBatchDocking : handleRunDocking}
       canProceed={canProceed()}
-      isRunning={isDockingRunning && currentStep === 4}
+      isRunning={isDockingRunning && currentStep === 5}
       allowStepNavigationWhileRunning={true}
-      executeLabel={isBatchMode ? "Start Batch Docking" : "Run Docking"}
-      showExecuteOnStep={3}
-      accentColor="blue"
+      executeLabel={isBatchMode ? "Start Batch Docking" : "Start Docking"}
+      showExecuteOnStep={4}
+      accentColor="indigo"
       error={error}
     >
       {renderStepContent()}

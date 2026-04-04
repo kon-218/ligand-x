@@ -74,6 +74,8 @@ interface QCTabSetupProps {
     onPreviewInput: (inputFile: string) => void
     selectedLigandId?: string | null
     onSelectedLigandChange?: (ligandId: string | null) => void
+    selectedWorkflow?: QCCalculationWorkflow
+    onSelectedWorkflowChange?: (workflow: QCCalculationWorkflow) => void
 }
 
 function buildParamsFromWorkflow(
@@ -171,6 +173,8 @@ export function QCTabSetup({
     onPreviewInput,
     selectedLigandId: controlledSelectedLigandId,
     onSelectedLigandChange,
+    selectedWorkflow: controlledSelectedWorkflow,
+    onSelectedWorkflowChange,
 }: QCTabSetupProps) {
     // Use controlled state if provided, otherwise use local state
     const [localSelectedLigandId, setLocalSelectedLigandId] = useState<string | null>(null)
@@ -182,10 +186,18 @@ export function QCTabSetup({
             setLocalSelectedLigandId(id)
         }
     }
+    const [localSelectedWorkflow, setLocalSelectedWorkflow] = useState<QCCalculationWorkflow>('optimize')
+    const selectedWorkflow = controlledSelectedWorkflow !== undefined ? controlledSelectedWorkflow : localSelectedWorkflow
+    const setSelectedWorkflow = (workflow: QCCalculationWorkflow) => {
+        if (onSelectedWorkflowChange) {
+            onSelectedWorkflowChange(workflow)
+        } else {
+            setLocalSelectedWorkflow(workflow)
+        }
+    }
     const [maxCpuCores, setMaxCpuCores] = useState<number>(64)
 
     // Standard QC workflow state
-    const [selectedWorkflow, setSelectedWorkflow] = useState<QCCalculationWorkflow>('optimize')
     const [selectedMethodId, setSelectedMethodId] = useState<string>(CURATED_METHODS[0].id)
     const [charge, setCharge] = useState(0)
     const [multiplicity, setMultiplicity] = useState(1)

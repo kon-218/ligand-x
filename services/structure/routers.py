@@ -3,6 +3,7 @@ from fastapi import APIRouter, HTTPException, UploadFile, File, Form, Request
 from fastapi.responses import FileResponse, StreamingResponse
 from typing import Optional, Dict, Any, List
 import os
+import logging
 import traceback
 import subprocess
 import shutil
@@ -38,6 +39,8 @@ from services.structure.processor import StructureProcessor, sanitize_pdb_for_rd
 from services.structure.pdb_service import PDBService
 from lib.structure.validator import validate_structure_for_service, detect_structure_type, get_service_requirements
 from pydantic import BaseModel
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="", tags=["Structure"])
 structure_router = APIRouter(prefix="/api/structure", tags=["Structure"])
@@ -229,6 +232,45 @@ async def extract_ligand_by_hetid(request: ExtractLigandByHETIDRequest):
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Internal error: {str(e)}")
+
+
+class ExtractHETATMRequest(BaseModel):
+    pdb_data: str
+
+
+@structure_router.post("/extract_hetatm")
+async def extract_hetatm(request: ExtractHETATMRequest):
+    """Extract HETATM ligand residues from a PDB structure.
+
+    Returns unique non-water HETATM residues with their PDB coordinate blocks.
+    Used by the RBFE reference pose setup to offer co-crystal ligand choices.
+    """
+    WATER_RESIDUES = {'HOH', 'WAT', 'DOD', 'TIP', 'TP3', 'SOL'}
+    pdb_data = request.pdb_data
+    if not pdb_data:
+        raise HTTPException(status_code=400, detail="PDB data is required")
+
+    # Group HETATM lines by (residue_name, chain_id)
+    residue_lines: dict[tuple[str, str], list[str]] = {}
+    for line in pdb_data.split('\n'):
+        if line.startswith('HETATM'):
+            res_name = line[17:20].strip()
+            chain_id = line[21:22].strip() or 'A'
+            if res_name in WATER_RESIDUES:
+                continue
+            key = (res_name, chain_id)
+            residue_lines.setdefault(key, []).append(line)
+
+    residues = []
+    for (res_name, chain_id), lines in residue_lines.items():
+        pdb_string = '\n'.join(lines) + '\nEND\n'
+        residues.append({
+            'residue_name': res_name,
+            'chain_id': chain_id,
+            'pdb_string': pdb_string,
+        })
+
+    return {'residues': residues}
 
 
 class ValidateStructureRequest(BaseModel):
@@ -478,8 +520,8 @@ async def save_edited_molecule(request: SaveEditedMoleculeRequest):
         try:
             AllChem.EmbedMolecule(mol_with_h, randomSeed=42)
             AllChem.MMFFOptimizeMolecule(mol_with_h)
-        except:
-            pass
+        except Exception as e:
+            logger.debug("EmbedMolecule/MMFFOptimizeMolecule failed: %s", e)
         pdb_data = Chem.MolToPDBBlock(mol_with_h)
         
         # Generate 2D image
@@ -492,8 +534,8 @@ async def save_edited_molecule(request: SaveEditedMoleculeRequest):
             img.save(buffered, format="PNG")
             img_str = base64.b64encode(buffered.getvalue()).decode()
             image_data = f"data:image/png;base64,{img_str}"
-        except:
-            pass
+        except Exception as e:
+            logger.debug("2D coordinate/image generation failed: %s", e)
         
         chain_id = 'A'
         residue_number = 1
@@ -503,7 +545,8 @@ async def save_edited_molecule(request: SaveEditedMoleculeRequest):
                 chain_id = parts[-2]
                 try:
                     residue_number = int(parts[-1])
-                except:
+                except ValueError as e:
+                    logger.debug("Residue number parsing failed: %s", e)
                     residue_number = 1
         
         new_ligand_id = f"{name.upper()}_{chain_id}_{residue_number}"
@@ -705,8 +748,8 @@ async def render_smiles(smiles: str, width: int = 300, height: int = 300):
         # Compute 2D coords
         try:
             AllChem.Compute2DCoords(mol)
-        except:
-            pass
+        except Exception as e:
+            logger.debug("Compute2DCoords failed: %s", e)
         
         img = Draw.MolToImage(mol, size=(width, height))
         buffered = BytesIO()

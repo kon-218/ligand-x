@@ -4,6 +4,7 @@
  */
 
 import type { RBFENetworkData, RBFEDdGValue, LigandSelection } from '@/types/rbfe-types'
+import { computeNetworkGraphLayout } from '@/lib/rbfe-network-layout'
 
 /**
  * Get SMILES for a ligand name from available ligands
@@ -105,48 +106,63 @@ export function getDisplayName(filename: string): string {
   return filename.length > 15 ? filename.slice(0, 12) + '...' : filename
 }
 
+function blobToDataUrl(blob: Blob): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onload = () => resolve(reader.result as string)
+    reader.onerror = () => reject(reader.error ?? new Error('read failed'))
+    reader.readAsDataURL(blob)
+  })
+}
+
+function escapeSvgText(s: string): string {
+  return s
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+}
+
 /**
- * Generate 2D ligand image from SMILES using Ketcher
- * Returns a data URL that can be embedded in SVG
+ * Short, distinctive label for a network node id (file / pose path).
+ * Prefer OpenFE-style rbfe_pose_* tail so similar complexes do not all show the same PDB code (e.g. BNZ).
+ */
+export function formatNodeLabelForGraph(node: string, maxLen = 16): string {
+  if (!node) return 'Unknown'
+  const pose = /\brbfe_pose_([a-zA-Z0-9-]+)\b/i.exec(node)
+  if (pose) {
+    const tail = pose[1]
+    return tail.length <= maxLen ? tail : `${tail.slice(0, maxLen - 1)}…`
+  }
+  const parts = node.split('_').filter(Boolean)
+  if (parts.length >= 2) {
+    const tail = parts.slice(-2).join('_')
+    if (tail.length <= maxLen) return tail
+    return `${tail.slice(0, maxLen - 1)}…`
+  }
+  return node.length <= maxLen ? node : `${node.slice(0, maxLen - 1)}…`
+}
+
+function getLigandColor(node: string): string {
+  let h = 0
+  for (let i = 0; i < node.length; i++) h = (h * 31 + node.charCodeAt(i)) >>> 0
+  const hue = h % 360
+  return `hsl(${hue}, 52%, 86%)`
+}
+
+/**
+ * Generate 2D ligand image from SMILES via backend RDKit endpoint.
+ * Returns a data URL so raster images work when the SVG is opened as <img src="blob:..."> (nested blob: URLs do not).
  */
 export async function generateLigandImageFromSmiles(smiles: string | null): Promise<string | null> {
   if (!smiles) return null
-  
   try {
-    // Dynamic import to avoid issues with server-side rendering
-    const { StandaloneStructServiceProvider } = await import('ketcher-standalone')
-    const structService = new StandaloneStructServiceProvider()
-    
-    // Convert SMILES to MOL format
-    const molData = await structService.smiles2mol(smiles)
-    if (!molData) return null
-    
-    // Create a canvas to render the molecule
-    const canvas = document.createElement('canvas')
-    canvas.width = 200
-    canvas.height = 200
-    const ctx = canvas.getContext('2d')
-    if (!ctx) return null
-    
-    // Fill background
-    ctx.fillStyle = 'white'
-    ctx.fillRect(0, 0, canvas.width, canvas.height)
-    
-    // For now, return a simple colored circle with the SMILES text
-    // A full implementation would use RDKit or similar for proper 2D rendering
-    ctx.fillStyle = '#e0e7ff'
-    ctx.beginPath()
-    ctx.arc(100, 100, 80, 0, Math.PI * 2)
-    ctx.fill()
-    
-    ctx.strokeStyle = '#9ca3af'
-    ctx.lineWidth = 2
-    ctx.stroke()
-    
-    // Convert canvas to data URL
-    return canvas.toDataURL('image/png')
-  } catch (error) {
-    console.warn('Failed to generate ligand image from SMILES:', error)
+    const baseUrl = process.env.NEXT_PUBLIC_API_URL || ''
+    const res = await fetch(`${baseUrl}/api/rbfe/ligand-image?smiles=${encodeURIComponent(smiles)}`)
+    if (!res.ok) return null
+    const blob = await res.blob()
+    return await blobToDataUrl(blob)
+  } catch {
     return null
   }
 }
@@ -158,27 +174,29 @@ export async function generateLigandImageFromSmiles(smiles: string | null): Prom
 export async function generateNetworkGraphSVGWithImages(
   network: RBFENetworkData,
   ddgValues: RBFEDdGValue[],
-  availableLigands: LigandSelection[]
+  availableLigands: LigandSelection[],
+  jobLigandSmiles?: Record<string, string>
 ): Promise<string> {
   const nodeRadius = 45
   const imageSize = 70
-  const width = 800
-  const height = 600
-  const padding = 40
-  
-  // Calculate node positions and fetch images in parallel
-  const nodePositionsPromises = network.nodes.map(async (node, i) => {
-    const angle = (2 * Math.PI * i) / network.nodes.length - Math.PI / 2
-    const radius = Math.min(width, height) / 2 - nodeRadius - padding
-    const smiles = getLigandSmiles(node, availableLigands)
+  const width = 1000
+  const height = 720
+
+  const layout = computeNetworkGraphLayout(network, width, height, nodeRadius)
+
+  const nodePositionsPromises = layout.map(async (bp) => {
+    const smiles =
+      getLigandSmiles(bp.node, availableLigands) ??
+      jobLigandSmiles?.[bp.node] ??
+      null
     const imageDataUrl = await generateLigandImageFromSmiles(smiles)
-    
+
     return {
-      node,
-      x: width / 2 + radius * Math.cos(angle),
-      y: height / 2 + radius * Math.sin(angle),
+      node: bp.node,
+      x: bp.x,
+      y: bp.y,
       imageUrl: imageDataUrl,
-      index: i,
+      index: bp.index,
     }
   })
   
@@ -257,28 +275,28 @@ export async function generateNetworkGraphSVGWithImages(
         : 'arrow-red'
       : 'arrow-gray'
 
-    // Calculate arrow endpoint
+    // Start from edge of source, end at edge of target
     const dx = to.x - from.x
     const dy = to.y - from.y
     const distance = Math.sqrt(dx * dx + dy * dy)
-    const shorten = nodeRadius + 15
-    const ratio = (distance - shorten) / distance
-    const endX = from.x + dx * ratio
-    const endY = from.y + dy * ratio
-    
-    // Calculate label position
-    const midX = (from.x + endX) / 2
-    const midY = (from.y + endY) / 2
+    const gap = nodeRadius + 18
+    const startX = from.x + dx * (gap / distance)
+    const startY = from.y + dy * (gap / distance)
+    const endX = from.x + dx * ((distance - gap) / distance)
+    const endY = from.y + dy * ((distance - gap) / distance)
+
+    // DDG label at center between nodes, offset perpendicular
+    const midX = (from.x + to.x) / 2
+    const midY = (from.y + to.y) / 2
     const perpAngle = Math.atan2(dy, dx) + Math.PI / 2
-    const labelOffset = 12
-    const labelX = midX + Math.cos(perpAngle) * labelOffset
-    const labelY = midY + Math.sin(perpAngle) * labelOffset
+    const labelX = midX + Math.cos(perpAngle) * 16
+    const labelY = midY + Math.sin(perpAngle) * 16
 
     return `
       <g>
-        <line x1="${from.x}" y1="${from.y}" x2="${endX}" y2="${endY}" stroke="${edgeColor}" stroke-width="2.5" opacity="0.9" marker-end="url(#${markerId})" />
+        <line x1="${startX}" y1="${startY}" x2="${endX}" y2="${endY}" stroke="${edgeColor}" stroke-width="2.5" opacity="0.9" marker-end="url(#${markerId})" />
         ${ddg ? `
-          <circle cx="${labelX}" cy="${labelY}" r="12" fill="white" stroke="${edgeColor}" stroke-width="1.5" opacity="0.95" />
+          <circle cx="${labelX}" cy="${labelY}" r="13" fill="white" stroke="${edgeColor}" stroke-width="1.5" opacity="0.95" />
           <text x="${labelX}" y="${labelY}" text-anchor="middle" dominant-baseline="middle" font-size="11" fill="${edgeColor}" font-weight="600" font-family="system-ui, -apple-system, sans-serif">
             ${ddg.ddg_kcal_mol.toFixed(1)}
           </text>
@@ -286,27 +304,28 @@ export async function generateNetworkGraphSVGWithImages(
       </g>
     `
   }).join('')}
-  
+
   <!-- Nodes -->
   ${nodePositions.map((pos) => {
     const hasImage = !!pos.imageUrl
-    const displayName = getDisplayName(pos.node).length > 10 ? getDisplayName(pos.node).slice(0, 8) + '..' : getDisplayName(pos.node)
+    const displayName = escapeSvgText(formatNodeLabelForGraph(pos.node))
+    const estWidth = Math.max(displayName.length * 7 + 8, 30)
+    // Place label below if node in upper half, above if in lower half
+    const labelBelow = pos.y <= height / 2
+    const labelY = labelBelow ? pos.y + nodeRadius + 4 : pos.y - nodeRadius - 4
+    const labelBaseline = labelBelow ? 'hanging' : 'auto'
+    const labelBgY = labelBelow ? pos.y + nodeRadius + 3 : pos.y - nodeRadius - 18
     return `
       <g filter="url(#node-shadow)">
         ${hasImage ? `
-          <!-- 2D ligand image -->
           <image href="${pos.imageUrl}" x="${pos.x - imageSize / 2}" y="${pos.y - imageSize / 2}" width="${imageSize}" height="${imageSize}" clip-path="url(#clip-${pos.index})" />
-          <!-- Ligand label below the node -->
-          <text x="${pos.x}" y="${pos.y + nodeRadius + 15}" text-anchor="middle" dominant-baseline="middle" font-size="11" fill="#1f2937" font-weight="600" font-family="system-ui, -apple-system, sans-serif">
-            ${displayName}
-          </text>
         ` : `
-          <!-- Fallback colored circle when image unavailable -->
           <circle cx="${pos.x}" cy="${pos.y}" r="${nodeRadius - 5}" fill="#f3f4f6" stroke="#d1d5db" stroke-width="1.5" />
-          <text x="${pos.x}" y="${pos.y}" text-anchor="middle" dominant-baseline="middle" font-size="12" fill="#374151" font-weight="600" font-family="system-ui, -apple-system, sans-serif">
-            ${displayName}
-          </text>
         `}
+        <rect x="${pos.x - estWidth / 2}" y="${labelBgY}" width="${estWidth}" height="16" fill="white" fill-opacity="0.9" rx="3"/>
+        <text x="${pos.x}" y="${labelY}" text-anchor="middle" dominant-baseline="${labelBaseline}" font-size="11" fill="#111827" font-weight="600" font-family="system-ui, -apple-system, sans-serif">
+          ${displayName}
+        </text>
       </g>
     `
   }).join('')}
@@ -337,23 +356,19 @@ export function generateNetworkGraphSVG(
 ): string {
   const nodeRadius = 45
   const imageSize = 70
-  const width = 800
-  const height = 600
-  const padding = 40
-  
-  // Calculate node positions in a circle
-  const nodePositions = network.nodes.map((node, i) => {
-    const angle = (2 * Math.PI * i) / network.nodes.length - Math.PI / 2
-    const radius = Math.min(width, height) / 2 - nodeRadius - padding
-    const smiles = getLigandSmiles(node, availableLigands)
+  const width = 1000
+  const height = 720
+
+  const layout = computeNetworkGraphLayout(network, width, height, nodeRadius)
+  const nodePositions = layout.map((bp) => {
+    const smiles = getLigandSmiles(bp.node, availableLigands)
     const imageUrl = getLigandImageUrl(smiles)
-    
     return {
-      node,
-      x: width / 2 + radius * Math.cos(angle),
-      y: height / 2 + radius * Math.sin(angle),
+      node: bp.node,
+      x: bp.x,
+      y: bp.y,
       imageUrl,
-      index: i,
+      index: bp.index,
     }
   })
 
@@ -430,28 +445,28 @@ export function generateNetworkGraphSVG(
         : 'arrow-red'
       : 'arrow-gray'
 
-    // Calculate arrow endpoint
+    // Start from edge of source, end at edge of target
     const dx = to.x - from.x
     const dy = to.y - from.y
     const distance = Math.sqrt(dx * dx + dy * dy)
-    const shorten = nodeRadius + 15
-    const ratio = (distance - shorten) / distance
-    const endX = from.x + dx * ratio
-    const endY = from.y + dy * ratio
-    
-    // Calculate label position
-    const midX = (from.x + endX) / 2
-    const midY = (from.y + endY) / 2
+    const gap = nodeRadius + 18
+    const startX = from.x + dx * (gap / distance)
+    const startY = from.y + dy * (gap / distance)
+    const endX = from.x + dx * ((distance - gap) / distance)
+    const endY = from.y + dy * ((distance - gap) / distance)
+
+    // DDG label at center between nodes, offset perpendicular
+    const midX = (from.x + to.x) / 2
+    const midY = (from.y + to.y) / 2
     const perpAngle = Math.atan2(dy, dx) + Math.PI / 2
-    const labelOffset = 12
-    const labelX = midX + Math.cos(perpAngle) * labelOffset
-    const labelY = midY + Math.sin(perpAngle) * labelOffset
+    const labelX = midX + Math.cos(perpAngle) * 16
+    const labelY = midY + Math.sin(perpAngle) * 16
 
     return `
       <g>
-        <line x1="${from.x}" y1="${from.y}" x2="${endX}" y2="${endY}" stroke="${edgeColor}" stroke-width="2.5" opacity="0.9" marker-end="url(#${markerId})" />
+        <line x1="${startX}" y1="${startY}" x2="${endX}" y2="${endY}" stroke="${edgeColor}" stroke-width="2.5" opacity="0.9" marker-end="url(#${markerId})" />
         ${ddg ? `
-          <circle cx="${labelX}" cy="${labelY}" r="12" fill="white" stroke="${edgeColor}" stroke-width="1.5" opacity="0.95" />
+          <circle cx="${labelX}" cy="${labelY}" r="13" fill="white" stroke="${edgeColor}" stroke-width="1.5" opacity="0.95" />
           <text x="${labelX}" y="${labelY}" text-anchor="middle" dominant-baseline="middle" font-size="11" fill="${edgeColor}" font-weight="600" font-family="system-ui, -apple-system, sans-serif">
             ${ddg.ddg_kcal_mol.toFixed(1)}
           </text>
@@ -459,18 +474,25 @@ export function generateNetworkGraphSVG(
       </g>
     `
   }).join('')}
-  
+
   <!-- Nodes -->
   ${nodePositions.map((pos) => {
-    const displayName = getDisplayName(pos.node).length > 10 ? getDisplayName(pos.node).slice(0, 8) + '..' : getDisplayName(pos.node)
+    const displayName = escapeSvgText(formatNodeLabelForGraph(pos.node))
     const nodeColor = getLigandColor(pos.node)
     const borderColor = '#9ca3af'
+    const estWidth = Math.max(displayName.length * 7 + 8, 30)
+    const labelBelow = pos.y <= height / 2
+    const labelY = labelBelow ? pos.y + nodeRadius + 4 : pos.y - nodeRadius - 4
+    const labelBaseline = labelBelow ? 'hanging' : 'auto'
+    const labelBgY = labelBelow ? pos.y + nodeRadius + 3 : pos.y - nodeRadius - 18
     return `
       <g filter="url(#node-shadow)">
-        <!-- Colored circle for ligand -->
         <circle cx="${pos.x}" cy="${pos.y}" r="${nodeRadius - 5}" fill="${nodeColor}" stroke="${borderColor}" stroke-width="2" />
-        <!-- Ligand name in center -->
         <text x="${pos.x}" y="${pos.y}" text-anchor="middle" dominant-baseline="middle" font-size="12" fill="#1f2937" font-weight="600" font-family="system-ui, -apple-system, sans-serif">
+          ${displayName}
+        </text>
+        <rect x="${pos.x - estWidth / 2}" y="${labelBgY}" width="${estWidth}" height="16" fill="white" fill-opacity="0.9" rx="3"/>
+        <text x="${pos.x}" y="${labelY}" text-anchor="middle" dominant-baseline="${labelBaseline}" font-size="11" fill="#111827" font-weight="600" font-family="system-ui, -apple-system, sans-serif">
           ${displayName}
         </text>
       </g>
@@ -501,13 +523,14 @@ export function svgToDataUrl(svgString: string): string {
 /**
  * Download SVG as file
  */
-export function downloadNetworkGraphSVG(
+export async function downloadNetworkGraphSVG(
   network: RBFENetworkData,
   ddgValues: RBFEDdGValue[],
   availableLigands: LigandSelection[],
-  filename: string = 'rbfe_network_graph.svg'
-): void {
-  const svgString = generateNetworkGraphSVG(network, ddgValues, availableLigands)
+  filename: string = 'rbfe_network_graph.svg',
+  jobLigandSmiles?: Record<string, string>
+): Promise<void> {
+  const svgString = await generateNetworkGraphSVGWithImages(network, ddgValues, availableLigands, jobLigandSmiles)
   const blob = new Blob([svgString], { type: 'image/svg+xml' })
   const url = URL.createObjectURL(blob)
   const a = document.createElement('a')

@@ -23,8 +23,6 @@ export function DockingStepSelection({
 }: DockingStepSelectionProps) {
     return (
         <div className="space-y-6">
-            <h3 className="text-lg font-semibold text-white">Structure Selection</h3>
-
             {/* No Protein Warning */}
             {!proteinLoaded && (
                 <InfoBox variant="warning" title="No Structure Loaded">

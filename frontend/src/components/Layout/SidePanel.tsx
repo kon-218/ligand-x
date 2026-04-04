@@ -1,57 +1,151 @@
 'use client'
 
-import React from 'react'
+import React, { Suspense } from 'react'
+import dynamic from 'next/dynamic'
 import { motion, AnimatePresence } from 'framer-motion'
 import { useEffect, useState, useRef, useCallback } from 'react'
 import {
   Download,
-  Eye,
-  Microscope,
   Settings,
   Atom,
   PenTool,
   BarChart3,
-  Library,
   X,
   Zap,
   CheckCircle2,
   AlertCircle,
-  AlertTriangle,
-  Scissors,
-  Magnet,
+  Droplets,
+  Plus,
+  HelpCircle,
+  User,
+  Loader2,
+  ScanSearch,
   Target,
   Activity,
   Flame,
+  GitBranch,
   Sparkles,
   Beaker,
-  Droplets,
-  GitBranch,
+  Library,
 } from 'lucide-react'
 import { useUIStore, type ToolId } from '@/store/ui-store'
 import { api } from '@/lib/api-client'
-import { Alert, AlertDescription } from '@/components/ui/alert'
 import { useMolecularStore } from '@/store/molecular-store'
 import { useMDStore } from '@/store/md-store'
 import { useBoltz2Store } from '@/store/boltz2-store'
 import { useQCStore } from '@/store/qc-store'
+import { usePreferencesStore } from '@/store/preferences-store'
+import { baseColorConfigs } from '@/lib/base-color-config'
+import { useBaseColor, type UseBaseColorReturn } from '@/hooks/use-base-color'
 import { cn } from '@/lib/utils'
-import { InputTool } from '@/components/Tools/InputTool'
-import { Loader2 } from 'lucide-react'
-import { DockingTool } from '@/components/Tools/DockingTool'
-import { MDOptimizationTool } from '@/components/Tools/MDOptimizationTool'
-import { Boltz2Tool } from '@/components/Tools/Boltz2Tool'
-import { EditorTool } from '@/components/Tools/EditorTool'
-import { ADMETTool } from '@/components/Tools/ADMETTool'
-import { LibraryTool } from '@/components/Tools/LibraryTool'
-import { QuantumChemistryTool } from '@/components/Tools/QuantumChemistryTool'
-import { ProteinCleaningTool } from '@/components/Tools/ProteinCleaningTool'
-import { ABFETool } from '@/components/Tools/ABFETool'
-import { RBFETool } from '@/components/Tools/RBFETool'
-import { ResultsTool } from '@/components/Tools/Results'
 import { useHydration } from '@/hooks/use-hydration'
-import { useEditorPreload, preloadEditor } from '@/hooks/use-editor-preload'
+import { useEditorPreload } from '@/hooks/use-editor-preload'
 import { preloadEditorBundle } from '@/components/Tools/EditorTool'
-import { accentColorClasses, type AccentColor } from '@/components/Tools/shared/types'
+import { defaultTools, toolsConfig, type ToolConfig } from '@/lib/tools-config'
+import type { AccentColor } from '@/components/Tools/shared/types'
+import { accentColorClasses } from '@/components/Tools/shared/types'
+import { useWarmAccent } from '@/hooks/use-warm-accent'
+
+const ToolLoadingFallback = () => {
+  const bc_active = useBaseColor()
+  return (
+    <div className="flex items-center justify-center h-full p-8">
+      <Loader2
+        className={`w-6 h-6 animate-spin ${!bc_active.isCustom ? bc_active.text : ''}`}
+        style={bc_active.isCustom ? bc_active.styles?.text : undefined}
+      />
+    </div>
+  )
+}
+
+const InputTool = dynamic(() => import('@/components/Tools/InputTool').then(m => m.InputTool), {
+  loading: ToolLoadingFallback,
+  ssr: false,
+})
+const DockingTool = dynamic(() => import('@/components/Tools/DockingTool').then(m => m.DockingTool), {
+  loading: ToolLoadingFallback,
+  ssr: false,
+})
+const MDOptimizationTool = dynamic(() => import('@/components/Tools/MDOptimizationTool').then(m => m.MDOptimizationTool), {
+  loading: ToolLoadingFallback,
+  ssr: false,
+})
+const Boltz2Tool = dynamic(() => import('@/components/Tools/Boltz2Tool').then(m => m.Boltz2Tool), {
+  loading: ToolLoadingFallback,
+  ssr: false,
+})
+const EditorTool = dynamic(() => import('@/components/Tools/EditorTool').then(m => m.EditorTool), {
+  loading: ToolLoadingFallback,
+  ssr: false,
+})
+const ADMETTool = dynamic(() => import('@/components/Tools/ADMETTool').then(m => m.ADMETTool), {
+  loading: ToolLoadingFallback,
+  ssr: false,
+})
+const LibraryTool = dynamic(() => import('@/components/Tools/LibraryTool').then(m => m.LibraryTool), {
+  loading: ToolLoadingFallback,
+  ssr: false,
+})
+const QuantumChemistryTool = dynamic(() => import('@/components/Tools/QuantumChemistryTool').then(m => m.QuantumChemistryTool), {
+  loading: ToolLoadingFallback,
+  ssr: false,
+})
+const ProteinCleaningTool = dynamic(() => import('@/components/Tools/ProteinCleaningTool').then(m => m.ProteinCleaningTool), {
+  loading: ToolLoadingFallback,
+  ssr: false,
+})
+const PocketFinderTool = dynamic(() => import('@/components/Tools/PocketFinderTool').then(m => m.PocketFinderTool), {
+  loading: ToolLoadingFallback,
+  ssr: false,
+})
+const ABFETool = dynamic(() => import('@/components/Tools/ABFETool').then(m => m.ABFETool), {
+  loading: ToolLoadingFallback,
+  ssr: false,
+})
+const RBFETool = dynamic(() => import('@/components/Tools/RBFETool').then(m => m.RBFETool), {
+  loading: ToolLoadingFallback,
+  ssr: false,
+})
+const ResultsTool = dynamic(() => import('@/components/Tools/Results').then(m => m.ResultsTool), {
+  loading: ToolLoadingFallback,
+  ssr: false,
+})
+
+const DEFAULT_SIDEBAR_WIDTH = 260
+const MIN_SIDEBAR_WIDTH = 200
+const MAX_SIDEBAR_WIDTH = 360
+
+const iconMap: Record<string, React.ReactNode> = {
+  Download: <Download className="w-5 h-5" />,
+  Droplets: <Droplets className="w-5 h-5" />,
+  PenTool: <PenTool className="w-5 h-5" />,
+  BarChart3: <BarChart3 className="w-5 h-5" />,
+  Zap: <Zap className="w-5 h-5" />,
+  Library: <Library className="w-5 h-5" />,
+  ScanSearch: <ScanSearch className="w-5 h-5" />,
+  Target: <Target className="w-5 h-5" />,
+  Activity: <Activity className="w-5 h-5" />,
+  Flame: <Flame className="w-5 h-5" />,
+  GitBranch: <GitBranch className="w-5 h-5" />,
+  Sparkles: <Sparkles className="w-5 h-5" />,
+  Beaker: <Beaker className="w-5 h-5" />,
+}
+
+const componentMap: Record<string, React.ComponentType> = {
+  input: InputTool,
+  'protein-cleaning': ProteinCleaningTool,
+  library: LibraryTool,
+  editor: EditorTool,
+  'pocket-finder': PocketFinderTool,
+  docking: DockingTool,
+  'md-optimization': MDOptimizationTool,
+  abfe: ABFETool,
+  rbfe: RBFETool,
+  boltz2: Boltz2Tool,
+  admet: ADMETTool,
+  'quantum-chemistry': QuantumChemistryTool,
+  results: ResultsTool,
+}
 
 interface Tool {
   id: ToolId
@@ -60,120 +154,42 @@ interface Tool {
   component: React.ComponentType
   description: string
   accentColor?: AccentColor
-  service?: string // matches key in SERVICE_URLS; undefined = always show
+  service?: string
 }
 
-const tools: Tool[] = [
-  {
-    id: 'input',
-    name: 'Input',
-    icon: <Download className="w-5 h-5" />,
-    component: InputTool,
-    description: 'Load structures from PDB, files, or SMILES',
-    accentColor: 'blue',
-  },
-  {
-    id: 'protein-cleaning',
-    name: 'Protein Cleaning',
-    icon: <Droplets className="w-5 h-5" />,
-    component: ProteinCleaningTool,
-    description: 'Clean protein structures with PDBFixer',
-    accentColor: 'teal',
-    service: 'structure',
-  },
-  {
-    id: 'library',
-    name: 'Library',
-    icon: <Library className="w-5 h-5" />,
-    component: LibraryTool,
-    description: 'Molecule library management',
-    accentColor: 'blue',
-    service: 'structure',
-  },
-  {
-    id: 'editor',
-    name: 'Editor',
-    icon: <PenTool className="w-5 h-5" />,
-    component: EditorTool,
-    description: 'Edit molecular structures',
-    accentColor: 'blue',
-    service: 'ketcher',
-  },
-  {
-    id: 'docking',
-    name: 'Molecular Docking',
-    icon: <Target className="w-5 h-5" />,
-    component: DockingTool,
-    description: 'Predict protein-ligand binding poses',
-    accentColor: 'indigo',
-    service: 'docking',
-  },
-  {
-    id: 'md-optimization',
-    name: 'MD Optimization',
-    icon: <Activity className="w-5 h-5" />,
-    component: MDOptimizationTool,
-    description: 'Optimize protein-ligand complexes',
-    accentColor: 'green',
-    service: 'md',
-  },
-  {
-    id: 'abfe',
-    name: 'ABFE Calculation',
-    icon: <Flame className="w-5 h-5" />,
-    component: ABFETool,
-    description: 'Compute absolute binding free energy',
-    accentColor: 'orange',
-    service: 'abfe',
-  },
-  {
-    id: 'rbfe',
-    name: 'RBFE Calculation',
-    icon: <GitBranch className="w-5 h-5" />,
-    component: RBFETool,
-    description: 'Compute relative binding free energy between ligands',
-    accentColor: 'cyan',
-    service: 'rbfe',
-  },
-  {
-    id: 'boltz2',
-    name: 'Boltz-2 Prediction',
-    icon: <Sparkles className="w-5 h-5" />,
-    component: Boltz2Tool,
-    description: 'Predict binding affinity with deep learning',
-    accentColor: 'purple',
-    service: 'boltz2',
-  },
-  {
-    id: 'admet',
-    name: 'ADMET Analysis',
-    icon: <Beaker className="w-5 h-5" />,
-    component: ADMETTool,
-    description: 'Predict pharmacokinetic and toxicity properties',
-    accentColor: 'teal',
-    service: 'admet',
-  },
-  {
-    id: 'quantum-chemistry',
-    name: 'Quantum Chemistry',
-    icon: <Zap className="w-5 h-5" />,
-    component: QuantumChemistryTool,
-    description: 'ORCA quantum chemistry calculations',
-    service: 'qc',
-  },
-  {
-    id: 'results',
-    name: 'Results Browser',
-    icon: <BarChart3 className="w-5 h-5" />,
-    component: ResultsTool,
-    description: 'Browse all calculation results',
-    accentColor: 'amber',
-  },
-]
+function configToTool(config: ToolConfig): Tool {
+  return {
+    id: config.id,
+    name: config.name,
+    icon: iconMap[config.iconName] || <Download className="w-5 h-5" />,
+    component: componentMap[config.id as string] || InputTool,
+    description: config.description,
+    accentColor: config.accentColor,
+    service: config.service,
+  }
+}
+
+const sidebarTools: Tool[] = defaultTools.map(configToTool)
+
+const allTools: Tool[] = toolsConfig.map(configToTool)
+
+function getAccentColorHex(accentColor: AccentColor | undefined): string {
+  const colorMap: Record<AccentColor, string> = {
+    'blue': '#2563eb',
+    'green': '#16a34a',
+    'purple': '#a855f7',
+    'orange': '#ea580c',
+    'pink': '#ec4899',
+    'teal': '#14b8a6',
+    'indigo': '#4f46e5',
+    'cyan': '#06b6d4',
+    'amber': '#d97706',
+  }
+  return accentColor ? colorMap[accentColor] : '#06b6d4'
+}
 
 export function SidePanel() {
   const hydrated = useHydration()
-  // Enable editor preloading after component mounts
   useEditorPreload()
 
   const {
@@ -184,84 +200,90 @@ export function SidePanel() {
     setSidePanelWidth,
     editorSidePanelWidth,
     setEditorSidePanelWidth,
-    sidebarIconsWidth,
-    setSidebarIconsWidth,
+    sidebarWidth,
+    setSidebarWidth,
     editorMessage,
     editorHasChanges,
     serviceStatus,
     setServiceStatus,
+    addedExperimentTools,
+    setActiveOverlay,
   } = useUIStore()
   const { isAdmetRunning, isDockingRunning } = useMolecularStore()
   const { isRunning: isMDRunning } = useMDStore()
   const { isRunning: isBoltz2Running } = useBoltz2Store()
   const { isRunning: isQCRunning } = useQCStore()
 
-  // Track if initial health check has completed
   const [healthCheckComplete, setHealthCheckComplete] = useState(false)
-
-  // Once a service is confirmed available, keep it visible even if a subsequent
-  // health check fails (e.g. service is busy processing a long computation).
-  // This prevents tools from disappearing from the sidebar during heavy workloads.
   const [everAvailableServices, setEverAvailableServices] = useState<Set<string>>(new Set())
 
-  // Poll service health every 30 seconds
   useEffect(() => {
     const check = async () => {
       const status = await api.getServicesHealth()
       if (status !== null) {
-        // Only update on a real response - don't wipe tabs on transient network errors
         setServiceStatus(status)
         setHealthCheckComplete(true)
-        // Record any services that are currently up so we never hide them later
         setEverAvailableServices(prev => {
           const next = new Set(prev)
           Object.entries(status).forEach(([svc, up]) => { if (up) next.add(svc) })
           return next
         })
       } else if (!healthCheckComplete) {
-        // First check failed: mark complete so we don't block indefinitely
         setHealthCheckComplete(true)
       }
     }
-    check()
-    const interval = setInterval(check, 30_000)
-    return () => clearInterval(interval)
+
+    // Defer health check to not block initial render - use requestIdleCallback or setTimeout
+    let timeoutId: NodeJS.Timeout
+    if (typeof window !== 'undefined' && 'requestIdleCallback' in window) {
+      const idleId = (window as any).requestIdleCallback(() => {
+        check()
+      }, { timeout: 2000 })
+      const interval = setInterval(check, 30_000)
+      return () => {
+        (window as any).cancelIdleCallback(idleId)
+        clearInterval(interval)
+      }
+    } else {
+      // Fallback: defer by 100ms to let UI render first
+      timeoutId = setTimeout(check, 100)
+      const interval = setInterval(check, 30_000)
+      return () => {
+        clearTimeout(timeoutId)
+        clearInterval(interval)
+      }
+    }
   }, [setServiceStatus, healthCheckComplete])
 
-  // Filter tools based on which services are available.
-  // Before hydration/health check: only show tools that don't require a service.
-  // After health check completes: show tools whose service is (or was ever) available.
-  // A service that was once available stays visible even if a single poll returns false —
-  // transient failures (e.g. service busy with a long job) must not collapse the sidebar.
-  const visibleTools = tools.filter(tool =>
-    !tool.service ||                              // no service required → always show
-    (hydrated && healthCheckComplete && (
-      serviceStatus[tool.service] === true ||     // currently up
-      everAvailableServices.has(tool.service)     // was up at some point
-    ))
+  const isServiceAvailable = (service: string | undefined) => {
+    if (!service) return true
+    if (!hydrated || !healthCheckComplete) return true
+    return serviceStatus[service] === true || everAvailableServices.has(service)
+  }
+
+  const visibleDefaultTools = sidebarTools.filter(tool => isServiceAvailable(tool.service))
+
+  const allVisibleTools = allTools.filter(tool => isServiceAvailable(tool.service))
+
+  const addedExperimentToolsInSidebar = allVisibleTools.filter(
+    tool => addedExperimentTools.includes(tool.id) && !visibleDefaultTools.find(t => t.id === tool.id)
   )
 
-  // Auto-deselect active tool only if its service has never been confirmed available
-  // (i.e. was never reachable, not just temporarily busy).
   useEffect(() => {
-    if (activeTool && !visibleTools.find(t => t.id === activeTool)) {
+    if (!hydrated || !healthCheckComplete) return
+    if (activeTool && !allVisibleTools.find(t => t.id === activeTool)) {
       setActiveTool(null)
     }
-  }, [visibleTools, activeTool, setActiveTool])
+  }, [allVisibleTools, activeTool, setActiveTool, hydrated, healthCheckComplete])
 
-  // Track if Editor has ever been opened - once true, keep it mounted forever
   const [editorEverOpened, setEditorEverOpened] = useState(false)
 
-  // Prefetch Ketcher on idle
   useEffect(() => {
-    // Only prefetch if not already opened
     if (editorEverOpened) return;
-
     const prefetch = () => {
       console.log('Prefetching editor bundle on idle...')
       preloadEditorBundle()
     }
-
     if (typeof window !== 'undefined' && 'requestIdleCallback' in window) {
       const handle = (window as any).requestIdleCallback(prefetch, { timeout: 5000 })
       return () => (window as any).cancelIdleCallback(handle)
@@ -270,12 +292,13 @@ export function SidePanel() {
       return () => clearTimeout(timeout)
     }
   }, [editorEverOpened])
-  const [isResizing, setIsResizing] = useState(false)
-  const [isResizingIcons, setIsResizingIcons] = useState(false)
-  const resizeRef = useRef<HTMLDivElement>(null)
-  const iconsResizeRef = useRef<HTMLDivElement>(null)
 
-  // Mark editor as opened when it becomes the active tool
+  const [isResizing, setIsResizing] = useState(false)
+  const [isResizingSidebar, setIsResizingSidebar] = useState(false)
+  const [hoveredTool, setHoveredTool] = useState<ToolId | null>(null)
+  const resizeRef = useRef<HTMLDivElement>(null)
+  const sidebarResizeRef = useRef<HTMLDivElement>(null)
+
   useEffect(() => {
     if (activeTool === 'editor') {
       setEditorEverOpened(true)
@@ -284,44 +307,50 @@ export function SidePanel() {
 
   const handleToolClick = (toolId: ToolId) => {
     if (activeTool === toolId) {
-      setActiveTool(null)
+      if (isSidePanelExpanded) {
+        setActiveTool(null)
+      } else {
+        // Just re-assigning sets isSidePanelExpanded to true
+        setActiveTool(toolId)
+      }
     } else {
       setActiveTool(toolId)
     }
   }
 
-  const activeToolData = visibleTools.find((t) => t.id === activeTool)
+  const activeToolData = allVisibleTools.find((t) => t.id === activeTool)
 
-  // Initialize editor width to 50% of viewport on first open
   useEffect(() => {
-    if (activeTool === 'editor' && editorSidePanelWidth === 800 && typeof window !== 'undefined') {
-      // On first open, set to 50% of current viewport if still at default
-      const initialWidth = window.innerWidth * 0.5
-      setEditorSidePanelWidth(initialWidth)
+    if (activeTool === 'editor' && typeof window !== 'undefined') {
+      const calculateEditorWidth = () => {
+        const viewportWidth = window.innerWidth
+        const availableWidth = viewportWidth - sidebarWidth
+        const halfWidth = availableWidth / 2
+        setEditorSidePanelWidth(halfWidth)
+      }
+      calculateEditorWidth()
+      window.addEventListener('resize', calculateEditorWidth)
+      return () => window.removeEventListener('resize', calculateEditorWidth)
     }
-  }, [activeTool, editorSidePanelWidth, setEditorSidePanelWidth])
+  }, [activeTool, sidebarWidth, setEditorSidePanelWidth])
 
-  // Resize handler for side panel
   const handleMouseDown = useCallback((e: React.MouseEvent) => {
     e.preventDefault()
     e.stopPropagation()
     setIsResizing(true)
   }, [])
 
-  // Resize handler for icons column
-  const handleIconsMouseDown = useCallback((e: React.MouseEvent) => {
+  const handleSidebarMouseDown = useCallback((e: React.MouseEvent) => {
     e.preventDefault()
     e.stopPropagation()
-    setIsResizingIcons(true)
+    setIsResizingSidebar(true)
   }, [])
 
   useEffect(() => {
     if (!isResizing) return
 
     const handleMouseMove = (e: MouseEvent) => {
-      // Subtract icons width from total width to get just the expanded panel width
-      const newExpandedWidth = e.clientX - sidebarIconsWidth
-      // Use separate width setter based on active tool
+      const newExpandedWidth = e.clientX - sidebarWidth
       if (activeTool === 'editor') {
         setEditorSidePanelWidth(newExpandedWidth)
       } else {
@@ -344,19 +373,18 @@ export function SidePanel() {
       document.body.style.cursor = ''
       document.body.style.userSelect = ''
     }
-  }, [isResizing, activeTool, sidebarIconsWidth, setSidePanelWidth, setEditorSidePanelWidth])
+  }, [isResizing, activeTool, sidebarWidth, setSidePanelWidth, setEditorSidePanelWidth])
 
-  // Resize handler for icons column
   useEffect(() => {
-    if (!isResizingIcons) return
+    if (!isResizingSidebar) return
 
     const handleMouseMove = (e: MouseEvent) => {
-      const newWidth = e.clientX
-      setSidebarIconsWidth(newWidth)
+      const newWidth = Math.max(MIN_SIDEBAR_WIDTH, Math.min(MAX_SIDEBAR_WIDTH, e.clientX))
+      setSidebarWidth(newWidth)
     }
 
     const handleMouseUp = () => {
-      setIsResizingIcons(false)
+      setIsResizingSidebar(false)
     }
 
     document.addEventListener('mousemove', handleMouseMove)
@@ -370,175 +398,393 @@ export function SidePanel() {
       document.body.style.cursor = ''
       document.body.style.userSelect = ''
     }
-  }, [isResizingIcons, setSidebarIconsWidth])
+  }, [isResizingSidebar, setSidebarWidth])
 
-  // Calculate icon size based on sidebar width (scale from 16px at 60px width to 28px at 200px width)
-  const iconSize = Math.max(16, Math.min(28, (sidebarIconsWidth - 60) / (200 - 60) * (28 - 16) + 16))
-  const buttonHeight = Math.max(48, Math.min(80, (sidebarIconsWidth - 60) / (200 - 60) * (80 - 48) + 48))
-  const padding = Math.max(4, Math.min(12, (sidebarIconsWidth - 60) / (200 - 60) * (12 - 4) + 4))
+  const { baseColor } = usePreferencesStore()
+  const bc = baseColorConfigs[baseColor]
+  const bc_active = useBaseColor()
+  const wa = useWarmAccent()
+  const wac = wa.config
 
-  // Prevent hydration mismatch by rendering initial state during SSR
   if (!hydrated) {
     return (
-      <div className="h-full bg-gray-900 border-r border-gray-700 flex relative" style={{ width: sidebarIconsWidth }} suppressHydrationWarning>
-        <div
-          className="flex flex-col gap-1 bg-gray-950 relative"
-          style={{ width: sidebarIconsWidth, padding: `${padding}px` }}
-          suppressHydrationWarning
-        >
-          {visibleTools.map((tool) => (
-            <button
-              key={tool.id}
-              className="w-full rounded-lg flex items-center justify-center bg-gray-800 text-gray-400 transition-all duration-200 hover:bg-gray-700"
-              style={{ height: `${buttonHeight}px` }}
-            >
-              <div style={{ width: `${iconSize}px`, height: `${iconSize}px`, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
-                {tool.icon}
-              </div>
-            </button>
-          ))}
+      <div className="h-full bg-gray-950 border-r border-gray-800 flex flex-col" style={{ width: DEFAULT_SIDEBAR_WIDTH }} suppressHydrationWarning>
+        {/* Branding Section */}
+        <div className="h-14 px-4 flex items-center border-b border-gray-800/50">
+          <div className="flex items-center gap-3">
+            <div className={`w-9 h-9 rounded-xl bg-gradient-to-br ${bc.gradientFrom} to-blue-600 flex items-center justify-center shadow-lg ${bc.shadowGlow}`}>
+              <Atom className="w-5 h-5 text-white" />
+            </div>
+            <div>
+              <h1 className="text-lg font-bold text-white tracking-tight">Ligand-X</h1>
+              <p className="text-[10px] text-gray-500 uppercase tracking-wider -mt-0.5">Precision Molecular Lab</p>
+            </div>
+          </div>
+        </div>
+        <div className="px-3 py-2.5 border-b border-gray-800/50">
+          <div
+            className={cn(
+              'w-full h-8 rounded-md text-white font-medium text-sm flex items-center justify-center gap-2 border shadow-sm transition-colors',
+              !bc_active.isCustom && `${bc_active.buttonBg} ${bc_active.buttonBgHover} ${bc_active.buttonBorder}`
+            )}
+            style={
+              bc_active.isCustom
+                ? { backgroundColor: bc_active.hexValue, borderColor: bc_active.hexValue }
+                : undefined
+            }
+          >
+            <Plus className="w-4 h-4 shrink-0 text-white" />
+            New Experiment
+          </div>
         </div>
       </div>
     )
   }
 
-  // Calculate width based on active tool
-  // Editor uses its own separate width that defaults larger
   const expandedWidth = activeTool === 'editor' ? editorSidePanelWidth : sidePanelWidth
-  const totalWidth = isSidePanelExpanded ? sidebarIconsWidth + expandedWidth : sidebarIconsWidth
+  const totalWidth = isSidePanelExpanded ? sidebarWidth + expandedWidth : sidebarWidth
 
   return (
     <motion.div
       className={cn(
-        "sidebar-container h-full bg-gray-900 flex relative overflow-hidden",
-        isSidePanelExpanded ? "border-r border-gray-700" : "border-r border-gray-800"
+        "sidebar-container h-full bg-gray-950 flex relative overflow-hidden"
       )}
       style={{ willChange: 'width' }}
-      initial={{ width: sidebarIconsWidth }}
+      initial={{ width: sidebarWidth }}
       animate={{ width: totalWidth }}
-      transition={isResizing ? { duration: 0 } : {
+      transition={(isResizing || isResizingSidebar) ? { duration: 0 } : {
         duration: 0.2,
-        ease: [0.4, 0, 0.2, 1], // Custom cubic-bezier for smoother animation
+        ease: [0.4, 0, 0.2, 1],
         type: 'tween'
       }}
       suppressHydrationWarning
     >
-      {/* Resize Handle */}
+      {/* Custom Right Border - Transparent in Header (top 56px) */}
+      <div
+        className="absolute right-0 top-0 bottom-0 w-px z-[60] pointer-events-none"
+        style={{
+          background: `linear-gradient(to bottom, transparent 56px, ${isSidePanelExpanded ? '#374151' : '#1F2937'} 56px)`
+        }}
+      />
+
+      {/* Resize Handle for expanded panel */}
       {isSidePanelExpanded && (
         <div
           ref={resizeRef}
           onMouseDown={handleMouseDown}
           className={cn(
-            "absolute right-0 top-0 bottom-0 w-1 cursor-col-resize z-50",
-            "bg-gray-700 hover:bg-blue-500/70 hover:w-2 transition-all",
-            isResizing && "w-2 bg-blue-500"
+            "absolute right-0 top-0 bottom-0 w-1.5 cursor-col-resize z-50 bg-transparent",
           )}
           style={{ touchAction: 'none' }}
-          title="Drag to resize sidebar"
         />
       )}
 
-      {/* Tool Icons Bar */}
+      {/* Resizable Sidebar */}
       <motion.div
-        className="flex flex-col gap-1 bg-gray-950 relative z-50"
-        style={{
-          width: sidebarIconsWidth,
-          padding: `${padding}px`,
-          willChange: 'width'
-        }}
-        initial={{ width: 80 }}
-        animate={{ width: sidebarIconsWidth }}
-        transition={isResizingIcons ? { duration: 0 } : {
+        className="flex flex-col bg-gray-950 relative z-50 h-full"
+        style={{ width: sidebarWidth }}
+        initial={{ width: DEFAULT_SIDEBAR_WIDTH }}
+        animate={{ width: sidebarWidth }}
+        transition={isResizingSidebar ? { duration: 0 } : {
           duration: 0.2,
           ease: [0.4, 0, 0.2, 1]
         }}
         suppressHydrationWarning
       >
-        {/* Resize Handle for Icons Column */}
-        <div
-          ref={iconsResizeRef}
-          onMouseDown={handleIconsMouseDown}
-          className={cn(
-            "absolute right-0 top-0 bottom-0 w-1 cursor-col-resize z-50",
-            "bg-gray-700 hover:bg-blue-500/70 hover:w-2 transition-all",
-            isResizingIcons && "w-2 bg-blue-500"
-          )}
-          style={{ touchAction: 'none' }}
-          title="Drag to resize icons column"
-        />
+        {/* Sidebar Resize Handle */}
+        {!isSidePanelExpanded && (
+          <div
+            ref={sidebarResizeRef}
+            onMouseDown={handleSidebarMouseDown}
+            className={cn(
+              "absolute right-0 top-0 bottom-0 w-1.5 cursor-col-resize z-50 bg-transparent",
+            )}
+            style={{ touchAction: 'none' }}
+          />
+        )}
 
-        {visibleTools.map((tool) => {
-          const isToolRunning =
-            (tool.id === 'admet' && isAdmetRunning) ||
-            (tool.id === 'docking' && isDockingRunning) ||
-            (tool.id === 'md-optimization' && isMDRunning) ||
-            (tool.id === 'boltz2' && isBoltz2Running) ||
-            (tool.id === 'quantum-chemistry' && isQCRunning)
-
-          return (
-            <button
-              key={tool.id}
-              onClick={() => handleToolClick(tool.id)}
-              onMouseEnter={() => {
-                // Preload editor bundle on hover for better UX
-                if (tool.id === 'editor') {
-                  preloadEditorBundle()
-                }
-              }}
-              title={tool.name}
-              className={cn(
-                'w-full rounded-lg flex items-center justify-center',
-                'transition-all duration-200',
-                'hover:bg-gray-700 group relative',
-                activeTool === tool.id
-                  ? tool.accentColor
-                    ? `${accentColorClasses[tool.accentColor].bg} text-white shadow-lg shadow-${tool.accentColor}-500/50`
-                    : 'bg-blue-600 text-white shadow-lg shadow-blue-600/50'
-                  : 'bg-gray-800 text-gray-400'
-              )}
-              style={{ height: `${buttonHeight}px` }}
+        {/* Branding Section */}
+        <div className="h-14 px-4 flex items-center border-b border-gray-800/50">
+          <button onClick={() => setActiveOverlay(null)} className="flex items-center gap-3 outline-none focus:outline-none border border-transparent">
+            <div
+              className={`w-9 h-9 rounded-xl flex items-center justify-center shadow-lg ${!bc_active.isCustom ? `bg-gradient-to-br ${bc_active.gradientFrom} to-blue-600 ${bc_active.shadowGlow}` : ''}`}
+              style={bc_active.isCustom ? {
+                background: `linear-gradient(to bottom right, ${bc_active.hexValue}, #1e40af)`,
+                boxShadow: `0 8px 16px rgba(${bc_active.rgbString}, 0.2)`,
+              } : undefined}
             >
-              {isToolRunning ? (
-                <Loader2
-                  className="animate-spin text-blue-400"
-                  style={{ width: `${iconSize}px`, height: `${iconSize}px`, aspectRatio: '1' }}
-                />
-              ) : (
-                <div style={{ width: `${iconSize}px`, height: `${iconSize}px`, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
-                  {tool.icon}
-                </div>
-              )}
+              <Atom className="w-5 h-5 text-white" />
+            </div>
+            <div className="text-left">
+              <h1 className="text-lg font-bold text-white tracking-tight">Ligand-X</h1>
+              <p className="text-[10px] text-gray-500 uppercase tracking-wider -mt-0.5">Precision Molecular Lab</p>
+            </div>
+          </button>
+        </div>
 
-              {/* Running indicator badge */}
-              {isToolRunning && (
-                <div
-                  className="absolute top-1 right-1 bg-blue-500 rounded-full animate-pulse"
-                  style={{
-                    width: `${Math.max(8, iconSize * 0.6)}px`,
-                    height: `${Math.max(8, iconSize * 0.6)}px`
+        {/* Projects Button */}
+        <div className="px-3 py-2.5 border-b border-gray-800/50">
+          <button
+            onClick={() => setActiveOverlay('projects')}
+            className={cn(
+              'w-full h-8 rounded-md border text-white font-medium text-sm flex items-center justify-center gap-2 transition-all shadow-sm outline-none focus:outline-none',
+              !wa.isCustom && wac && `${wac.buttonBg} ${wac.buttonBgHover} ${wac.buttonBorder}`
+            )}
+            style={wa.isCustom && wa.customStyles ? wa.customStyles.sidePanelButton : undefined}
+            onMouseEnter={(e) => {
+              if (wa.isCustom) {
+                e.currentTarget.style.backgroundColor = `rgba(${wa.rgbString}, 0.85)`
+                e.currentTarget.style.borderColor = `rgba(${wa.rgbString}, 0.85)`
+              }
+            }}
+            onMouseLeave={(e) => {
+              if (wa.isCustom && wa.customStyles) {
+                e.currentTarget.style.backgroundColor = wa.customStyles.hexValue
+                e.currentTarget.style.borderColor = wa.customStyles.hexValue
+              }
+            }}
+          >
+            Projects
+          </button>
+        </div>
+
+        {/* New Experiment — user base colour (preset or custom) */}
+        <div className="px-3 py-2.5 border-b border-gray-800/50">
+          <button
+            type="button"
+            onClick={() => setActiveOverlay('new-experiment')}
+            className={cn(
+              'w-full h-8 rounded-md text-white font-medium text-sm flex items-center justify-center gap-2 transition-all shadow-sm outline-none focus:outline-none border',
+              !bc_active.isCustom && `${bc_active.buttonBg} ${bc_active.buttonBgHover} ${bc_active.buttonBorder}`
+            )}
+            style={
+              bc_active.isCustom
+                ? { backgroundColor: bc_active.hexValue, borderColor: bc_active.hexValue }
+                : undefined
+            }
+            onMouseEnter={(e) => {
+              if (bc_active.isCustom) {
+                const el = e.currentTarget
+                el.style.backgroundColor = `rgba(${bc_active.rgbString}, 0.85)`
+                el.style.borderColor = `rgba(${bc_active.rgbString}, 0.85)`
+              }
+            }}
+            onMouseLeave={(e) => {
+              if (bc_active.isCustom) {
+                const el = e.currentTarget
+                el.style.backgroundColor = bc_active.hexValue
+                el.style.borderColor = bc_active.hexValue
+              }
+            }}
+          >
+            <Plus className="w-4 h-4 shrink-0 text-white" />
+            New Experiment
+          </button>
+        </div>
+
+        {/* Tool Navigation */}
+        <div className="flex-1 overflow-y-auto px-2 py-1 custom-scrollbar">
+          <div className="space-y-0.5">
+            {/* Default tools */}
+            {visibleDefaultTools.map((tool) => {
+              const isToolRunning =
+                (tool.id === 'admet' && isAdmetRunning) ||
+                (tool.id === 'docking' && isDockingRunning) ||
+                (tool.id === 'md-optimization' && isMDRunning) ||
+                (tool.id === 'boltz2' && isBoltz2Running) ||
+                (tool.id === 'quantum-chemistry' && isQCRunning)
+
+              const isActive = activeTool === tool.id
+              const isBaseColor = !tool.accentColor
+              const accentHex = getAccentColorHex(tool.accentColor)
+              const isHovered = hoveredTool === tool.id
+              const isColored = isActive || isHovered
+
+              return (
+                <button
+                  key={tool.id}
+                  onClick={() => handleToolClick(tool.id)}
+                  onMouseEnter={() => {
+                    setHoveredTool(tool.id)
+                    if (tool.id === 'editor') {
+                      preloadEditorBundle()
+                    }
                   }}
-                />
-              )}
+                  onMouseLeave={() => setHoveredTool(null)}
+                  className={cn(
+                    'w-full rounded-lg flex items-center gap-3 px-3 py-2.5 border border-transparent',
+                    'transition-all duration-200 text-left',
+                    'group relative outline-none focus:outline-none',
+                    isActive
+                      ? (isBaseColor
+                        ? `${!bc_active.isCustom ? `${bc_active.bgLight} ${bc_active.text} ${bc_active.borderLight}` : ''}`
+                        : 'opacity-100')
+                      : (isHovered && !isBaseColor ? 'text-gray-200' : 'text-gray-400 hover:text-gray-200')
+                  )}
+                  style={!isBaseColor && isColored ? {
+                    backgroundColor: `color-mix(in srgb, ${accentHex} ${isActive ? '10%' : '8%'}, transparent)`,
+                    color: accentHex,
+                    borderColor: `color-mix(in srgb, ${accentHex} 20%, transparent)`,
+                  } : (isBaseColor && isActive && bc_active.isCustom) ? {
+                    backgroundColor: `rgba(${bc_active.rgbString}, 0.1)`,
+                    color: bc_active.hexValue,
+                    borderColor: `rgba(${bc_active.rgbString}, 0.2)`,
+                  } : undefined}
+                >
+                  <div className={cn(
+                    "w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0 transition-colors",
+                    isActive && !bc_active.isCustom
+                      ? bc_active.bgLighter
+                      : (isActive && bc_active.isCustom ? '' : "bg-gray-800")
+                  )}
+                    style={!isBaseColor && isColored ? { color: accentHex } : (isBaseColor && isActive && bc_active.isCustom) ? {
+                      backgroundColor: `rgba(${bc_active.rgbString}, 0.2)`,
+                      color: bc_active.hexValue,
+                    } : (isBaseColor && isActive && !bc_active.isCustom) ? {
+                      color: bc_active.hexValue,
+                    } : undefined}
+                  >
+                    {isToolRunning ? (
+                      <Loader2 className="w-4 h-4 animate-spin" style={{ color: isActive ? (isBaseColor ? bc_active.hexValue : accentHex) : (isColored && !isBaseColor ? accentHex : '#6b7280') }} />
+                    ) : (
+                      <div className="w-4 h-4" style={{ color: isActive ? (isBaseColor ? bc_active.hexValue : accentHex) : (isColored && !isBaseColor ? accentHex : undefined) }}>
+                        {tool.icon}
+                      </div>
+                    )}
+                  </div>
+                  <span className="text-sm font-medium truncate">{tool.name}</span>
+                  {isToolRunning && (
+                    <div className="ml-auto w-2 h-2 rounded-full animate-pulse" style={{ backgroundColor: isActive ? (isBaseColor ? bc_active.hexValue : accentHex) : (isColored && !isBaseColor ? accentHex : '#6b7280') }} />
+                  )}
+                </button>
+              )
+            })}
 
-              {/* Tooltip */}
-              <div className="absolute left-full ml-2 px-3 py-2 bg-gray-800 text-white text-sm rounded-lg opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none whitespace-nowrap z-50 shadow-xl">
-                {tool.name}
-                {isToolRunning && <span className="ml-2 text-blue-400">(Running...)</span>}
-                <div className="text-xs text-gray-400 mt-1">{tool.description}</div>
-              </div>
-            </button>
-          )
-        })}
+            {/* Added experiment tools shown below default tools */}
+            {addedExperimentToolsInSidebar.length > 0 && (
+              <>
+                <div className="h-px bg-gray-800 my-2" />
+                {addedExperimentToolsInSidebar.map((tool) => {
+                  const isToolRunning =
+                    (tool.id === 'admet' && isAdmetRunning) ||
+                    (tool.id === 'docking' && isDockingRunning) ||
+                    (tool.id === 'md-optimization' && isMDRunning) ||
+                    (tool.id === 'boltz2' && isBoltz2Running) ||
+                    (tool.id === 'quantum-chemistry' && isQCRunning)
+
+                  const isActive = activeTool === tool.id
+                  const isBaseColor = !tool.accentColor
+                  const accentHex = getAccentColorHex(tool.accentColor)
+                  const isHovered = hoveredTool === tool.id
+                  const isColored = isActive || isHovered
+
+                  return (
+                    <button
+                      key={tool.id}
+                      onClick={() => handleToolClick(tool.id)}
+                      onMouseEnter={() => setHoveredTool(tool.id)}
+                      onMouseLeave={() => setHoveredTool(null)}
+                      className={cn(
+                        'w-full rounded-lg flex items-center gap-3 px-3 py-2.5 border border-transparent',
+                        'transition-all duration-200 text-left',
+                        'group relative outline-none focus:outline-none',
+                        isActive
+                          ? (isBaseColor
+                            ? `${!bc_active.isCustom ? `${bc_active.bgLight} ${bc_active.text} ${bc_active.borderLight}` : ''}`
+                            : 'opacity-100')
+                          : (isHovered && !isBaseColor ? 'text-gray-200' : 'text-gray-400 hover:text-gray-200')
+                      )}
+                      style={!isBaseColor && isColored ? {
+                        backgroundColor: `color-mix(in srgb, ${accentHex} ${isActive ? '10%' : '8%'}, transparent)`,
+                        color: accentHex,
+                        borderColor: `color-mix(in srgb, ${accentHex} 20%, transparent)`,
+                      } : (isBaseColor && isActive && bc_active.isCustom) ? {
+                        backgroundColor: `rgba(${bc_active.rgbString}, 0.1)`,
+                        color: bc_active.hexValue,
+                        borderColor: `rgba(${bc_active.rgbString}, 0.2)`,
+                      } : undefined}
+                    >
+                      <div className={cn(
+                        "w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0 transition-colors",
+                        isActive && !bc_active.isCustom
+                          ? bc_active.bgLighter
+                          : (isActive && bc_active.isCustom ? '' : "bg-gray-800")
+                      )}
+                        style={!isBaseColor && isColored ? { color: accentHex } : (isBaseColor && isActive && bc_active.isCustom) ? {
+                          backgroundColor: `rgba(${bc_active.rgbString}, 0.2)`,
+                          color: bc_active.hexValue,
+                        } : (isBaseColor && isActive && !bc_active.isCustom) ? {
+                          color: bc_active.hexValue,
+                        } : undefined}
+                      >
+                        {isToolRunning ? (
+                          <Loader2 className="w-4 h-4 animate-spin" style={{ color: isActive ? (isBaseColor ? bc_active.hexValue : accentHex) : (isColored && !isBaseColor ? accentHex : '#6b7280') }} />
+                        ) : (
+                          <div className="w-4 h-4" style={{ color: isActive ? (isBaseColor ? bc_active.hexValue : accentHex) : (isColored && !isBaseColor ? accentHex : undefined) }}>
+                            {tool.icon}
+                          </div>
+                        )}
+                      </div>
+                      <span className="text-sm font-medium truncate">{tool.name}</span>
+                      {isToolRunning && (
+                        <div className="ml-auto w-2 h-2 rounded-full animate-pulse" style={{ backgroundColor: isActive ? (isBaseColor ? bc_active.hexValue : accentHex) : (isColored && !isBaseColor ? accentHex : '#6b7280') }} />
+                      )}
+                    </button>
+                  )
+                })}
+              </>
+            )}
+          </div>
+        </div>
+
+        {/* Bottom Section */}
+        <div className="border-t border-gray-800/50 p-2 space-y-0.5">
+          <button
+            onClick={() => setActiveOverlay('settings')}
+            className="w-full rounded-lg flex items-center gap-3 px-3 py-2.5 text-gray-400 hover:text-gray-200 hover:bg-gray-800/50 transition-colors outline-none focus:outline-none border border-transparent"
+          >
+            <div className="w-8 h-8 rounded-lg bg-gray-800 flex items-center justify-center">
+              <Settings className="w-4 h-4" />
+            </div>
+            <span className="text-sm font-medium">Settings</span>
+          </button>
+          <button
+            onClick={() => setActiveOverlay('support')}
+            className="w-full rounded-lg flex items-center gap-3 px-3 py-2.5 text-gray-400 hover:text-gray-200 hover:bg-gray-800/50 transition-colors outline-none focus:outline-none border border-transparent"
+          >
+            <div className="w-8 h-8 rounded-lg bg-gray-800 flex items-center justify-center">
+              <HelpCircle className="w-4 h-4" />
+            </div>
+            <span className="text-sm font-medium">Support</span>
+          </button>
+          <button
+            onClick={() => setActiveOverlay('account')}
+            className="w-full rounded-lg flex items-center gap-3 px-3 py-2.5 text-gray-400 hover:text-gray-200 hover:bg-gray-800/50 transition-colors outline-none focus:outline-none border border-transparent"
+          >
+            <div className="w-8 h-8 rounded-full bg-gradient-to-br from-purple-500 to-pink-500 flex items-center justify-center">
+              <User className="w-4 h-4 text-white" />
+            </div>
+            <div className="flex flex-col min-w-0">
+              <span className="text-sm font-medium text-gray-200 truncate">Dr. Aris Thorne</span>
+              <span className="text-[10px] text-gray-500">Lead Researcher</span>
+            </div>
+          </button>
+        </div>
+
+        {/* Status Footer */}
+        <div className="px-3 py-2 border-t border-gray-800/50 flex items-center gap-2 text-xs text-gray-500">
+          <div className="w-2 h-2 rounded-full bg-green-500 animate-pulse" />
+          <span>Engine Ready</span>
+          <span className={`${!bc_active.isCustom ? bc_active.textMid : ''} ml-auto truncate`} style={bc_active.isCustom ? { color: bc_active.hexValue } : undefined}>Project: Active</span>
+        </div>
       </motion.div>
 
       {/* Tool Content Area */}
-      {/* CRITICAL FIX: Keep Editor always mounted to prevent Ketcher re-initialization */}
-      {/* Once the editor is opened, it stays mounted forever, just hidden with CSS */}
-
       {/* Editor Tool - Always mounted once opened, shown/hidden with CSS */}
       {editorEverOpened && (
         <motion.div
-          className="flex-1 flex flex-col bg-gray-900 overflow-hidden"
+          className="flex-1 flex flex-col overflow-hidden"
+          style={{ backgroundColor: '#0F172A' }}
           initial={false}
           suppressHydrationWarning
           animate={{
@@ -550,18 +796,23 @@ export function SidePanel() {
             display: { delay: activeTool === 'editor' ? 0 : 0.15 }
           }}
         >
-          {/* Tool Header */}
+          {/* Tool Header - matches main Header height (h-14 = 56px) */}
           {activeTool === 'editor' && isSidePanelExpanded && (
-            <div className="border-b border-gray-700 overflow-x-auto [&::-webkit-scrollbar]:h-1 [&::-webkit-scrollbar-track]:bg-gray-800 [&::-webkit-scrollbar-thumb]:bg-gray-600">
+            <div className="border-b border-gray-800/50 overflow-x-auto [&::-webkit-scrollbar]:h-1 [&::-webkit-scrollbar-track]:bg-gray-800 [&::-webkit-scrollbar-thumb]:bg-gray-600 bg-gray-950">
               <motion.div
                 initial={{ opacity: 0, y: -10 }}
                 animate={{ opacity: 1, y: 0 }}
                 transition={{ duration: 0.2, delay: 0.1 }}
-                className="relative flex items-center justify-between p-4 h-[73px] min-w-fit"
+                className="relative flex items-center justify-between px-4 h-14 min-w-fit"
               >
                 <div className="flex items-center gap-3 flex-1 min-w-0 pr-4">
-                  <div className="p-2.5 bg-gradient-to-br from-blue-500/20 to-cyan-500/20 rounded-lg flex-shrink-0">
-                    <div className="w-5 h-5 text-blue-400">
+                  <div
+                    className={`p-2.5 rounded-lg flex-shrink-0 ${!bc_active.isCustom ? `bg-gradient-to-br ${bc_active.gradientFromLight} to-blue-500/20` : ''}`}
+                    style={bc_active.isCustom ? {
+                      background: `linear-gradient(to bottom right, rgba(${bc_active.rgbString}, 0.2), rgba(59, 130, 246, 0.1))`,
+                    } : undefined}
+                  >
+                    <div className={`w-5 h-5 ${!bc_active.isCustom ? bc_active.text : ''}`} style={bc_active.isCustom ? { color: bc_active.hexValue } : undefined}>
                       <PenTool className="w-5 h-5" />
                     </div>
                   </div>
@@ -603,7 +854,7 @@ export function SidePanel() {
                 )}
                 <button
                   onClick={() => setActiveTool(null)}
-                  className="p-1 hover:bg-gray-700 rounded transition-colors flex-shrink-0 relative z-10 ml-auto"
+                  className="p-1 hover:bg-gray-700 rounded transition-colors flex-shrink-0 relative z-10 ml-auto outline-none focus:outline-none border border-transparent"
                 >
                   <X className="w-5 h-5 text-gray-400" />
                 </button>
@@ -611,14 +862,14 @@ export function SidePanel() {
             </div>
           )}
 
-          {/* Tool Content - Always rendered once opened, visibility controlled by parent */}
+          {/* Tool Content */}
           <div className="flex-1 overflow-hidden custom-scrollbar">
             <EditorTool />
           </div>
         </motion.div>
       )}
 
-      {/* Other Tools - Use AnimatePresence for unmount/remount */}
+      {/* Other Tools */}
       <AnimatePresence mode="wait" initial={false}>
         {isSidePanelExpanded && activeToolData && activeTool !== 'editor' && (
           <motion.div
@@ -630,36 +881,39 @@ export function SidePanel() {
               duration: 0.15,
               ease: 'easeInOut'
             }}
-            className="flex-1 flex flex-col bg-gray-900 overflow-hidden relative z-0"
+            className="flex-1 flex flex-col overflow-hidden relative z-0"
+            style={{ backgroundColor: '#0F172A' }}
             suppressHydrationWarning
           >
-            {/* Tool Header */}
+            {/* Tool Header - matches main Header height (h-14 = 56px) */}
             {activeToolData && (
-              <div className="flex items-center justify-between p-4 border-b border-gray-700">
+              <div className="flex items-center justify-between px-4 h-14 border-b border-gray-800/50 bg-gray-950">
                 <div className="flex items-center gap-3">
-                  {activeToolData.accentColor ? (
-                    <div className={`p-2.5 bg-gradient-to-br ${accentColorClasses[activeToolData.accentColor].gradient} rounded-lg`}>
-                      <div className={`w-5 h-5 ${accentColorClasses[activeToolData.accentColor].text}`}>
-                        {activeToolData.icon}
-                      </div>
+                  <div className="p-2.5 rounded-lg" style={{
+                    backgroundColor: activeToolData.accentColor && !(!activeToolData.accentColor)
+                      ? `${getAccentColorHex(activeToolData.accentColor)}20`
+                      : bc_active.isCustom
+                      ? `rgba(${bc_active.rgbString}, 0.2)`
+                      : `rgba(${bc.hexRgb}, 0.2)`
+                  }}>
+                    <div className="w-5 h-5" style={{ color: activeToolData.accentColor && !(!activeToolData.accentColor) ? getAccentColorHex(activeToolData.accentColor) : (bc_active.isCustom ? bc_active.hexValue : `#${bc.hexValue.slice(1)}`) }}>
+                      {activeToolData.icon}
                     </div>
-                  ) : (
-                    <div className="text-blue-400">{activeToolData.icon}</div>
-                  )}
+                  </div>
                   <div>
                     <h2 className="text-lg font-semibold text-white flex items-center">
                       {activeToolData.name}
                       {activeToolData.id === 'md-optimization' && isMDRunning && (
-                        <Loader2 className="w-4 h-4 animate-spin text-green-400 ml-2" />
+                        <Loader2 className="w-4 h-4 animate-spin ml-2" style={{ color: activeToolData.accentColor ? getAccentColorHex(activeToolData.accentColor) : (bc_active.isCustom ? bc_active.hexValue : getAccentColorHex(undefined)) }} />
                       )}
                       {activeToolData.id === 'boltz2' && isBoltz2Running && (
-                        <Loader2 className="w-4 h-4 animate-spin text-purple-400 ml-2" />
+                        <Loader2 className="w-4 h-4 animate-spin ml-2" style={{ color: activeToolData.accentColor ? getAccentColorHex(activeToolData.accentColor) : (bc_active.isCustom ? bc_active.hexValue : getAccentColorHex(undefined)) }} />
                       )}
                       {activeToolData.id === 'docking' && isDockingRunning && (
-                        <Loader2 className="w-4 h-4 animate-spin text-blue-400 ml-2" />
+                        <Loader2 className="w-4 h-4 animate-spin ml-2" style={{ color: activeToolData.accentColor ? getAccentColorHex(activeToolData.accentColor) : (bc_active.isCustom ? bc_active.hexValue : getAccentColorHex(undefined)) }} />
                       )}
                       {activeToolData.id === 'admet' && isAdmetRunning && (
-                        <Loader2 className="w-4 h-4 animate-spin text-teal-400 ml-2" />
+                        <Loader2 className="w-4 h-4 animate-spin ml-2" style={{ color: activeToolData.accentColor ? getAccentColorHex(activeToolData.accentColor) : (bc_active.isCustom ? bc_active.hexValue : getAccentColorHex(undefined)) }} />
                       )}
                     </h2>
                     <p className="text-xs text-gray-400">

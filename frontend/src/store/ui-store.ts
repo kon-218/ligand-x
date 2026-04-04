@@ -13,7 +13,17 @@ export type ToolId =
   | 'protein-cleaning'
   | 'abfe'
   | 'rbfe'
+  | 'pocket-finder'
   | 'results'
+  | null
+
+export type OverlayId =
+  | 'projects'
+  | 'library'
+  | 'settings'
+  | 'support'
+  | 'account'
+  | 'new-experiment'
   | null
 
 interface UIStore {
@@ -22,11 +32,11 @@ interface UIStore {
   activeTool: ToolId
   sidePanelWidth: number // Width in pixels (for non-editor tools)
   editorSidePanelWidth: number // Width in pixels for editor (starts larger)
-  sidebarIconsWidth: number // Width in pixels for the sidebar icons column
+  sidebarWidth: number // Width in pixels for the sidebar navigation column
   setActiveTool: (tool: ToolId) => void
   setSidePanelWidth: (width: number) => void
   setEditorSidePanelWidth: (width: number) => void
-  setSidebarIconsWidth: (width: number) => void
+  setSidebarWidth: (width: number) => void
   toggleSidePanel: () => void
   closeSidePanel: () => void
 
@@ -62,15 +72,27 @@ interface UIStore {
   // Service availability status (keyed by service name)
   serviceStatus: Record<string, boolean>
   setServiceStatus: (status: Record<string, boolean>) => void
+
+  // Experiment tools added to the current project
+  addedExperimentTools: ToolId[]
+  addExperimentTool: (toolId: ToolId) => void
+  addMultipleExperimentTools: (toolIds: ToolId[]) => void
+  removeExperimentTool: (toolId: ToolId) => void
+  clearExperimentTools: () => void
+
+  // Overlay pages (render on top of viewer without unmounting it)
+  activeOverlay: OverlayId
+  setActiveOverlay: (overlay: OverlayId) => void
+  closeOverlay: () => void
 }
 
 export const useUIStore = create<UIStore>((set) => ({
   // Side panel
   isSidePanelExpanded: false,
   activeTool: null,
-  sidePanelWidth: 480, // Default width in pixels (for non-editor tools)
+  sidePanelWidth: 640, // Default width in pixels (for non-editor tools)
   editorSidePanelWidth: 800, // Default width in pixels for editor (larger default, ~50% of typical 1920px viewport)
-  sidebarIconsWidth: 80, // Default width in pixels for sidebar icons column
+  sidebarWidth: 260, // Default width in pixels for sidebar navigation
 
   setActiveTool: (tool) =>
     set((state) => ({
@@ -84,8 +106,8 @@ export const useUIStore = create<UIStore>((set) => ({
   setEditorSidePanelWidth: (width) =>
     set({ editorSidePanelWidth: Math.max(320, Math.min(1200, width)) }), // Clamp between 320px and 1200px
 
-  setSidebarIconsWidth: (width) =>
-    set({ sidebarIconsWidth: Math.max(60, Math.min(200, width)) }), // Clamp between 60px and 200px
+  setSidebarWidth: (width) =>
+    set({ sidebarWidth: Math.max(200, Math.min(360, width)) }), // Clamp between 200px and 360px
 
   toggleSidePanel: () =>
     set((state) => ({
@@ -146,4 +168,39 @@ export const useUIStore = create<UIStore>((set) => ({
   // Service availability status
   serviceStatus: {},
   setServiceStatus: (status) => set({ serviceStatus: status }),
+
+  // Experiment tools added to the current project
+  addedExperimentTools: [],
+  addExperimentTool: (toolId) =>
+    set((state) => {
+      if (!toolId || state.addedExperimentTools.includes(toolId)) return state
+      return { addedExperimentTools: [...state.addedExperimentTools, toolId] }
+    }),
+  addMultipleExperimentTools: (toolIds) =>
+    set((state) => {
+      const validToolIds = toolIds.filter(
+        (id) => id && !state.addedExperimentTools.includes(id)
+      )
+      if (validToolIds.length === 0) return state
+      return {
+        addedExperimentTools: [...state.addedExperimentTools, ...validToolIds],
+      }
+    }),
+  removeExperimentTool: (toolId) =>
+    set((state) => ({
+      addedExperimentTools: state.addedExperimentTools.filter((t) => t !== toolId),
+    })),
+  clearExperimentTools: () => set({ addedExperimentTools: [] }),
+
+  // Overlay pages
+  activeOverlay: null,
+  setActiveOverlay: (overlay) =>
+    set((state) => ({
+      activeOverlay: overlay,
+      // Deselect tool for projects and new-experiment, otherwise keep activeTool but minimize panel
+      activeTool: overlay === 'projects' || overlay === 'new-experiment' ? null : state.activeTool,
+      // Keep side panel expanded for library, close for other overlays
+      isSidePanelExpanded: overlay && overlay !== 'library' ? false : state.isSidePanelExpanded,
+    })),
+  closeOverlay: () => set({ activeOverlay: null }),
 }))

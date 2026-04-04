@@ -31,18 +31,21 @@ body {
 }
 
 .custom-scrollbar::-webkit-scrollbar-track {
-  background-color: #1f2937; /* Dark gray-800 */
+  background-color: #1f2937;
+  /* Dark gray-800 */
   border-radius: 5px;
 }
 
 .custom-scrollbar::-webkit-scrollbar-thumb {
-  background-color: #374151; /* Gray-700 */
+  background-color: #374151;
+  /* Gray-700 */
   border-radius: 5px;
   border: 2px solid #1f2937;
 }
 
 .custom-scrollbar::-webkit-scrollbar-thumb:hover {
-  background-color: #4b5563; /* Gray-600 */
+  background-color: #4b5563;
+  /* Gray-600 */
 }
 
 /* Firefox scrollbar */
@@ -56,6 +59,7 @@ body {
   0% {
     transform: translateX(-100%);
   }
+
   100% {
     transform: translateX(100%);
   }
@@ -91,7 +95,9 @@ body {
 }
 
 /* Prevent white flash during transitions */
-body, #__next, main {
+body,
+#__next,
+main {
   background-color: var(--background);
   overflow-x: hidden;
 }
@@ -111,12 +117,14 @@ body, #__next, main {
   touch-action: manipulation;
   pointer-events: auto;
 }
+
 /* Other Molstar containers - dark theme for panels */
 .msp-plugin,
 [class*="msp-plugin"],
-.msp-plugin > div {
+.msp-plugin>div {
   background-color: #111827 !important;
 }
+
 [class*="msp-viewport"] {
   background-color: #ffffff !important;
 }
@@ -125,7 +133,7 @@ body, #__next, main {
 .msp-plugin canvas,
 div[class*="msp"] canvas,
 canvas[style*="background"],
-.msp-plugin > div > canvas {
+.msp-plugin>div>canvas {
   background-image: none !important;
   /* DO NOT set background-color here - it overlays the WebGL rendering */
 }
@@ -193,13 +201,14 @@ canvas[style*="linear-gradient"] {
 .msp-plugin [class*="ui"],
 div[class*="msp"][class*="layout"],
 div[class*="msp"][class*="panel"] {
-  background-color: #1f2937 !important; /* gray-800 */
+  background-color: #1f2937 !important;
+  /* gray-800 */
   color: #ffffff !important;
 }
 
 /* Target UI panels - be more specific to avoid affecting canvas containers */
-.msp-plugin .msp-plugin-ui > div,
-.msp-plugin .msp-layout > div:not(:first-child),
+.msp-plugin .msp-plugin-ui>div,
+.msp-plugin .msp-layout>div:not(:first-child),
 .msp-plugin [class*="control"],
 .msp-plugin [class*="settings"],
 .msp-plugin [class*="toolbar"] {
@@ -235,421 +244,656 @@ div[class*="msp"][class*="panel"] {
 .msp-plugin [class*="form-control"],
 .msp-plugin .msp-control-group,
 .msp-plugin [class*="control-group"] {
-  background-color: #374151 !important; /* gray-700 */
+  background-color: #374151 !important;
+  /* gray-700 */
   color: #ffffff !important;
-  border-color: #4b5563 !important; /* gray-600 */
+  border-color: #4b5563 !important;
+  /* gray-600 */
 }
 
-/* Force all buttons with light backgrounds to dark */
-.msp-plugin button[style*="background"],
-.msp-plugin .msp-btn[style*="background"],
-.msp-plugin [class*="btn"][style*="background"] {
+/* CRITICAL: The .msp-control-group-expander is position:absolute and sits ON TOP of
+   label text (like "Occlusion", "Shadow", "Outline"). It MUST stay transparent so the
+   text behind it remains visible. The wildcard [class*="control-group"] above was
+   incorrectly matching it and making it opaque. */
+.msp-plugin .msp-control-group-expander,
+.msp-plugin button.msp-control-group-expander {
+  background-color: transparent !important;
+  background: transparent !important;
+}
+
+/* Force all buttons with light backgrounds to dark - Scoped */
+.msp-plugin .msp-layout-right button[style*="background"],
+.msp-plugin .msp-plugin-ui button[style*="background"],
+.msp-plugin .msp-layout-right .msp-btn[style*="background"],
+.msp-plugin .msp-plugin-ui .msp-btn[style*="background"],
+.msp-plugin .msp-layout-right [class*="btn"][style*="background"],
+.msp-plugin .msp-plugin-ui [class*="btn"][style*="background"] {
   background-color: #374151 !important;
   color: #ffffff !important;
 }
 
-/* Form controls and inputs that might have light backgrounds */
-.msp-plugin .msp-form-control-wrapper,
-.msp-plugin [class*="form-control-wrapper"],
-.msp-plugin .msp-control-wrapper,
-.msp-plugin [class*="control-wrapper"] {
+/* Form controls and inputs that might have light backgrounds - Scoped */
+.msp-plugin .msp-layout-right .msp-form-control-wrapper,
+.msp-plugin .msp-plugin-ui .msp-form-control-wrapper,
+.msp-plugin .msp-layout-right [class*="form-control-wrapper"],
+.msp-plugin .msp-plugin-ui [class*="form-control-wrapper"],
+.msp-plugin .msp-layout-right .msp-control-wrapper,
+.msp-plugin .msp-plugin-ui .msp-control-wrapper,
+.msp-plugin .msp-layout-right [class*="control-wrapper"],
+.msp-plugin .msp-plugin-ui [class*="control-wrapper"] {
   background-color: #1f2937 !important;
   color: #e5e7eb !important;
 }
 
-/* Any element with light beige/cream backgrounds */
-.msp-plugin [style*="background-color: rgb(238, 236, 231)"],
-.msp-plugin [style*="background-color: rgb(235, 232, 227)"],
-.msp-plugin [style*="background-color: rgb(224, 221, 212)"],
-.msp-plugin [style*="background-color: rgb(240, 240, 240)"],
-.msp-plugin [style*="background-color: #EEECE7"],
-.msp-plugin [style*="background-color: #EBE8E3"],
-.msp-plugin [style*="background-color: #E0DDD4"],
-.msp-plugin [style*="background-color: #F0F0F0"] {
+/* Any element with light beige/cream backgrounds - Scoped */
+.msp-plugin .msp-layout-right [style*="background-color: rgb(238, 236, 231)"],
+.msp-plugin .msp-plugin-ui [style*="background-color: rgb(238, 236, 231)"],
+.msp-plugin .msp-layout-right [style*="background-color: rgb(235, 232, 227)"],
+.msp-plugin .msp-plugin-ui [style*="background-color: rgb(235, 232, 227)"],
+.msp-plugin .msp-layout-right [style*="background-color: rgb(224, 221, 212)"],
+.msp-plugin .msp-plugin-ui [style*="background-color: rgb(224, 221, 212)"],
+.msp-plugin .msp-layout-right [style*="background-color: rgb(240, 240, 240)"],
+.msp-plugin .msp-plugin-ui [style*="background-color: rgb(240, 240, 240)"],
+.msp-plugin .msp-layout-right [style*="background-color: #EEECE7"],
+.msp-plugin .msp-plugin-ui [style*="background-color: #EEECE7"],
+.msp-plugin .msp-layout-right [style*="background-color: #EBE8E3"],
+.msp-plugin .msp-plugin-ui [style*="background-color: #EBE8E3"],
+.msp-plugin .msp-layout-right [style*="background-color: #E0DDD4"],
+.msp-plugin .msp-plugin-ui [style*="background-color: #E0DDD4"],
+.msp-plugin .msp-layout-right [style*="background-color: #F0F0F0"],
+.msp-plugin .msp-plugin-ui [style*="background-color: #F0F0F0"] {
   background-color: #1f2937 !important;
   color: #e5e7eb !important;
 }
 
-/* Dropdown menus and popovers */
-.msp-plugin .msp-dropdown-menu,
-.msp-plugin [class*="dropdown"],
-.msp-plugin .msp-popover,
-.msp-plugin [class*="popover"],
-.msp-plugin .msp-menu-item {
+/* Dropdown menus and popovers - Scoped */
+.msp-plugin .msp-layout-right .msp-dropdown-menu,
+.msp-plugin .msp-plugin-ui .msp-dropdown-menu,
+.msp-plugin .msp-layout-right [class*="dropdown"],
+.msp-plugin .msp-plugin-ui [class*="dropdown"],
+.msp-plugin .msp-layout-right .msp-popover,
+.msp-plugin .msp-plugin-ui .msp-popover,
+.msp-plugin .msp-layout-right [class*="popover"],
+.msp-plugin .msp-plugin-ui [class*="popover"],
+.msp-plugin .msp-layout-right .msp-menu-item,
+.msp-plugin .msp-plugin-ui .msp-menu-item {
   background-color: #1f2937 !important;
   color: #e5e7eb !important;
   border-color: #374151 !important;
 }
 
-/* Tooltips */
-.msp-plugin .msp-tooltip,
-.msp-plugin [title],
-.msp-plugin [data-tooltip] {
-  background-color: #374151 !important; /* Slightly lighter for tooltips */
+/* Tooltips - Scoped */
+.msp-plugin .msp-layout-right .msp-tooltip,
+.msp-plugin .msp-plugin-ui .msp-tooltip,
+.msp-plugin .msp-layout-right [title],
+.msp-plugin .msp-plugin-ui [title],
+.msp-plugin .msp-layout-right [data-tooltip],
+.msp-plugin .msp-plugin-ui [data-tooltip] {
+  background-color: #374151 !important;
+  /* Slightly lighter for tooltips */
   color: #ffffff !important;
   border-color: #4b5563 !important;
 }
 
-/* Override any light backgrounds on specific sections */
-.msp-plugin .msp-section,
-.msp-plugin [class*="section"],
-.msp-plugin .msp-panel,
-.msp-plugin [class*="panel"] {
+/* Override any light backgrounds on specific sections - Scoped */
+.msp-plugin .msp-layout-right .msp-section,
+.msp-plugin .msp-plugin-ui .msp-section,
+.msp-plugin .msp-layout-right [class*="section"],
+.msp-plugin .msp-plugin-ui [class*="section"],
+.msp-plugin .msp-layout-right .msp-panel,
+.msp-plugin .msp-plugin-ui .msp-panel,
+.msp-plugin .msp-layout-right [class*="panel"],
+.msp-plugin .msp-plugin-ui [class*="panel"] {
   background-color: #1f2937 !important;
   color: #ffffff !important;
 }
 
-/* Molstar buttons and controls */
-.msp-plugin button,
-.msp-plugin .msp-button,
-.msp-plugin .msp-control-button,
-.msp-plugin button.msp-btn,
-.msp-plugin .msp-btn {
-  background-color: #374151 !important; /* gray-700 */
+/* Molstar buttons and controls - Scoped */
+.msp-plugin .msp-layout-right button,
+.msp-plugin .msp-plugin-ui button,
+.msp-plugin .msp-layout-right .msp-button,
+.msp-plugin .msp-plugin-ui .msp-button,
+.msp-plugin .msp-layout-right .msp-control-button,
+.msp-plugin .msp-plugin-ui .msp-control-button,
+.msp-plugin .msp-layout-right button.msp-btn,
+.msp-plugin .msp-plugin-ui button.msp-btn,
+.msp-plugin .msp-layout-right .msp-btn,
+.msp-plugin .msp-plugin-ui .msp-btn {
+  background-color: #374151 !important;
+  /* gray-700 */
   color: #ffffff !important;
-  border-color: #4b5563 !important; /* gray-600 */
+  border-color: #4b5563 !important;
+  /* gray-600 */
 }
 
-/* Quick Styles buttons and similar control buttons */
-.msp-plugin .msp-button-group button,
-.msp-plugin .msp-button-group .msp-button,
-.msp-plugin [class*="button-group"] button,
-.msp-plugin [class*="quick"] button,
-.msp-plugin [class*="style"] button {
-  background-color: #374151 !important; /* gray-700 */
+/* Quick Styles buttons and similar control buttons - Scoped */
+.msp-plugin .msp-layout-right .msp-button-group button,
+.msp-plugin .msp-plugin-ui .msp-button-group button,
+.msp-plugin .msp-layout-right .msp-button-group .msp-button,
+.msp-plugin .msp-plugin-ui .msp-button-group .msp-button,
+.msp-plugin .msp-layout-right [class*="button-group"] button,
+.msp-plugin .msp-plugin-ui [class*="button-group"] button,
+.msp-plugin .msp-layout-right [class*="quick"] button,
+.msp-plugin .msp-plugin-ui [class*="quick"] button,
+.msp-plugin .msp-layout-right [class*="style"] button,
+.msp-plugin .msp-plugin-ui [class*="style"] button {
+  background-color: #374151 !important;
+  /* gray-700 */
   color: #ffffff !important;
-  border-color: #4b5563 !important; /* gray-600 */
+  border-color: #4b5563 !important;
+  /* gray-600 */
 }
 
-/* Active/selected buttons */
-.msp-plugin button.msp-active,
-.msp-plugin .msp-button.msp-active,
-.msp-plugin button[class*="active"] {
-  background-color: #1e40af !important; /* blue-800 */
+/* Active/selected buttons - Scoped */
+.msp-plugin .msp-layout-right button.msp-active,
+.msp-plugin .msp-plugin-ui button.msp-active,
+.msp-plugin .msp-layout-right .msp-button.msp-active,
+.msp-plugin .msp-plugin-ui .msp-button.msp-active,
+.msp-plugin .msp-layout-right button[class*="active"],
+.msp-plugin .msp-plugin-ui button[class*="active"] {
+  background-color: #1e40af !important;
+  /* blue-800 */
   color: #ffffff !important;
 }
 
-.msp-plugin button:hover,
-.msp-plugin .msp-button:hover,
-.msp-plugin .msp-control-button:hover {
-  background-color: #4b5563 !important; /* gray-600 */
+.msp-plugin .msp-layout-right button:hover,
+.msp-plugin .msp-plugin-ui button:hover,
+.msp-plugin .msp-layout-right .msp-button:hover,
+.msp-plugin .msp-plugin-ui .msp-button:hover,
+.msp-plugin .msp-layout-right .msp-control-button:hover,
+.msp-plugin .msp-plugin-ui .msp-control-button:hover {
+  background-color: #4b5563 !important;
+  /* gray-600 */
 }
 
-/* Molstar input fields */
+/* Molstar input fields - Scoped */
+.msp-plugin .msp-layout-right input,
+.msp-plugin .msp-plugin-ui input,
+.msp-plugin .msp-layout-right .msp-input,
+.msp-plugin .msp-plugin-ui .msp-input,
+.msp-plugin .msp-layout-right textarea,
+.msp-plugin .msp-plugin-ui textarea,
+.msp-plugin .msp-layout-right select,
+.msp-plugin .msp-plugin-ui select,
+.msp-plugin .msp-viewport-controls-panel-controls input,
+.msp-plugin .msp-viewport-controls-panel-controls select,
+.msp-plugin .msp-viewport-controls-panel-controls textarea,
 .msp-plugin input,
-.msp-plugin .msp-input,
-.msp-plugin textarea,
-.msp-plugin select {
-  background-color: #1f2937 !important; /* gray-800 */
+.msp-plugin select,
+.msp-plugin textarea {
+  background-color: #1f2937 !important;
+  /* gray-800 */
   color: #ffffff !important;
-  border-color: #374151 !important; /* gray-700 */
+  border-color: #374151 !important;
+  /* gray-700 */
 }
 
-/* Target specific dropdowns that are still light */
-.msp-plugin .msp-sequence-select > select,
-.msp-plugin .msp-sequence-select select,
-.msp-plugin select.msp-form-control,
-.msp-plugin .msp-form-control,
-.msp-plugin .msp-select select {
-  background-color: #1f2937 !important; /* gray-800 */
+/* Target specific dropdowns that are still light - Scoped */
+.msp-plugin .msp-layout-right .msp-sequence-select>select,
+.msp-plugin .msp-plugin-ui .msp-sequence-select>select,
+.msp-plugin .msp-layout-right .msp-sequence-select select,
+.msp-plugin .msp-plugin-ui .msp-sequence-select select,
+.msp-plugin .msp-layout-right select.msp-form-control,
+.msp-plugin .msp-plugin-ui select.msp-form-control,
+.msp-plugin .msp-layout-right .msp-form-control,
+.msp-plugin .msp-plugin-ui .msp-form-control,
+.msp-plugin .msp-layout-right .msp-select select,
+.msp-plugin .msp-plugin-ui .msp-select select {
+  background-color: #1f2937 !important;
+  /* gray-800 */
   color: #ffffff !important;
-  border-color: #374151 !important; /* gray-700 */
+  border-color: #374151 !important;
+  /* gray-700 */
 }
 
-.msp-plugin input:focus,
-.msp-plugin .msp-input:focus,
-.msp-plugin textarea:focus,
-.msp-plugin select:focus {
-  border-color: #3b82f6 !important; /* blue-500 */
+.msp-plugin .msp-layout-right input:focus,
+.msp-plugin .msp-plugin-ui input:focus,
+.msp-plugin .msp-layout-right .msp-input:focus,
+.msp-plugin .msp-plugin-ui .msp-input:focus,
+.msp-plugin .msp-layout-right textarea:focus,
+.msp-plugin .msp-plugin-ui textarea:focus,
+.msp-plugin .msp-layout-right select:focus,
+.msp-plugin .msp-plugin-ui select:focus {
+  border-color: #3b82f6 !important;
+  /* blue-500 */
   outline-color: #3b82f6 !important;
 }
 
-/* Molstar dropdowns and menus */
-.msp-plugin .msp-menu,
-.msp-plugin .msp-dropdown,
-.msp-plugin .msp-select {
-  background-color: #1f2937 !important; /* gray-800 */
+/* Molstar dropdowns and menus - Scoped */
+.msp-plugin .msp-layout-right .msp-menu,
+.msp-plugin .msp-plugin-ui .msp-menu,
+.msp-plugin .msp-layout-right .msp-dropdown,
+.msp-plugin .msp-plugin-ui .msp-dropdown,
+.msp-plugin .msp-layout-right .msp-select,
+.msp-plugin .msp-plugin-ui .msp-select {
+  background-color: #1f2937 !important;
+  /* gray-800 */
   color: #ffffff !important;
-  border-color: #374151 !important; /* gray-700 */
+  border-color: #374151 !important;
+  /* gray-700 */
 }
 
-/* Molstar tree view and lists */
-.msp-plugin .msp-tree-view,
-.msp-plugin .msp-list,
-.msp-plugin .msp-tree-view-item {
-  background-color: #1f2937 !important; /* gray-800 */
-  color: #ffffff !important;
-}
-
-/* Log entries - target the specific light background */
-.msp-plugin .msp-log-entry,
-.msp-plugin .msp-log,
-.msp-plugin [class*="log"] {
-  background-color: #1f2937 !important; /* gray-800 */
-  color: #e5e7eb !important; /* gray-200 */
-}
-
-/* Top bar and sequence display */
-.msp-plugin .msp-sequence,
-.msp-plugin .msp-sequence-view,
-.msp-plugin [class*="sequence"] {
-  background-color: #1f2937 !important; /* gray-800 */
+/* Molstar tree view and lists - Scoped */
+.msp-plugin .msp-layout-right .msp-tree-view,
+.msp-plugin .msp-plugin-ui .msp-tree-view,
+.msp-plugin .msp-layout-right .msp-list,
+.msp-plugin .msp-plugin-ui .msp-list,
+.msp-plugin .msp-layout-right .msp-tree-view-item,
+.msp-plugin .msp-plugin-ui .msp-tree-view-item {
+  background-color: #1f2937 !important;
+  /* gray-800 */
   color: #ffffff !important;
 }
 
-/* Top bar header area */
-.msp-plugin .msp-header,
-.msp-plugin [class*="header"],
-.msp-plugin .msp-layout-header {
-  background-color: #1f2937 !important; /* gray-800 */
+/* Log entries - target the specific light background - Scoped */
+.msp-plugin .msp-layout-right .msp-log-entry,
+.msp-plugin .msp-plugin-ui .msp-log-entry,
+.msp-plugin .msp-layout-right .msp-log,
+.msp-plugin .msp-plugin-ui .msp-log,
+.msp-plugin .msp-layout-right [class*="log"],
+.msp-plugin .msp-plugin-ui [class*="log"] {
+  background-color: #1f2937 !important;
+  /* gray-800 */
+  color: #e5e7eb !important;
+  /* gray-200 */
+}
+
+/* Top bar and sequence display - Scoped */
+.msp-plugin .msp-layout-right .msp-sequence,
+.msp-plugin .msp-plugin-ui .msp-sequence,
+.msp-plugin .msp-layout-right .msp-sequence-view,
+.msp-plugin .msp-plugin-ui .msp-sequence-view,
+.msp-plugin .msp-layout-right [class*="sequence"],
+.msp-plugin .msp-plugin-ui [class*="sequence"] {
+  background-color: #1f2937 !important;
+  /* gray-800 */
   color: #ffffff !important;
 }
 
-.msp-plugin .msp-tree-view-item:hover,
-.msp-plugin .msp-list-item:hover {
-  background-color: #374151 !important; /* gray-700 */
-}
-
-/* Molstar labels and text - ensure good visibility */
-.msp-plugin label,
-.msp-plugin .msp-label,
-.msp-plugin .msp-text,
-.msp-plugin span,
-.msp-plugin p,
-.msp-plugin div {
-  color: #e5e7eb !important; /* gray-200 */
-}
-
-/* Ensure text in buttons and controls is visible */
-.msp-plugin button,
-.msp-plugin .msp-button {
+/* Top bar header area - Scoped */
+.msp-plugin .msp-layout-right .msp-header,
+.msp-plugin .msp-plugin-ui .msp-header,
+.msp-plugin .msp-layout-right [class*="header"],
+.msp-plugin .msp-plugin-ui [class*="header"],
+.msp-plugin .msp-layout-right .msp-layout-header,
+.msp-plugin .msp-plugin-ui .msp-layout-header {
+  background-color: #1f2937 !important;
+  /* gray-800 */
   color: #ffffff !important;
 }
 
-/* Text in dropdowns and selects */
-.msp-plugin select,
-.msp-plugin option {
+.msp-plugin .msp-layout-right .msp-tree-view-item:hover,
+.msp-plugin .msp-plugin-ui .msp-tree-view-item:hover,
+.msp-plugin .msp-layout-right .msp-list-item:hover,
+.msp-plugin .msp-plugin-ui .msp-list-item:hover {
+  background-color: #374151 !important;
+  /* gray-700 */
+}
+
+/* Molstar labels and text - ensure good visibility - Scoped */
+.msp-plugin .msp-layout-right label,
+.msp-plugin .msp-plugin-ui label,
+.msp-plugin .msp-layout-right .msp-label,
+.msp-plugin .msp-plugin-ui .msp-label,
+.msp-plugin .msp-layout-right .msp-text,
+.msp-plugin .msp-plugin-ui .msp-text,
+.msp-plugin .msp-layout-right span,
+.msp-plugin .msp-plugin-ui span,
+.msp-plugin .msp-layout-right p,
+.msp-plugin .msp-plugin-ui p,
+.msp-plugin .msp-layout-right div,
+.msp-plugin .msp-plugin-ui div {
+  color: #e5e7eb !important;
+  /* gray-200 */
+}
+
+/* Ensure text in buttons and controls is visible - Scoped */
+.msp-plugin .msp-layout-right button,
+.msp-plugin .msp-plugin-ui button,
+.msp-plugin .msp-layout-right .msp-button,
+.msp-plugin .msp-plugin-ui .msp-button {
+  color: #ffffff !important;
+}
+
+/* Text in dropdowns and selects - Scoped */
+.msp-plugin .msp-layout-right select,
+.msp-plugin .msp-plugin-ui select,
+.msp-plugin .msp-layout-right option,
+.msp-plugin .msp-plugin-ui option {
   color: #ffffff !important;
   background-color: #1f2937 !important;
 }
 
-/* Icons - make them more visible */
-.msp-plugin svg,
-.msp-plugin [class*="icon"],
-.msp-plugin .msp-icon {
-  fill: #e5e7eb !important; /* gray-200 for better visibility */
+/* Icons - make them more visible - Scoped */
+.msp-plugin .msp-layout-right svg,
+.msp-plugin .msp-plugin-ui svg,
+.msp-plugin .msp-layout-right [class*="icon"],
+.msp-plugin .msp-plugin-ui [class*="icon"],
+.msp-plugin .msp-layout-right .msp-icon,
+.msp-plugin .msp-plugin-ui .msp-icon {
+  fill: #e5e7eb !important;
+  /* gray-200 for better visibility */
   color: #e5e7eb !important;
   stroke: #e5e7eb !important;
 }
 
-/* Icons in buttons should be white */
-.msp-plugin button svg,
-.msp-plugin .msp-button svg {
+/* Icons in buttons should be white - Scoped */
+.msp-plugin .msp-layout-right button svg,
+.msp-plugin .msp-plugin-ui button svg,
+.msp-plugin .msp-layout-right .msp-button svg,
+.msp-plugin .msp-plugin-ui .msp-button svg {
   fill: #ffffff !important;
   color: #ffffff !important;
 }
 
-/* Icons in dark backgrounds */
-.msp-plugin [class*="msp-btn"] svg,
-.msp-plugin [class*="button"] svg {
+/* Icons in dark backgrounds - Scoped */
+.msp-plugin .msp-layout-right [class*="msp-btn"] svg,
+.msp-plugin .msp-plugin-ui [class*="msp-btn"] svg,
+.msp-plugin .msp-layout-right [class*="button"] svg,
+.msp-plugin .msp-plugin-ui [class*="button"] svg {
   fill: #ffffff !important;
   color: #ffffff !important;
 }
 
-/* Molstar scrollbars */
-.msp-plugin ::-webkit-scrollbar {
+/* Molstar scrollbars - Scoped */
+.msp-plugin .msp-layout-right ::-webkit-scrollbar,
+.msp-plugin .msp-plugin-ui ::-webkit-scrollbar {
   width: 10px;
   height: 10px;
 }
 
-.msp-plugin ::-webkit-scrollbar-track {
-  background-color: #1f2937 !important; /* gray-800 */
+.msp-plugin .msp-layout-right ::-webkit-scrollbar-track,
+.msp-plugin .msp-plugin-ui ::-webkit-scrollbar-track {
+  background-color: #1f2937 !important;
+  /* gray-800 */
 }
 
-.msp-plugin ::-webkit-scrollbar-thumb {
-  background-color: #374151 !important; /* gray-700 */
+.msp-plugin .msp-layout-right ::-webkit-scrollbar-thumb,
+.msp-plugin .msp-plugin-ui ::-webkit-scrollbar-thumb {
+  background-color: #374151 !important;
+  /* gray-700 */
   border-radius: 5px;
 }
 
-.msp-plugin ::-webkit-scrollbar-thumb:hover {
-  background-color: #4b5563 !important; /* gray-600 */
+.msp-plugin .msp-layout-right ::-webkit-scrollbar-thumb:hover,
+.msp-plugin .msp-plugin-ui ::-webkit-scrollbar-thumb:hover {
+  background-color: #4b5563 !important;
+  /* gray-600 */
 }
 
-/* Molstar tooltips */
-.msp-plugin .msp-tooltip {
-  background-color: #1f2937 !important; /* gray-800 */
+/* Molstar tooltips - Scoped */
+.msp-plugin .msp-layout-right .msp-tooltip,
+.msp-plugin .msp-plugin-ui .msp-tooltip {
+  background-color: #1f2937 !important;
+  /* gray-800 */
   color: #ffffff !important;
-  border-color: #374151 !important; /* gray-700 */
+  border-color: #374151 !important;
+  /* gray-700 */
 }
 
-/* Molstar tabs */
-.msp-plugin .msp-tab,
-.msp-plugin .msp-tab-button {
-  background-color: #1f2937 !important; /* gray-800 */
-  color: #9ca3af !important; /* gray-400 */
-  border-color: #374151 !important; /* gray-700 */
+/* Molstar tabs - Scoped */
+.msp-plugin .msp-layout-right .msp-tab,
+.msp-plugin .msp-plugin-ui .msp-tab,
+.msp-plugin .msp-layout-right .msp-tab-button,
+.msp-plugin .msp-plugin-ui .msp-tab-button {
+  background-color: #1f2937 !important;
+  /* gray-800 */
+  color: #9ca3af !important;
+  /* gray-400 */
+  border-color: #374151 !important;
+  /* gray-700 */
 }
 
-.msp-plugin .msp-tab.msp-active,
-.msp-plugin .msp-tab-button.msp-active {
-  background-color: #111827 !important; /* gray-900 */
+.msp-plugin .msp-layout-right .msp-tab.msp-active,
+.msp-plugin .msp-plugin-ui .msp-tab.msp-active,
+.msp-plugin .msp-layout-right .msp-tab-button.msp-active,
+.msp-plugin .msp-plugin-ui .msp-tab-button.msp-active {
+  background-color: #111827 !important;
+  /* gray-900 */
   color: #ffffff !important;
-  border-bottom-color: #3b82f6 !important; /* blue-500 */
+  border-bottom-color: #3b82f6 !important;
+  /* blue-500 */
 }
 
-/* Molstar checkboxes and radio buttons */
-.msp-plugin input[type="checkbox"],
-.msp-plugin input[type="radio"] {
-  accent-color: #3b82f6 !important; /* blue-500 */
+/* Molstar checkboxes and radio buttons - Scoped */
+.msp-plugin .msp-layout-right input[type="checkbox"],
+.msp-plugin .msp-plugin-ui input[type="checkbox"],
+.msp-plugin .msp-layout-right input[type="radio"],
+.msp-plugin .msp-plugin-ui input[type="radio"] {
+  accent-color: #3b82f6 !important;
+  /* blue-500 */
 }
 
-/* Molstar sliders */
-.msp-plugin .msp-slider,
-.msp-plugin input[type="range"] {
-  background-color: #374151 !important; /* gray-700 */
+/* Molstar sliders - Scoped */
+.msp-plugin .msp-layout-right .msp-slider,
+.msp-plugin .msp-plugin-ui .msp-slider,
+.msp-plugin .msp-layout-right input[type="range"],
+.msp-plugin .msp-plugin-ui input[type="range"] {
+  background-color: #374151 !important;
+  /* gray-700 */
 }
 
-.msp-plugin .msp-slider::-webkit-slider-thumb,
-.msp-plugin input[type="range"]::-webkit-slider-thumb {
-  background-color: #3b82f6 !important; /* blue-500 */
+.msp-plugin .msp-layout-right .msp-slider::-webkit-slider-thumb,
+.msp-plugin .msp-plugin-ui .msp-slider::-webkit-slider-thumb,
+.msp-plugin .msp-layout-right input[type="range"]::-webkit-slider-thumb,
+.msp-plugin .msp-plugin-ui input[type="range"]::-webkit-slider-thumb {
+  background-color: #3b82f6 !important;
+  /* blue-500 */
 }
 
-.msp-plugin .msp-slider::-moz-range-thumb,
-.msp-plugin input[type="range"]::-moz-range-thumb {
-  background-color: #3b82f6 !important; /* blue-500 */
+.msp-plugin .msp-layout-right .msp-slider::-moz-range-thumb,
+.msp-plugin .msp-plugin-ui .msp-slider::-moz-range-thumb,
+.msp-plugin .msp-layout-right input[type="range"]::-moz-range-thumb,
+.msp-plugin .msp-plugin-ui input[type="range"]::-moz-range-thumb {
+  background-color: #3b82f6 !important;
+  /* blue-500 */
 }
 
-/* Help buttons and panels - dark theme */
-.msp-plugin .msp-help,
-.msp-plugin [class*="help"],
-.msp-plugin .msp-btn-link,
-.msp-plugin [class*="btn-link"],
-.msp-plugin .msp-btn-icon,
-.msp-plugin [class*="btn-icon"],
-.msp-plugin .msp-control-group-expander,
-.msp-plugin [class*="control-group-expander"] {
-  background-color: #374151 !important; /* gray-700 */
+/* Help buttons and panels - dark theme - Scoped */
+/* NOTE: .msp-control-group-expander is excluded — it's a transparent overlay on top of text */
+.msp-plugin .msp-layout-right .msp-help:not(.msp-control-group-expander),
+.msp-plugin .msp-plugin-ui .msp-help:not(.msp-control-group-expander),
+.msp-plugin .msp-layout-right [class*="help"]:not(.msp-control-group-expander),
+.msp-plugin .msp-plugin-ui [class*="help"]:not(.msp-control-group-expander),
+.msp-plugin .msp-layout-right .msp-btn-link:not(.msp-control-group-expander),
+.msp-plugin .msp-plugin-ui .msp-btn-link:not(.msp-control-group-expander),
+.msp-plugin .msp-layout-right [class*="btn-link"]:not(.msp-control-group-expander),
+.msp-plugin .msp-plugin-ui [class*="btn-link"]:not(.msp-control-group-expander),
+.msp-plugin .msp-layout-right .msp-btn-icon:not(.msp-control-group-expander),
+.msp-plugin .msp-plugin-ui .msp-btn-icon:not(.msp-control-group-expander),
+.msp-plugin .msp-layout-right [class*="btn-icon"]:not(.msp-control-group-expander),
+.msp-plugin .msp-plugin-ui [class*="btn-icon"]:not(.msp-control-group-expander) {
+  background-color: #374151 !important;
+  /* gray-700 */
   color: #ffffff !important;
-  border-color: #4b5563 !important; /* gray-600 */
+  border-color: #4b5563 !important;
+  /* gray-600 */
 }
 
-.msp-plugin .msp-help:hover,
-.msp-plugin .msp-btn-link:hover,
-.msp-plugin .msp-btn-icon:hover,
-.msp-plugin .msp-control-group-expander:hover {
-  background-color: #4b5563 !important; /* gray-600 */
+.msp-plugin .msp-layout-right .msp-help:hover,
+.msp-plugin .msp-plugin-ui .msp-help:hover,
+.msp-plugin .msp-layout-right .msp-btn-link:hover,
+.msp-plugin .msp-plugin-ui .msp-btn-link:hover,
+.msp-plugin .msp-layout-right .msp-btn-icon:hover,
+.msp-plugin .msp-plugin-ui .msp-btn-icon:hover,
+.msp-plugin .msp-layout-right .msp-control-group-expander:hover,
+.msp-plugin .msp-plugin-ui .msp-control-group-expander:hover {
+  background-color: #4b5563 !important;
+  /* gray-600 */
 }
 
-/* Scrollable containers - dark theme */
-.msp-plugin .msp-scrollable-container,
-.msp-plugin [class*="scrollable"],
-.msp-plugin [class*="scrollable-container"] {
-  background-color: #1f2937 !important; /* gray-800 */
+/* Scrollable containers - dark theme - Scoped */
+.msp-plugin .msp-layout-right .msp-scrollable-container,
+.msp-plugin .msp-plugin-ui .msp-scrollable-container,
+.msp-plugin .msp-layout-right [class*="scrollable"],
+.msp-plugin .msp-plugin-ui [class*="scrollable"],
+.msp-plugin .msp-layout-right [class*="scrollable-container"],
+.msp-plugin .msp-plugin-ui [class*="scrollable-container"] {
+  background-color: #1f2937 !important;
+  /* gray-800 */
   color: #e5e7eb !important;
 }
 
-/* State actions panels - dark theme */
-.msp-plugin .msp-state-actions,
-.msp-plugin [class*="state-actions"],
-.msp-plugin .msp-state-management,
-.msp-plugin [class*="state-management"] {
-  background-color: #1f2937 !important; /* gray-800 */
+/* State actions panels - dark theme - Scoped */
+.msp-plugin .msp-layout-right .msp-state-actions,
+.msp-plugin .msp-plugin-ui .msp-state-actions,
+.msp-plugin .msp-layout-right [class*="state-actions"],
+.msp-plugin .msp-plugin-ui [class*="state-actions"],
+.msp-plugin .msp-layout-right .msp-state-management,
+.msp-plugin .msp-plugin-ui .msp-state-management,
+.msp-plugin .msp-layout-right [class*="state-management"],
+.msp-plugin .msp-plugin-ui [class*="state-management"] {
+  background-color: #1f2937 !important;
+  /* gray-800 */
   color: #ffffff !important;
 }
 
-.msp-plugin .msp-state-actions button,
-.msp-plugin .msp-state-actions .msp-btn,
-.msp-plugin [class*="state-actions"] button {
-  background-color: #374151 !important; /* gray-700 */
+.msp-plugin .msp-layout-right .msp-state-actions button,
+.msp-plugin .msp-plugin-ui .msp-state-actions button,
+.msp-plugin .msp-layout-right .msp-state-actions .msp-btn,
+.msp-plugin .msp-plugin-ui .msp-state-actions .msp-btn,
+.msp-plugin .msp-layout-right [class*="state-actions"] button,
+.msp-plugin .msp-plugin-ui [class*="state-actions"] button {
+  background-color: #374151 !important;
+  /* gray-700 */
   color: #ffffff !important;
 }
 
-.msp-plugin .msp-state-actions button:hover,
-.msp-plugin [class*="state-actions"] button:hover {
-  background-color: #4b5563 !important; /* gray-600 */
+.msp-plugin .msp-layout-right .msp-state-actions button:hover,
+.msp-plugin .msp-plugin-ui .msp-state-actions button:hover,
+.msp-plugin .msp-layout-right [class*="state-actions"] button:hover,
+.msp-plugin .msp-plugin-ui [class*="state-actions"] button:hover {
+  background-color: #4b5563 !important;
+  /* gray-600 */
 }
 
-/* Strengthen text color rules - ensure all text is visible */
-.msp-plugin .msp-scrollable-container,
-.msp-plugin .msp-scrollable-container span,
-.msp-plugin .msp-scrollable-container p,
-.msp-plugin .msp-scrollable-container div,
-.msp-plugin .msp-scrollable-container label,
-.msp-plugin .msp-scrollable-container *:not(button):not(a) {
-  color: #e5e7eb !important; /* gray-200 */
+/* Strengthen text color rules - ensure all text is visible - Scoped */
+.msp-plugin .msp-layout-right .msp-scrollable-container,
+.msp-plugin .msp-plugin-ui .msp-scrollable-container,
+.msp-plugin .msp-layout-right .msp-scrollable-container span,
+.msp-plugin .msp-plugin-ui .msp-scrollable-container span,
+.msp-plugin .msp-layout-right .msp-scrollable-container p,
+.msp-plugin .msp-plugin-ui .msp-scrollable-container p,
+.msp-plugin .msp-layout-right .msp-scrollable-container div,
+.msp-plugin .msp-plugin-ui .msp-scrollable-container div,
+.msp-plugin .msp-layout-right .msp-scrollable-container label,
+.msp-plugin .msp-plugin-ui .msp-scrollable-container label,
+.msp-plugin .msp-layout-right .msp-scrollable-container *:not(button):not(a),
+.msp-plugin .msp-plugin-ui .msp-scrollable-container *:not(button):not(a) {
+  color: #e5e7eb !important;
+  /* gray-200 */
 }
 
-.msp-plugin .msp-state-actions,
-.msp-plugin .msp-state-actions span,
-.msp-plugin .msp-state-actions p,
-.msp-plugin .msp-state-actions div,
-.msp-plugin .msp-state-actions label,
-.msp-plugin .msp-state-actions *:not(button):not(a) {
+.msp-plugin .msp-layout-right .msp-state-actions,
+.msp-plugin .msp-plugin-ui .msp-state-actions,
+.msp-plugin .msp-layout-right .msp-state-actions span,
+.msp-plugin .msp-plugin-ui .msp-state-actions span,
+.msp-plugin .msp-layout-right .msp-state-actions p,
+.msp-plugin .msp-plugin-ui .msp-state-actions p,
+.msp-plugin .msp-layout-right .msp-state-actions div,
+.msp-plugin .msp-plugin-ui .msp-state-actions div,
+.msp-plugin .msp-layout-right .msp-state-actions label,
+.msp-plugin .msp-plugin-ui .msp-state-actions label,
+.msp-plugin .msp-layout-right .msp-state-actions *:not(button):not(a),
+.msp-plugin .msp-plugin-ui .msp-state-actions *:not(button):not(a) {
   color: #ffffff !important;
 }
 
-.msp-plugin .msp-control-group,
-.msp-plugin .msp-control-group span,
-.msp-plugin .msp-control-group p,
-.msp-plugin .msp-control-group div,
-.msp-plugin .msp-control-group label,
-.msp-plugin .msp-control-group *:not(button):not(a) {
-  color: #e5e7eb !important; /* gray-200 */
+.msp-plugin .msp-layout-right .msp-control-group,
+.msp-plugin .msp-plugin-ui .msp-control-group,
+.msp-plugin .msp-layout-right .msp-control-group span,
+.msp-plugin .msp-plugin-ui .msp-control-group span,
+.msp-plugin .msp-layout-right .msp-control-group p,
+.msp-plugin .msp-plugin-ui .msp-control-group p,
+.msp-plugin .msp-layout-right .msp-control-group div,
+.msp-plugin .msp-plugin-ui .msp-control-group div,
+.msp-plugin .msp-layout-right .msp-control-group label,
+.msp-plugin .msp-plugin-ui .msp-control-group label,
+.msp-plugin .msp-layout-right .msp-control-group *:not(button):not(a),
+.msp-plugin .msp-plugin-ui .msp-control-group *:not(button):not(a) {
+  color: #e5e7eb !important;
+  /* gray-200 */
 }
 
-.msp-plugin .msp-help,
-.msp-plugin .msp-help span,
-.msp-plugin .msp-help p,
-.msp-plugin .msp-help div,
-.msp-plugin .msp-help label,
-.msp-plugin .msp-help *:not(button):not(a) {
+.msp-plugin .msp-layout-right .msp-help,
+.msp-plugin .msp-plugin-ui .msp-help,
+.msp-plugin .msp-layout-right .msp-help span,
+.msp-plugin .msp-plugin-ui .msp-help span,
+.msp-plugin .msp-layout-right .msp-help p,
+.msp-plugin .msp-plugin-ui .msp-help p,
+.msp-plugin .msp-layout-right .msp-help div,
+.msp-plugin .msp-plugin-ui .msp-help div,
+.msp-plugin .msp-layout-right .msp-help label,
+.msp-plugin .msp-plugin-ui .msp-help label,
+.msp-plugin .msp-layout-right .msp-help *:not(button):not(a),
+.msp-plugin .msp-plugin-ui .msp-help *:not(button):not(a) {
   color: #ffffff !important;
 }
 
-/* Panel wrappers and headers - ensure dark backgrounds */
-.msp-plugin .msp-control-group-wrapper,
-.msp-plugin [class*="control-group-wrapper"],
-.msp-plugin .msp-panel-header,
-.msp-plugin [class*="panel-header"],
-.msp-plugin .msp-section-header,
-.msp-plugin [class*="section-header"] {
-  background-color: #1f2937 !important; /* gray-800 */
+/* Panel wrappers and headers - ensure dark backgrounds - Scoped */
+.msp-plugin .msp-layout-right .msp-control-group-wrapper,
+.msp-plugin .msp-plugin-ui .msp-control-group-wrapper,
+.msp-plugin .msp-layout-right [class*="control-group-wrapper"],
+.msp-plugin .msp-plugin-ui [class*="control-group-wrapper"],
+.msp-plugin .msp-layout-right .msp-panel-header,
+.msp-plugin .msp-plugin-ui .msp-panel-header,
+.msp-plugin .msp-layout-right [class*="panel-header"],
+.msp-plugin .msp-plugin-ui [class*="panel-header"],
+.msp-plugin .msp-layout-right .msp-section-header,
+.msp-plugin .msp-plugin-ui .msp-section-header,
+.msp-plugin .msp-layout-right [class*="section-header"],
+.msp-plugin .msp-plugin-ui [class*="section-header"] {
+  background-color: #1f2937 !important;
+  /* gray-800 */
   color: #ffffff !important;
 }
 
-/* Expandable/collapsible sections */
-.msp-plugin .msp-expandable,
-.msp-plugin [class*="expandable"],
-.msp-plugin .msp-collapsible,
-.msp-plugin [class*="collapsible"] {
-  background-color: #1f2937 !important; /* gray-800 */
+/* Expandable/collapsible sections - Scoped */
+.msp-plugin .msp-layout-right .msp-expandable,
+.msp-plugin .msp-plugin-ui .msp-expandable,
+.msp-plugin .msp-layout-right [class*="expandable"],
+.msp-plugin .msp-plugin-ui [class*="expandable"],
+.msp-plugin .msp-layout-right .msp-collapsible,
+.msp-plugin .msp-plugin-ui .msp-collapsible,
+.msp-plugin .msp-layout-right [class*="collapsible"],
+.msp-plugin .msp-plugin-ui [class*="collapsible"] {
+  background-color: #1f2937 !important;
+  /* gray-800 */
   color: #ffffff !important;
 }
 
-.msp-plugin .msp-expandable-header,
-.msp-plugin .msp-collapsible-header,
-.msp-plugin [class*="expandable-header"],
-.msp-plugin [class*="collapsible-header"] {
-  background-color: #374151 !important; /* gray-700 */
+.msp-plugin .msp-layout-right .msp-expandable-header,
+.msp-plugin .msp-plugin-ui .msp-expandable-header,
+.msp-plugin .msp-layout-right .msp-collapsible-header,
+.msp-plugin .msp-plugin-ui .msp-collapsible-header,
+.msp-plugin .msp-layout-right [class*="expandable-header"],
+.msp-plugin .msp-plugin-ui [class*="expandable-header"],
+.msp-plugin .msp-layout-right [class*="collapsible-header"],
+.msp-plugin .msp-plugin-ui [class*="collapsible-header"] {
+  background-color: #374151 !important;
+  /* gray-700 */
   color: #ffffff !important;
 }
 
 .msp-plugin .msp-expandable-header:hover,
 .msp-plugin .msp-collapsible-header:hover {
-  background-color: #4b5563 !important; /* gray-600 */
+  background-color: #4b5563 !important;
+  /* gray-600 */
 }
 
 /* Links and anchors within Molstar UI */
 .msp-plugin a,
 .msp-plugin .msp-link,
 .msp-plugin [class*="link"]:not([class*="btn-link"]) {
-  color: #60a5fa !important; /* blue-400 for links */
+  color: #60a5fa !important;
+  /* blue-400 for links */
   text-decoration: none;
 }
 
 .msp-plugin a:hover,
 .msp-plugin .msp-link:hover {
-  color: #93c5fd !important; /* blue-300 for hover */
+  color: #93c5fd !important;
+  /* blue-300 for hover */
   text-decoration: underline;
 }
 
@@ -662,7 +906,8 @@ div[class*="msp"][class*="panel"] {
 .msp-plugin *[style*="background-color: #FFFFFF"],
 .msp-plugin *[style*="background-color: #FAFAFA"],
 .msp-plugin *[style*="background-color: #F5F5F5"] {
-  background-color: #1f2937 !important; /* gray-800 */
+  background-color: #1f2937 !important;
+  /* gray-800 */
   color: #e5e7eb !important;
 }
 
@@ -674,7 +919,8 @@ div[class*="msp"][class*="panel"] {
 .msp-plugin .msp-btn[style*="background-color: rgb(255, 255, 255)"],
 .msp-plugin .msp-btn[style*="background-color: #FCFBF9"],
 .msp-plugin .msp-btn[style*="background-color: #FFFFFF"] {
-  background-color: #374151 !important; /* gray-700 */
+  background-color: #374151 !important;
+  /* gray-700 */
   color: #ffffff !important;
 }
 
@@ -686,7 +932,8 @@ div[class*="msp"][class*="panel"] {
 .msp-plugin .msp-control-group,
 .msp-plugin .msp-control-group-wrapper,
 .msp-plugin [class*="control-group"] {
-  background-color: #1f2937 !important; /* gray-800 */
+  background-color: #1f2937 !important;
+  /* gray-800 */
   color: #e5e7eb !important;
 }
 
@@ -746,32 +993,562 @@ input[type="range"].slider-thumb::-moz-range-thumb:hover {
   transform: scale(1.1);
 }
 
-/* Catch-all for any remaining light backgrounds in Molstar */
-.msp-plugin *:not(canvas):not([class*="canvas"]):not([class*="viewport"]):not([class*="webgl"])[style*="background-color: rgb(238, 236, 231)"],
-.msp-plugin *:not(canvas):not([class*="canvas"]):not([class*="viewport"]):not([class*="webgl"])[style*="background-color: rgb(235, 232, 227)"],
-.msp-plugin *:not(canvas):not([class*="canvas"]):not([class*="viewport"]):not([class*="webgl"])[style*="background-color: rgb(224, 221, 212)"],
-.msp-plugin *:not(canvas):not([class*="canvas"]):not([class*="viewport"]):not([class*="webgl"])[style*="background-color: rgb(240, 240, 240)"],
-.msp-plugin *:not(canvas):not([class*="canvas"]):not([class*="viewport"]):not([class*="webgl"])[style*="background-color: #EEECE7"],
-.msp-plugin *:not(canvas):not([class*="canvas"]):not([class*="viewport"]):not([class*="webgl"])[style*="background-color: #EBE8E3"],
-.msp-plugin *:not(canvas):not([class*="canvas"]):not([class*="viewport"]):not([class*="webgl"])[style*="background-color: #E0DDD4"],
-.msp-plugin *:not(canvas):not([class*="canvas"]):not([class*="viewport"]):not([class*="webgl"])[style*="background-color: #F0F0F0"] {
+/* Catch-all for any remaining light backgrounds in Molstar - Scoped */
+.msp-plugin .msp-layout-right *:not(canvas):not([class*="canvas"]):not([class*="viewport"]):not([class*="webgl"])[style*="background-color: rgb(238, 236, 231)"],
+.msp-plugin .msp-plugin-ui *:not(canvas):not([class*="canvas"]):not([class*="viewport"]):not([class*="webgl"])[style*="background-color: rgb(238, 236, 231)"],
+.msp-plugin .msp-layout-right *:not(canvas):not([class*="canvas"]):not([class*="viewport"]):not([class*="webgl"])[style*="background-color: rgb(235, 232, 227)"],
+.msp-plugin .msp-plugin-ui *:not(canvas):not([class*="canvas"]):not([class*="viewport"]):not([class*="webgl"])[style*="background-color: rgb(235, 232, 227)"],
+.msp-plugin .msp-layout-right *:not(canvas):not([class*="canvas"]):not([class*="viewport"]):not([class*="webgl"])[style*="background-color: rgb(224, 221, 212)"],
+.msp-plugin .msp-plugin-ui *:not(canvas):not([class*="canvas"]):not([class*="viewport"]):not([class*="webgl"])[style*="background-color: rgb(224, 221, 212)"],
+.msp-plugin .msp-layout-right *:not(canvas):not([class*="canvas"]):not([class*="viewport"]):not([class*="webgl"])[style*="background-color: rgb(240, 240, 240)"],
+.msp-plugin .msp-plugin-ui *:not(canvas):not([class*="canvas"]):not([class*="viewport"]):not([class*="webgl"])[style*="background-color: rgb(240, 240, 240)"],
+.msp-plugin .msp-layout-right *:not(canvas):not([class*="canvas"]):not([class*="viewport"]):not([class*="webgl"])[style*="background-color: #EEECE7"],
+.msp-plugin .msp-plugin-ui *:not(canvas):not([class*="canvas"]):not([class*="viewport"]):not([class*="webgl"])[style*="background-color: #EEECE7"],
+.msp-plugin .msp-layout-right *:not(canvas):not([class*="canvas"]):not([class*="viewport"]):not([class*="webgl"])[style*="background-color: #EBE8E3"],
+.msp-plugin .msp-plugin-ui *:not(canvas):not([class*="canvas"]):not([class*="viewport"]):not([class*="webgl"])[style*="background-color: #EBE8E3"],
+.msp-plugin .msp-layout-right *:not(canvas):not([class*="canvas"]):not([class*="viewport"]):not([class*="webgl"])[style*="background-color: #E0DDD4"],
+.msp-plugin .msp-plugin-ui *:not(canvas):not([class*="canvas"]):not([class*="viewport"]):not([class*="webgl"])[style*="background-color: #E0DDD4"],
+.msp-plugin .msp-layout-right *:not(canvas):not([class*="canvas"]):not([class*="viewport"]):not([class*="webgl"])[style*="background-color: #F0F0F0"],
+.msp-plugin .msp-plugin-ui *:not(canvas):not([class*="canvas"]):not([class*="viewport"]):not([class*="webgl"])[style*="background-color: #F0F0F0"] {
   background-color: #1f2937 !important;
   color: #e5e7eb !important;
 }
 
-/* Additional catch-all for buttons specifically */
-.msp-plugin button[style*="background-color: rgb(238, 236, 231)"],
-.msp-plugin button[style*="background-color: rgb(235, 232, 227)"],
-.msp-plugin button[style*="background-color: rgb(224, 221, 212)"],
-.msp-plugin button[style*="background-color: #EEECE7"],
-.msp-plugin button[style*="background-color: #EBE8E3"],
-.msp-plugin button[style*="background-color: #E0DDD4"],
-.msp-plugin .msp-btn[style*="background-color: rgb(238, 236, 231)"],
-.msp-plugin .msp-btn[style*="background-color: rgb(235, 232, 227)"],
-.msp-plugin .msp-btn[style*="background-color: rgb(224, 221, 212)"],
-.msp-plugin .msp-btn[style*="background-color: #EEECE7"],
-.msp-plugin .msp-btn[style*="background-color: #EBE8E3"],
-.msp-plugin .msp-btn[style*="background-color: #E0DDD4"] {
+/* Additional catch-all for buttons specifically - Scoped */
+.msp-plugin .msp-layout-right button[style*="background-color: rgb(238, 236, 231)"],
+.msp-plugin .msp-plugin-ui button[style*="background-color: rgb(238, 236, 231)"],
+.msp-plugin .msp-layout-right button[style*="background-color: rgb(235, 232, 227)"],
+.msp-plugin .msp-plugin-ui button[style*="background-color: rgb(235, 232, 227)"],
+.msp-plugin .msp-layout-right button[style*="background-color: rgb(224, 221, 212)"],
+.msp-plugin .msp-plugin-ui button[style*="background-color: rgb(224, 221, 212)"],
+.msp-plugin .msp-layout-right button[style*="background-color: #EEECE7"],
+.msp-plugin .msp-plugin-ui button[style*="background-color: #EEECE7"],
+.msp-plugin .msp-layout-right button[style*="background-color: #EBE8E3"],
+.msp-plugin .msp-plugin-ui button[style*="background-color: #EBE8E3"],
+.msp-plugin .msp-layout-right button[style*="background-color: #E0DDD4"],
+.msp-plugin .msp-plugin-ui button[style*="background-color: #E0DDD4"],
+.msp-plugin .msp-layout-right .msp-btn[style*="background-color: rgb(238, 236, 231)"],
+.msp-plugin .msp-plugin-ui .msp-btn[style*="background-color: rgb(238, 236, 231)"],
+.msp-plugin .msp-layout-right .msp-btn[style*="background-color: rgb(235, 232, 227)"],
+.msp-plugin .msp-plugin-ui .msp-btn[style*="background-color: rgb(235, 232, 227)"],
+.msp-plugin .msp-layout-right .msp-btn[style*="background-color: rgb(224, 221, 212)"],
+.msp-plugin .msp-plugin-ui .msp-btn[style*="background-color: rgb(224, 221, 212)"],
+.msp-plugin .msp-layout-right .msp-btn[style*="background-color: #EEECE7"],
+.msp-plugin .msp-plugin-ui .msp-btn[style*="background-color: #EEECE7"],
+.msp-plugin .msp-layout-right .msp-btn[style*="background-color: #EBE8E3"],
+.msp-plugin .msp-plugin-ui .msp-btn[style*="background-color: #EBE8E3"],
+.msp-plugin .msp-layout-right .msp-btn[style*="background-color: #E0DDD4"],
+.msp-plugin .msp-plugin-ui .msp-btn[style*="background-color: #E0DDD4"] {
   background-color: #374151 !important;
   color: #ffffff !important;
+}
+
+/* ============================================
+   SCOPED MOLSTAR BUTTON OVERRIDES
+   Targeting Left/Right Panels and UI Overlays
+   ============================================ */
+
+/* Target buttons in the Right Panel (Structure Tools) and Left Panel (Interface Controls) */
+/* NOTE: .msp-control-group-expander is excluded — it's a transparent overlay on top of text */
+.msp-plugin .msp-layout-right button.msp-btn,
+.msp-plugin .msp-layout-left button.msp-btn,
+.msp-plugin .msp-layout-right button.msp-form-control,
+.msp-plugin .msp-layout-left button.msp-form-control,
+.msp-plugin .msp-layout-right button.msp-btn-block,
+.msp-plugin .msp-layout-left button.msp-btn-block,
+.msp-plugin .msp-layout-right button.msp-btn-link:not(.msp-control-group-expander),
+.msp-plugin .msp-layout-left button.msp-btn-link:not(.msp-control-group-expander),
+.msp-plugin .msp-layout-right button.msp-btn-icon:not(.msp-control-group-expander),
+.msp-plugin .msp-layout-left button.msp-btn-icon:not(.msp-control-group-expander),
+.msp-plugin .msp-layout-right button.msp-no-overflow,
+.msp-plugin .msp-layout-left button.msp-no-overflow,
+.msp-plugin .msp-layout-right button.msp-help:not(.msp-control-group-expander),
+.msp-plugin .msp-layout-left button.msp-help:not(.msp-control-group-expander),
+.msp-plugin .msp-layout-right button[class*="msp-btn"]:not(.msp-control-group-expander),
+.msp-plugin .msp-layout-left button[class*="msp-btn"]:not(.msp-control-group-expander) {
+  background-color: #374151 !important;
+  color: #ffffff !important;
+  border-color: #4b5563 !important;
+}
+
+/* Target buttons in UI Overlays (Settings/Info Panels) */
+/* NOTE: .msp-control-group-expander is excluded — it's a transparent overlay on top of text */
+.msp-plugin .msp-plugin-ui button.msp-btn,
+.msp-plugin .msp-plugin-ui button.msp-form-control,
+.msp-plugin .msp-plugin-ui button.msp-btn-block,
+.msp-plugin .msp-plugin-ui button.msp-btn-link:not(.msp-control-group-expander),
+.msp-plugin .msp-plugin-ui button.msp-btn-icon:not(.msp-control-group-expander),
+.msp-plugin .msp-plugin-ui button.msp-no-overflow,
+.msp-plugin .msp-plugin-ui button.msp-help:not(.msp-control-group-expander),
+.msp-plugin .msp-plugin-ui button[class*="msp-btn"]:not(.msp-control-group-expander) {
+  background-color: #374151 !important;
+  color: #ffffff !important;
+  border-color: #4b5563 !important;
+}
+
+/* Force dark background for specific light-colored buttons in targeted areas */
+.msp-plugin .msp-layout-right button[style*="rgb"],
+.msp-plugin .msp-layout-left button[style*="rgb"],
+.msp-plugin .msp-layout-right button[style*="#"],
+.msp-plugin .msp-layout-left button[style*="#"],
+.msp-plugin .msp-plugin-ui button[style*="rgb"],
+.msp-plugin .msp-plugin-ui button[style*="#"] {
+  background-color: #374151 !important;
+  color: #ffffff !important;
+  border-color: #4b5563 !important;
+}
+
+/* Fix text colors for inner elements in targeted areas */
+.msp-plugin .msp-layout-right button span,
+.msp-plugin .msp-layout-left button span,
+.msp-plugin .msp-layout-right button div,
+.msp-plugin .msp-layout-left button div,
+.msp-plugin .msp-plugin-ui button span,
+.msp-plugin .msp-plugin-ui button div {
+  color: #ffffff !important;
+}
+
+/* Fix SVG icons in targeted areas */
+.msp-plugin .msp-layout-right button svg,
+.msp-plugin .msp-layout-left button svg,
+.msp-plugin .msp-plugin-ui button svg {
+  fill: #ffffff !important;
+  color: #ffffff !important;
+}
+
+/* Specific fix for the "Add" buttons and other control group headers */
+.msp-plugin .msp-layout-right .msp-control-group-header button,
+.msp-plugin .msp-layout-left .msp-control-group-header button,
+.msp-plugin .msp-layout-right .msp-panel-header button,
+.msp-plugin .msp-layout-left .msp-panel-header button {
+  background-color: #374151 !important;
+  color: #ffffff !important;
+}
+
+/* Ensure Color Picker buttons are visible */
+.msp-plugin .msp-layout-right button.msp-combined-color-button,
+.msp-plugin .msp-layout-left button.msp-combined-color-button,
+.msp-plugin .msp-plugin-ui button.msp-combined-color-button {
+  background-color: #374151 !important;
+  color: #ffffff !important;
+  border-color: #4b5563 !important;
+}
+
+/* Control row labels and buttons - Scoped */
+.msp-plugin .msp-layout-right .msp-control-row,
+.msp-plugin .msp-layout-left .msp-control-row,
+.msp-plugin .msp-plugin-ui .msp-control-row,
+.msp-plugin .msp-layout-right .msp-control-row-label,
+.msp-plugin .msp-layout-left .msp-control-row-label,
+.msp-plugin .msp-plugin-ui .msp-control-row-label,
+.msp-plugin .msp-layout-right [class*="control-row"],
+.msp-plugin .msp-layout-left [class*="control-row"],
+.msp-plugin .msp-plugin-ui [class*="control-row"] {
+  background-color: #1f2937 !important;
+  color: #e5e7eb !important;
+}
+
+.msp-plugin .msp-layout-right .msp-control-row button,
+.msp-plugin .msp-layout-left .msp-control-row button,
+.msp-plugin .msp-plugin-ui .msp-control-row button,
+.msp-plugin .msp-layout-right .msp-control-row .msp-btn,
+.msp-plugin .msp-layout-left .msp-control-row .msp-btn,
+.msp-plugin .msp-plugin-ui .msp-control-row .msp-btn,
+.msp-plugin .msp-layout-right [class*="control-row"] button,
+.msp-plugin .msp-layout-left [class*="control-row"] button,
+.msp-plugin .msp-plugin-ui [class*="control-row"] button {
+  background-color: #374151 !important;
+  color: #ffffff !important;
+}
+
+/* Action menu buttons - Scoped */
+.msp-plugin .msp-layout-right .msp-action-menu,
+.msp-plugin .msp-layout-left .msp-action-menu,
+.msp-plugin .msp-plugin-ui .msp-action-menu,
+.msp-plugin .msp-layout-right .msp-action-menu-options,
+.msp-plugin .msp-layout-left .msp-action-menu-options,
+.msp-plugin .msp-plugin-ui .msp-action-menu-options,
+.msp-plugin .msp-layout-right [class*="action-menu"],
+.msp-plugin .msp-layout-left [class*="action-menu"],
+.msp-plugin .msp-plugin-ui [class*="action-menu"] {
+  background-color: #1f2937 !important;
+  color: #e5e7eb !important;
+}
+
+.msp-plugin .msp-layout-right .msp-action-menu button,
+.msp-plugin .msp-layout-left .msp-action-menu button,
+.msp-plugin .msp-plugin-ui .msp-action-menu button,
+.msp-plugin .msp-layout-right .msp-action-menu .msp-btn,
+.msp-plugin .msp-layout-left .msp-action-menu .msp-btn,
+.msp-plugin .msp-plugin-ui .msp-action-menu .msp-btn,
+.msp-plugin .msp-layout-right [class*="action-menu"] button,
+.msp-plugin .msp-layout-left [class*="action-menu"] button,
+.msp-plugin .msp-plugin-ui [class*="action-menu"] button {
+  background-color: #374151 !important;
+  color: #ffffff !important;
+}
+
+/* Parameter group and mapped parameter controls - Scoped */
+.msp-plugin .msp-layout-right .msp-mapped-parameter-group,
+.msp-plugin .msp-layout-left .msp-mapped-parameter-group,
+.msp-plugin .msp-plugin-ui .msp-mapped-parameter-group,
+.msp-plugin .msp-layout-right [class*="mapped-parameter"],
+.msp-plugin .msp-layout-left [class*="mapped-parameter"],
+.msp-plugin .msp-plugin-ui [class*="mapped-parameter"],
+.msp-plugin .msp-layout-right [class*="parameter-group"],
+.msp-plugin .msp-layout-left [class*="parameter-group"],
+.msp-plugin .msp-plugin-ui [class*="parameter-group"] {
+  background-color: #1f2937 !important;
+  color: #e5e7eb !important;
+}
+
+.msp-plugin .msp-layout-right .msp-mapped-parameter-group button,
+.msp-plugin .msp-layout-left .msp-mapped-parameter-group button,
+.msp-plugin .msp-plugin-ui .msp-mapped-parameter-group button,
+.msp-plugin .msp-layout-right [class*="mapped-parameter"] button,
+.msp-plugin .msp-layout-left [class*="mapped-parameter"] button,
+.msp-plugin .msp-plugin-ui [class*="mapped-parameter"] button,
+.msp-plugin .msp-layout-right [class*="parameter-group"] button,
+.msp-plugin .msp-layout-left [class*="parameter-group"] button,
+.msp-plugin .msp-plugin-ui [class*="parameter-group"] button {
+  background-color: #374151 !important;
+  color: #ffffff !important;
+}
+
+/* Transform wrapper and accent offset elements - Scoped */
+.msp-plugin .msp-layout-right .msp-transform-wrapper,
+.msp-plugin .msp-layout-left .msp-transform-wrapper,
+.msp-plugin .msp-plugin-ui .msp-transform-wrapper,
+.msp-plugin .msp-layout-right .msp-accent-offset,
+.msp-plugin .msp-layout-left .msp-accent-offset,
+.msp-plugin .msp-plugin-ui .msp-accent-offset,
+.msp-plugin .msp-layout-right [class*="transform-wrapper"],
+.msp-plugin .msp-layout-left [class*="transform-wrapper"],
+.msp-plugin .msp-plugin-ui [class*="transform-wrapper"],
+.msp-plugin .msp-layout-right [class*="accent-offset"],
+.msp-plugin .msp-layout-left [class*="accent-offset"],
+.msp-plugin .msp-plugin-ui [class*="accent-offset"] {
+  background-color: #1f2937 !important;
+  color: #e5e7eb !important;
+}
+
+/* Representation controls - Scoped */
+.msp-plugin .msp-layout-right .msp-representation-entry,
+.msp-plugin .msp-layout-left .msp-representation-entry,
+.msp-plugin .msp-plugin-ui .msp-representation-entry,
+.msp-plugin .msp-layout-right [class*="representation"],
+.msp-plugin .msp-layout-left [class*="representation"],
+.msp-plugin .msp-plugin-ui [class*="representation"] {
+  background-color: #1f2937 !important;
+  color: #e5e7eb !important;
+}
+
+.msp-plugin .msp-layout-right .msp-representation-entry button,
+.msp-plugin .msp-layout-left .msp-representation-entry button,
+.msp-plugin .msp-plugin-ui .msp-representation-entry button,
+.msp-plugin .msp-layout-right [class*="representation"] button,
+.msp-plugin .msp-layout-left [class*="representation"] button,
+.msp-plugin .msp-plugin-ui [class*="representation"] button {
+  background-color: #374151 !important;
+  color: #ffffff !important;
+}
+
+/* Layout section and static elements - Scoped */
+.msp-plugin .msp-layout-right .msp-layout-static,
+.msp-plugin .msp-layout-left .msp-layout-static,
+.msp-plugin .msp-plugin-ui .msp-layout-static,
+.msp-plugin .msp-layout-right .msp-layout-section,
+.msp-plugin .msp-layout-left .msp-layout-section,
+.msp-plugin .msp-plugin-ui .msp-layout-section,
+.msp-plugin .msp-layout-right [class*="layout-static"],
+.msp-plugin .msp-layout-left [class*="layout-static"],
+.msp-plugin .msp-plugin-ui [class*="layout-static"],
+.msp-plugin .msp-layout-right [class*="layout-section"],
+.msp-plugin .msp-layout-left [class*="layout-section"],
+.msp-plugin .msp-plugin-ui [class*="layout-section"] {
+  background-color: #1f2937 !important;
+  color: #e5e7eb !important;
+}
+
+/* Section header buttons - Scoped */
+.msp-plugin .msp-layout-right .msp-section-header button,
+.msp-plugin .msp-layout-left .msp-section-header button,
+.msp-plugin .msp-plugin-ui .msp-section-header button,
+.msp-plugin .msp-layout-right [class*="section-header"] button,
+.msp-plugin .msp-layout-left [class*="section-header"] button,
+.msp-plugin .msp-plugin-ui [class*="section-header"] button {
+  background-color: #374151 !important;
+  color: #ffffff !important;
+}
+
+/* Flex row controls - Scoped */
+.msp-plugin .msp-layout-right .msp-flex-row,
+.msp-plugin .msp-layout-left .msp-flex-row,
+.msp-plugin .msp-plugin-ui .msp-flex-row,
+.msp-plugin .msp-layout-right [class*="flex-row"],
+.msp-plugin .msp-layout-left [class*="flex-row"],
+.msp-plugin .msp-plugin-ui [class*="flex-row"] {
+  background-color: #1f2937 !important;
+  color: #e5e7eb !important;
+}
+
+.msp-plugin .msp-layout-right .msp-flex-row button,
+.msp-plugin .msp-layout-left .msp-flex-row button,
+.msp-plugin .msp-plugin-ui .msp-flex-row button,
+.msp-plugin .msp-layout-right [class*="flex-row"] button,
+.msp-plugin .msp-layout-left [class*="flex-row"] button,
+.msp-plugin .msp-plugin-ui [class*="flex-row"] button {
+  background-color: #374151 !important;
+  color: #ffffff !important;
+}
+
+/* Control offset elements - Scoped */
+.msp-plugin .msp-layout-right .msp-control-offset,
+.msp-plugin .msp-layout-left .msp-control-offset,
+.msp-plugin .msp-plugin-ui .msp-control-offset,
+.msp-plugin .msp-layout-right [class*="control-offset"],
+.msp-plugin .msp-layout-left [class*="control-offset"],
+.msp-plugin .msp-plugin-ui [class*="control-offset"] {
+  background-color: #1f2937 !important;
+  color: #e5e7eb !important;
+}
+
+/* Apply style buttons (Default, Illustrative, etc.) - Scoped */
+.msp-plugin .msp-layout-right .msp-apply-style,
+.msp-plugin .msp-layout-left .msp-apply-style,
+.msp-plugin .msp-plugin-ui .msp-apply-style,
+.msp-plugin .msp-layout-right [class*="apply-style"],
+.msp-plugin .msp-layout-left [class*="apply-style"],
+.msp-plugin .msp-plugin-ui [class*="apply-style"] {
+  background-color: #1f2937 !important;
+  color: #e5e7eb !important;
+}
+
+.msp-plugin .msp-layout-right .msp-apply-style button,
+.msp-plugin .msp-layout-left .msp-apply-style button,
+.msp-plugin .msp-plugin-ui .msp-apply-style button,
+.msp-plugin .msp-layout-right [class*="apply-style"] button,
+.msp-plugin .msp-layout-left [class*="apply-style"] button,
+.msp-plugin .msp-plugin-ui [class*="apply-style"] button {
+  background-color: #374151 !important;
+  color: #ffffff !important;
+}
+
+/* Component controls - Scoped */
+.msp-plugin .msp-layout-right .msp-component-controls,
+.msp-plugin .msp-layout-left .msp-component-controls,
+.msp-plugin .msp-plugin-ui .msp-component-controls,
+.msp-plugin .msp-layout-right [class*="component-controls"],
+.msp-plugin .msp-layout-left [class*="component-controls"],
+.msp-plugin .msp-plugin-ui [class*="component-controls"] {
+  background-color: #1f2937 !important;
+  color: #e5e7eb !important;
+}
+
+.msp-plugin .msp-layout-right .msp-component-controls button,
+.msp-plugin .msp-layout-left .msp-component-controls button,
+.msp-plugin .msp-plugin-ui .msp-component-controls button,
+.msp-plugin .msp-layout-right [class*="component-controls"] button,
+.msp-plugin .msp-layout-left [class*="component-controls"] button,
+.msp-plugin .msp-plugin-ui [class*="component-controls"] button {
+  background-color: #374151 !important;
+  color: #ffffff !important;
+}
+
+/* ============================================
+   GLOBAL/CATCH-ALL MOLSTAR BUTTON OVERRIDES
+   Ensures ALL Molstar buttons in overlays have dark mode themes applied
+   ============================================ */
+html body .msp-plugin button.msp-btn,
+html body .msp-plugin .msp-btn,
+html body .msp-plugin .msp-form-control,
+html body .msp-plugin .msp-btn-block,
+html body .msp-plugin .msp-control-group-wrapper button.msp-btn,
+html body .msp-plugin .msp-control-group-header button.msp-btn,
+html body .msp-plugin .msp-mapped-parameter-group button.msp-btn,
+html body .msp-plugin .msp-control-row button.msp-btn,
+html body .msp-plugin .msp-background-tasks button.msp-btn,
+html body .msp-plugin div button.msp-btn.msp-form-control,
+html body .msp-plugin button.msp-btn.msp-form-control.msp-btn-block {
+  background-color: #374151 !important;
+  color: #ffffff !important;
+  border-color: #4b5563 !important;
+}
+
+html body .msp-plugin button.msp-btn:hover,
+html body .msp-plugin .msp-btn:hover,
+html body .msp-plugin .msp-form-control:hover,
+html body .msp-plugin .msp-btn-block:hover,
+html body .msp-plugin .msp-control-group-wrapper button.msp-btn:hover,
+html body .msp-plugin .msp-control-group-header button.msp-btn:hover,
+html body .msp-plugin .msp-mapped-parameter-group button.msp-btn:hover,
+html body .msp-plugin .msp-control-row button.msp-btn:hover,
+html body .msp-plugin .msp-background-tasks button.msp-btn:hover,
+html body .msp-plugin div button.msp-btn.msp-form-control:hover,
+html body .msp-plugin button.msp-btn.msp-form-control.msp-btn-block:hover {
+  background-color: #4b5563 !important;
+}
+
+/* Ensure text and icons inside buttons are visible */
+html body .msp-plugin button.msp-btn,
+html body .msp-plugin button.msp-btn span,
+html body .msp-plugin button.msp-btn div,
+html body .msp-plugin .msp-btn,
+html body .msp-plugin .msp-btn span,
+html body .msp-plugin .msp-btn div,
+html body .msp-plugin .msp-form-control span,
+html body .msp-plugin .msp-form-control div,
+html body .msp-plugin .msp-btn-block span,
+html body .msp-plugin .msp-btn-block div,
+html body .msp-plugin .msp-control-group-wrapper button.msp-btn span,
+html body .msp-plugin .msp-control-group-header button.msp-btn span,
+html body .msp-plugin .msp-mapped-parameter-group button.msp-btn span,
+html body .msp-plugin .msp-control-row button.msp-btn span,
+html body .msp-plugin .msp-background-tasks button.msp-btn span,
+html body .msp-plugin button.msp-help,
+html body .msp-plugin button.msp-help span,
+html body .msp-plugin button.msp-btn-link,
+html body .msp-plugin button.msp-btn-link span,
+html body .msp-plugin button.msp-btn-icon,
+html body .msp-plugin button.msp-btn-icon span,
+html body .msp-plugin button.msp-control-group-expander,
+html body .msp-plugin button.msp-control-group-expander span,
+html body .msp-plugin button.msp-no-overflow,
+html body .msp-plugin button.msp-no-overflow span {
+  color: #ffffff !important;
+}
+
+/* Specifically target the Outline/Help button text which is proving stubborn */
+html body .msp-plugin .msp-control-row span[title="Outline. Click for help."],
+html body .msp-plugin .msp-control-row button[title="Outline. Click for help."],
+html body .msp-plugin .msp-control-row button.msp-help.msp-btn-link.msp-btn-icon.msp-control-group-expander,
+html body .msp-plugin .msp-control-row button.msp-help.msp-btn-link.msp-btn-icon.msp-control-group-expander span,
+html body .msp-plugin .msp-control-row-label {
+  color: #ffffff !important;
+}
+
+/* 
+  SUPER AGGRESSIVE OVERRIDE 
+  Molstar resets text color at the component level. 
+  We must force ALL control elements to inherit white text.
+*/
+/* Using attribute selectors for higher specificity on the stubborn help/outline buttons */
+html body .msp-plugin button[title],
+html body .msp-plugin button[title] span,
+html body .msp-plugin button[title] div,
+html body .msp-plugin button[title] svg,
+html body .msp-plugin button[title] svg path,
+html body .msp-plugin span[title],
+html body .msp-plugin div[title] {
+  color: #ffffff !important;
+  fill: #ffffff !important;
+}
+
+html body .msp-plugin .msp-control-group-children *,
+html body .msp-plugin .msp-plugin-ui-panel *,
+html body .msp-plugin .msp-layout-right *,
+html body .msp-plugin .msp-layout-left *,
+html body .msp-plugin .msp-control-row *,
+html body .msp-plugin .msp-mapped-parameter-group *,
+html body .msp-plugin .msp-background-tasks * {
+  color: #ffffff !important;
+}
+
+/* Explicitly target the SVGs the same way */
+html body .msp-plugin .msp-control-group-children svg,
+html body .msp-plugin .msp-control-group-children svg *,
+html body .msp-plugin .msp-plugin-ui-panel svg,
+html body .msp-plugin .msp-plugin-ui-panel svg *,
+html body .msp-plugin .msp-layout-right svg,
+html body .msp-plugin .msp-layout-right svg *,
+html body .msp-plugin .msp-layout-left svg,
+html body .msp-plugin .msp-layout-left svg *,
+html body .msp-plugin .msp-control-row svg,
+html body .msp-plugin .msp-control-row svg * {
+  fill: #ffffff !important;
+  color: #ffffff !important;
+}
+
+/* Aggressively target ALL children of control buttons to fix stubborn elements (like "Outline" text) */
+html body .msp-plugin button,
+html body .msp-plugin button *,
+html body .msp-plugin span,
+html body .msp-plugin span.msp-control-row-label,
+html body .msp-plugin .msp-control-row-label {
+  color: #ffffff !important;
+}
+
+html body .msp-plugin svg,
+html body .msp-plugin svg path,
+html body .msp-plugin svg rect,
+html body .msp-plugin svg circle,
+html body .msp-plugin .msp-icon,
+html body .msp-plugin .msp-icon * {
+  fill: #ffffff !important;
+  color: #ffffff !important;
+}
+
+/* Ensure no elements are accidentally hidden by opacity 0 or transparent inherit */
+html body .msp-plugin button.msp-btn-link,
+html body .msp-plugin button.msp-btn-icon,
+html body .msp-plugin button.msp-help,
+html body .msp-plugin button.msp-control-group-expander,
+html body .msp-plugin .msp-mapped-parameter-group,
+html body .msp-plugin .msp-control-group-children,
+html body .msp-plugin .msp-viewport-controls-panel-controls {
+  opacity: 1 !important;
+  visibility: visible !important;
+  color: #ffffff !important;
+}
+
+/* Hyper-specific rule based on user-provided DOM for the invisible help icon */
+html body .msp-plugin button.msp-help.msp-btn-link.msp-btn-icon.msp-control-group-expander span.msp-icon.msp-material-icon svg,
+html body .msp-plugin button.msp-help.msp-btn-link.msp-btn-icon.msp-control-group-expander span.msp-icon.msp-material-icon svg path,
+html body .msp-plugin button.msp-help.msp-btn-link.msp-btn-icon.msp-control-group-expander span.msp-icon.msp-material-icon {
+  fill: #ffffff !important;
+  color: #ffffff !important;
+  opacity: 1 !important;
+  visibility: visible !important;
+}
+
+/* 
+  If Molstar is using SVG strokes instead of fills for its vector icons, 
+  we must override the stroke property as well. 
+*/
+html body .msp-plugin svg,
+html body .msp-plugin svg *,
+html body .msp-plugin .msp-icon svg,
+html body .msp-plugin .msp-icon svg * {
+  fill: #ffffff !important;
+  stroke: #ffffff !important;
+  color: #ffffff !important;
+}
+
+/* Also ensure span.msp-control-row-label actually displays white text */
+html body .msp-plugin .msp-control-row-label,
+html body .msp-plugin span.msp-control-row-label {
+  color: #ffffff !important;
+}
+
+/* ============================================
+   FINAL OVERRIDE: .msp-control-group-expander MUST be transparent.
+   This button is position:absolute and sits ON TOP of label text.
+   Making it opaque hides the text behind it.
+   This rule MUST appear last to override all other rules.
+   ============================================ */
+html body .msp-plugin .msp-control-group-expander,
+html body .msp-plugin button.msp-control-group-expander,
+html body .msp-plugin .msp-layout-left .msp-control-group-expander,
+html body .msp-plugin .msp-layout-left button.msp-control-group-expander,
+html body .msp-plugin .msp-layout-right .msp-control-group-expander,
+html body .msp-plugin .msp-layout-right button.msp-control-group-expander,
+html body .msp-plugin .msp-plugin-ui .msp-control-group-expander,
+html body .msp-plugin .msp-plugin-ui button.msp-control-group-expander,
+html body .msp-plugin .msp-viewport-controls-panel-controls .msp-control-group-expander,
+html body .msp-plugin .msp-viewport-controls-panel-controls button.msp-control-group-expander,
+html body .msp-plugin button.msp-help.msp-btn-link.msp-btn-icon.msp-control-group-expander,
+html body .msp-plugin .msp-control-group-wrapper button.msp-control-group-expander,
+html body .msp-plugin .msp-control-group-header button.msp-control-group-expander {
+  background-color: transparent !important;
+  background: transparent !important;
 }

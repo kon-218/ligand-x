@@ -25,6 +25,8 @@ dependencies:
   - requests
   - pillow
   - pyyaml
+  # setuptools constraint: <78 (MD-specific requirement for OpenFE ecosystem compatibility)
+  # ADMET uses <72 instead; each service's constraint is tuned to its upstream dependencies
   - setuptools<78
   
   # Molecular dynamics and force fields
@@ -48,6 +50,9 @@ dependencies:
   - cinnabar  # Free energy analysis and visualization
   - kartograf
   
+  # PDBQT handling (used by RBFE docking-resume workflow)
+  - meeko
+
   # Pip packages
   - pip:
     - fastapi>=0.104.1

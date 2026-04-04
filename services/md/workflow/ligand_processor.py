@@ -252,14 +252,22 @@ class LigandProcessor:
             
             # Step 6: Assign partial charges
             logger.info(f"Step 6: Assigning partial charges using {charge_method} method...")
-            charged_molecule = self.assign_partial_charges(molecule, method=charge_method)
+            try:
+                charged_molecule = self.assign_partial_charges(molecule, method=charge_method)
+            except NotImplementedError as e:
+                logger.error(f"Charge method '{charge_method}' not implemented: {e}")
+                return {
+                    "success": False,
+                    "error": f"Charge calculation method '{charge_method}' not yet implemented. Use 'am1bcc', 'mmff94', or 'gasteiger' instead.",
+                    "molecule": None
+                }
 
             if not charged_molecule:
                 return {"success": False, "error": f"Charge assignment failed with method: {charge_method}", "molecule": None}
-            
+
             logger.info("[COMPLETE] Ligand preparation from SMILES completed successfully")
             return {"success": True, "molecule": charged_molecule, "error": None}
-            
+
         except Exception as e:
             logger.error(f"Ligand preparation from SMILES failed: {e}")
             logger.error(f"Traceback: {traceback.format_exc()}")
@@ -351,14 +359,22 @@ class LigandProcessor:
             
             # Step 7: Assign partial charges
             logger.info(f"Step 7: Assigning partial charges using {charge_method} method...")
-            charged_molecule = self.assign_partial_charges(molecule, method=charge_method)
+            try:
+                charged_molecule = self.assign_partial_charges(molecule, method=charge_method)
+            except NotImplementedError as e:
+                logger.error(f"Charge method '{charge_method}' not implemented: {e}")
+                return {
+                    "success": False,
+                    "error": f"Charge calculation method '{charge_method}' not yet implemented. Use 'am1bcc', 'mmff94', or 'gasteiger' instead.",
+                    "molecule": None
+                }
 
             if not charged_molecule:
                 return {"success": False, "error": f"Charge assignment failed with method: {charge_method}", "molecule": None}
-            
+
             logger.info("[COMPLETE] Ligand preparation from structure completed successfully")
             return {"success": True, "molecule": charged_molecule, "error": None}
-            
+
         except Exception as e:
             logger.error(f"Ligand preparation from structure failed: {e}")
             logger.error(f"Traceback: {traceback.format_exc()}")

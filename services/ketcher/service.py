@@ -7,9 +7,12 @@ from rdkit import Chem
 from rdkit.Chem import AllChem, Draw, inchi
 from rdkit.Chem.MolStandardize import rdMolStandardize
 import json
+import logging
 import base64
 from io import BytesIO
 from typing import Dict, Any, Optional, List
+
+logger = logging.getLogger(__name__)
 
 
 class KetcherService:
@@ -343,15 +346,16 @@ class KetcherService:
                                 try:
                                     float(parts[0])  # x coordinate
                                     atom_count += 1
-                                except:
+                                except ValueError as e:
+                                    logger.debug("Atom block parsing ended: %s", e)
                                     in_atom_block = False
                             elif len(parts) >= 3 and not in_atom_block:
                                 # Bond line has: atom1 atom2 type
                                 try:
                                     int(parts[0])  # atom1 index
                                     bond_count += 1
-                                except:
-                                    pass
+                                except ValueError as e:
+                                    logger.debug("Bond parsing failed: %s", e)
                         
                         atom_str = str(atom_count)
                         bond_str = str(bond_count)
@@ -460,16 +464,17 @@ class KetcherService:
                         if mol is not None:
                             try:
                                 Chem.SanitizeMol(mol, catchErrors=True)
-                            except:
-                                pass
-                    except:
+                            except Exception as e:
+                                logger.debug("SDF sanitization failed: %s", e)
+                    except Exception as e:
+                        logger.debug("SDF supplier parsing failed: %s", e)
                         # Fallback to MolFromMolBlock
                         mol = Chem.MolFromMolBlock(struct, sanitize=False)
                         if mol is not None:
                             try:
                                 Chem.SanitizeMol(mol, catchErrors=True)
-                            except:
-                                pass
+                            except Exception as e:
+                                logger.debug("Fallback sanitization failed: %s", e)
                 else:
                     # For MOL format, clean and parse
                     cleaned_struct = self._clean_mol_block(struct)
@@ -481,21 +486,22 @@ class KetcherService:
                         try:
                             # Try to sanitize the molecule
                             Chem.SanitizeMol(mol)
-                        except:
+                        except Exception as e:
+                            logger.debug("Full sanitization failed, trying with catchErrors: %s", e)
                             # If sanitization fails, try with catchErrors
                             try:
                                 Chem.SanitizeMol(mol, catchErrors=True)
-                            except:
+                            except Exception as fallback_err:
                                 # Last resort: return unsanitized molecule
-                                pass
+                                logger.debug("Fallback sanitization also failed: %s", fallback_err)
                     else:
                         # If still None, try original struct with very lenient parsing
                         mol = Chem.MolFromMolBlock(struct, sanitize=False, removeHs=False)
                         if mol is not None:
                             try:
                                 Chem.SanitizeMol(mol, catchErrors=True)
-                            except:
-                                pass
+                            except Exception as e:
+                                logger.debug("Lenient parsing sanitization failed: %s", e)
             elif format_type == "inchi":
                 mol = Chem.MolFromInchi(struct)
             elif format_type == "smarts":
@@ -509,7 +515,8 @@ class KetcherService:
                 if mol is not None:
                     try:
                         Chem.SanitizeMol(mol, catchErrors=True)
-                    except:
+                    except Exception as e:
+                        logger.debug("Default format sanitization failed: %s", e)
                         pass
             
             return mol

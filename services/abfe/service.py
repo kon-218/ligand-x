@@ -11,6 +11,8 @@ from typing import Dict, Any, Optional, List, Tuple
 from pathlib import Path
 import tempfile
 import glob
+import signal
+import time
 from collections import defaultdict
 
 # Initialize logger early
@@ -261,6 +263,80 @@ class ABFEService:
             logger.error(f"Error loading protein: {str(e)}")
             logger.error(traceback.format_exc())
             return None
+
+    def _get_runtime_config(self, simulation_settings: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+        """Normalize ABFE runtime settings used for timeout estimation."""
+        cfg = simulation_settings or {}
+        fast_mode = bool(cfg.get('fast_mode', True))
+
+        if fast_mode:
+            default_prod_ns, default_equil_ns, default_repeats = 0.5, 0.1, 1
+        else:
+            default_prod_ns, default_equil_ns, default_repeats = 10.0, 1.0, 3
+
+        return {
+            'fast_mode': fast_mode,
+            'production_length_ns': float(cfg.get('production_length_ns', default_prod_ns)),
+            'equilibration_length_ns': float(cfg.get('equilibration_length_ns', default_equil_ns)),
+            'protocol_repeats': int(cfg.get('protocol_repeats', default_repeats)),
+            'dag_timeout_hours': cfg.get('dag_timeout_hours'),
+        }
+
+    def _estimate_dag_timeout_seconds(self, simulation_settings: Optional[Dict[str, Any]] = None) -> Tuple[int, Dict[str, Any]]:
+        """
+        Estimate DAG timeout from requested workload, with optional user override.
+
+        Workload scales primarily with production length and repeats across both
+        solvent and complex legs. Equilibration contributes less, but is included.
+        """
+        runtime_cfg = self._get_runtime_config(simulation_settings)
+        fast_mode = runtime_cfg['fast_mode']
+        prod_ns = runtime_cfg['production_length_ns']
+        equil_ns = runtime_cfg['equilibration_length_ns']
+        repeats = max(1, runtime_cfg['protocol_repeats'])
+        user_timeout_hours = runtime_cfg['dag_timeout_hours']
+
+        if user_timeout_hours is not None:
+            timeout_hours = max(0.25, float(user_timeout_hours))
+            timeout_seconds = int(timeout_hours * 3600)
+            details = {
+                'source': 'user_override',
+                'timeout_hours': timeout_hours,
+                'fast_mode': fast_mode,
+                'production_length_ns': prod_ns,
+                'equilibration_length_ns': equil_ns,
+                'protocol_repeats': repeats,
+            }
+            return timeout_seconds, details
+
+        # Historical fixed defaults.
+        base_timeout_hours = 2.0 if fast_mode else 24.0
+        # Reference workloads that matched previous defaults.
+        ref_prod_ns, ref_equil_ns, ref_repeats = (0.5, 0.1, 1) if fast_mode else (10.0, 1.0, 3)
+
+        # Approximate relative compute load:
+        # - two legs (solvent + complex)
+        # - production dominates; equilibration weighted lower
+        requested_units = repeats * (2.0 * prod_ns + 0.5 * equil_ns)
+        reference_units = max(0.1, ref_repeats * (2.0 * ref_prod_ns + 0.5 * ref_equil_ns))
+        scale_factor = max(1.0, requested_units / reference_units)
+
+        # Add conservative buffer for setup overhead and runtime variance.
+        buffered_hours = base_timeout_hours * scale_factor * 1.35
+        timeout_hours = min(168.0, max(base_timeout_hours, buffered_hours))
+        timeout_seconds = int(timeout_hours * 3600)
+
+        details = {
+            'source': 'auto_scaled',
+            'timeout_hours': timeout_hours,
+            'base_timeout_hours': base_timeout_hours,
+            'scale_factor': scale_factor,
+            'fast_mode': fast_mode,
+            'production_length_ns': prod_ns,
+            'equilibration_length_ns': equil_ns,
+            'protocol_repeats': repeats,
+        }
+        return timeout_seconds, details
     
     def create_chemical_systems(
         self,
@@ -326,238 +402,163 @@ class ABFEService:
         simulation_settings: Optional[Dict[str, Any]] = None
     ) -> AbsoluteBindingProtocol:
         """
-        Set up ABFE protocol with custom settings optimized for speed.
-        
+        Set up ABFE protocol with user-customizable settings.
+
+        All settings are optional — OpenFE defaults are used when not specified.
+        Settings are grouped into: core simulation, environment, advanced, and restraints.
+
         Args:
-            simulation_settings: Optional custom settings for the protocol.
-                                Can include:
-                                - fast_mode: Boolean to use fast mode (default: True)
-                                - equilibration_length_ns: Equilibration time in nanoseconds
-                                - production_length_ns: Production time in nanoseconds
-                                - n_checkpoints: Number of checkpoints during production (default: 10)
-                                - protocol_repeats: Number of independent repetitions (default: 1 for fast mode, 3 for production)
-                                - n_iterations: Number of simulation iterations (deprecated, use production_length_ns)
-                                - restraint_settings: Dict with Boresch restraint options:
-                                    - host_min_distance_nm: Min distance to search for host atoms (default: 0.3)
-                                    - host_max_distance_nm: Max distance to search for host atoms (default: 3.0)
-                                    - dssp_filter: Whether to filter by secondary structure (default: False)
-                                    - host_selection: MDAnalysis selection for host atoms (default: 'protein')
-                                    - rmsf_cutoff_nm: RMSF cutoff for flexible atom filtering (default: 0.15)
-                                
+            simulation_settings: Optional dict with any of:
+                Core: fast_mode, production_length_ns, equilibration_length_ns,
+                      protocol_repeats, time_per_iteration_ps, dag_timeout_hours
+                Checkpoints: production_n_checkpoints, production_checkpoint_interval_ns,
+                             equilibration_n_checkpoints, equilibration_checkpoint_interval_ns
+                Ligand: ligand_forcefield, charge_method
+                Environment: temperature, pressure, solvent_model, solvent_padding_nm,
+                             box_shape, ionic_strength
+                Advanced: n_replicas_complex, n_replicas_solvent, minimization_steps,
+                          timestep_fs
+                Restraints: restraint_settings dict (host_selection, host_min_distance_nm,
+                            host_max_distance_nm, rmsf_cutoff_nm, dssp_filter,
+                            anchor_finding_strategy)
+
         Returns:
             Configured AbsoluteBindingProtocol
         """
         try:
-            # Start with default settings
             settings = AbsoluteBindingProtocol.default_settings()
-            
-            # Check if user wants fast mode or has custom settings
-            fast_mode = simulation_settings.get('fast_mode', True) if simulation_settings else True
-            
-            # Time per iteration - user can customize, default is 2.5 ps (OpenFE default)
-            if simulation_settings and 'time_per_iteration_ps' in simulation_settings:
-                time_per_iter_ps = float(simulation_settings['time_per_iteration_ps'])
-                logger.info(f"  User-specified time per iteration: {time_per_iter_ps} ps")
-            else:
-                time_per_iter_ps = 2.5  # Default OpenFE value
-            time_per_iter = time_per_iter_ps * unit.picosecond
-            
-            # Set defaults based on mode
+            cfg = simulation_settings or {}
+
+            # --- Mode selection ---
+            fast_mode = cfg.get('fast_mode', True)
             if fast_mode:
-                # Fast mode: ~200 iterations (~15-30 minutes)
-                logger.info("Using FAST MODE - calculations will complete much faster (~15-30 min)")
-                default_prod_len_ns = 0.5  # 200 iterations * 2.5 ps
-                default_equil_len_ns = 0.1  # 40 iterations * 2.5 ps
+                logger.info("Using FAST MODE (~15-30 min)")
+                default_prod_ns, default_equil_ns, default_repeats = 0.5, 0.1, 1
             else:
-                # Production mode: ~4000 iterations (several hours)
-                logger.info("Using PRODUCTION MODE - calculations will take several hours for accuracy")
-                default_prod_len_ns = 10.0  # 4000 iterations * 2.5 ps
-                default_equil_len_ns = 1.0  # 400 iterations * 2.5 ps
-            
-            # Default number of checkpoints
-            default_n_checkpoints = 10
-            
-            # Apply user-provided settings (override defaults)
-            if simulation_settings:
-                logger.info(f"Applying user-provided simulation settings: {simulation_settings}")
-                
-                # Production length
-                if 'production_length_ns' in simulation_settings:
-                    prod_len_ns = float(simulation_settings['production_length_ns'])
-                    logger.info(f"  User-specified production length: {prod_len_ns} ns")
-                elif 'n_iterations' in simulation_settings:
-                    # Backward compatibility
-                    target_iterations = int(simulation_settings['n_iterations'])
-                    prod_len_ns = target_iterations * time_per_iter.to(unit.nanosecond).magnitude
-                    logger.info(f"  User-specified iterations: {target_iterations} -> {prod_len_ns} ns")
-                else:
-                    prod_len_ns = default_prod_len_ns
-                
-                # Equilibration length
-                if 'equilibration_length_ns' in simulation_settings:
-                    equil_len_ns = float(simulation_settings['equilibration_length_ns'])
-                    logger.info(f"  User-specified equilibration length: {equil_len_ns} ns")
-                else:
-                    equil_len_ns = default_equil_len_ns
-                
-                # Production Checkpoint Settings (new approach with interval or number)
-                # Priority: production_checkpoint_interval_ns > production_n_checkpoints > n_checkpoints (backward compat)
-                prod_checkpoint_interval = None
-                prod_n_checkpoints = None
-                
-                if 'production_checkpoint_interval_ns' in simulation_settings:
-                    prod_checkpoint_interval = float(simulation_settings['production_checkpoint_interval_ns'])
-                    logger.info(f"  User-specified production checkpoint interval: {prod_checkpoint_interval} ns")
-                elif 'production_n_checkpoints' in simulation_settings:
-                    prod_n_checkpoints = int(simulation_settings['production_n_checkpoints'])
-                    logger.info(f"  User-specified production number of checkpoints: {prod_n_checkpoints}")
-                elif 'n_checkpoints' in simulation_settings:
-                    # Backward compatibility with old parameter
-                    prod_n_checkpoints = int(simulation_settings['n_checkpoints'])
-                    logger.info(f"  User-specified number of checkpoints (legacy): {prod_n_checkpoints}")
-                else:
-                    prod_n_checkpoints = default_n_checkpoints
-                
-                # Equilibration Checkpoint Settings (new approach with interval or number)
-                equil_checkpoint_interval = None
-                equil_n_checkpoints = None
-                
-                if 'equilibration_checkpoint_interval_ns' in simulation_settings:
-                    equil_checkpoint_interval = float(simulation_settings['equilibration_checkpoint_interval_ns'])
-                    logger.info(f"  User-specified equilibration checkpoint interval: {equil_checkpoint_interval} ns")
-                elif 'equilibration_n_checkpoints' in simulation_settings:
-                    equil_n_checkpoints = int(simulation_settings['equilibration_n_checkpoints'])
-                    logger.info(f"  User-specified equilibration number of checkpoints: {equil_n_checkpoints}")
-                else:
-                    # Default to 5 checkpoints for equilibration if not specified
-                    equil_n_checkpoints = 5
-                
-                # Protocol repeats (number of independent repetitions)
-                if 'protocol_repeats' in simulation_settings:
-                    protocol_repeats = int(simulation_settings['protocol_repeats'])
-                    logger.info(f"  User-specified protocol repeats: {protocol_repeats}")
-                else:
-                    protocol_repeats = 1 if fast_mode else 3  # Default: 1 for fast mode, 3 for production
-                
-                # Ligand forcefield
-                if 'ligand_forcefield' in simulation_settings:
-                    ff_name = simulation_settings['ligand_forcefield']
-                    settings.forcefield_settings.small_molecule_forcefield = ff_name
-                    logger.info(f"  User-specified ligand forcefield: {ff_name}")
-            else:
-                prod_len_ns = default_prod_len_ns
-                equil_len_ns = default_equil_len_ns
-                prod_checkpoint_interval = None
-                prod_n_checkpoints = default_n_checkpoints
-                equil_checkpoint_interval = None
-                equil_n_checkpoints = 5
-                protocol_repeats = 1 if fast_mode else 3  # Default: 1 for fast mode, 3 for production
-            
-            # Convert to quantities
+                logger.info("Using STANDARD/PRODUCTION MODE (hours)")
+                default_prod_ns, default_equil_ns, default_repeats = 10.0, 1.0, 3
+
+            # --- Core simulation lengths ---
+            prod_len_ns = float(cfg.get('production_length_ns', default_prod_ns))
+            equil_len_ns = float(cfg.get('equilibration_length_ns', default_equil_ns))
+            protocol_repeats = int(cfg.get('protocol_repeats', default_repeats))
             prod_len = prod_len_ns * unit.nanosecond
             equil_len = equil_len_ns * unit.nanosecond
-            
-            # Calculate production checkpoint interval
-            # If interval is specified directly, use it; otherwise calculate from n_checkpoints
-            if prod_checkpoint_interval is not None:
-                prod_checkpoint_interval_qty = prod_checkpoint_interval * unit.nanosecond
-            else:
-                prod_checkpoint_interval_qty = prod_len / prod_n_checkpoints
-            
-            # Calculate equilibration checkpoint interval
-            # If interval is specified directly, use it; otherwise calculate from n_checkpoints
-            if equil_checkpoint_interval is not None:
-                equil_checkpoint_interval_qty = equil_checkpoint_interval * unit.nanosecond
-            else:
-                equil_checkpoint_interval_qty = equil_len / equil_n_checkpoints
-            
-            logger.info(f"Optimizing protocol settings:")
-            logger.info(f"  - Production length: {prod_len}")
-            logger.info(f"  - Production checkpoint interval: {prod_checkpoint_interval_qty}")
-            logger.info(f"  - Equilibration length: {equil_len}")
-            logger.info(f"  - Equilibration checkpoint interval: {equil_checkpoint_interval_qty}")
-            logger.info(f"  - Protocol repeats: {protocol_repeats}")
-            
-            # Modify OpenFE settings structure
-            # We need to apply to both solvent and complex phases
-            phases_updated = 0
-            
-            # Solvent phase
-            if hasattr(settings, 'solvent_simulation_settings'):
-                settings.solvent_simulation_settings.production_length = prod_len
-                settings.solvent_simulation_settings.equilibration_length = equil_len
-                phases_updated += 1
-                
-            # Complex phase
-            if hasattr(settings, 'complex_simulation_settings'):
-                settings.complex_simulation_settings.production_length = prod_len
-                settings.complex_simulation_settings.equilibration_length = equil_len
-                phases_updated += 1
-            
-            # Update checkpoint intervals in PRODUCTION output settings
-            if hasattr(settings, 'solvent_output_settings'):
-                settings.solvent_output_settings.checkpoint_interval = prod_checkpoint_interval_qty
-                logger.info(f"  - Updated solvent production checkpoint interval to {prod_checkpoint_interval_qty}")
-                
-            if hasattr(settings, 'complex_output_settings'):
-                settings.complex_output_settings.checkpoint_interval = prod_checkpoint_interval_qty
-                logger.info(f"  - Updated complex production checkpoint interval to {prod_checkpoint_interval_qty}")
-            
-            # Update checkpoint intervals in EQUILIBRATION output settings
-            if hasattr(settings, 'solvent_equil_output_settings'):
-                settings.solvent_equil_output_settings.checkpoint_interval = equil_checkpoint_interval_qty
-                logger.info(f"  - Updated solvent equilibration checkpoint interval to {equil_checkpoint_interval_qty}")
-                
-            if hasattr(settings, 'complex_equil_output_settings'):
-                settings.complex_equil_output_settings.checkpoint_interval = equil_checkpoint_interval_qty
-                logger.info(f"  - Updated complex equilibration checkpoint interval to {equil_checkpoint_interval_qty}")
-            
-            # Update protocol_repeats (number of independent repetitions)
-            if hasattr(settings, 'protocol_repeats'):
-                old_val = settings.protocol_repeats
+
+            # --- Checkpoint intervals ---
+            prod_n_cp = int(cfg.get('production_n_checkpoints', 10))
+            equil_n_cp = int(cfg.get('equilibration_n_checkpoints', 5))
+            prod_cp_interval = (
+                float(cfg['production_checkpoint_interval_ns']) * unit.nanosecond
+                if 'production_checkpoint_interval_ns' in cfg
+                else prod_len / max(prod_n_cp, 1)
+            )
+            equil_cp_interval = (
+                float(cfg['equilibration_checkpoint_interval_ns']) * unit.nanosecond
+                if 'equilibration_checkpoint_interval_ns' in cfg
+                else equil_len / max(equil_n_cp, 1)
+            )
+
+            # --- Apply simulation lengths to both legs ---
+            for phase_settings in [settings.solvent_simulation_settings, settings.complex_simulation_settings]:
+                phase_settings.production_length = prod_len
+                phase_settings.equilibration_length = equil_len
+
+            # --- Checkpoint intervals ---
+            settings.solvent_output_settings.checkpoint_interval = prod_cp_interval
+            settings.complex_output_settings.checkpoint_interval = prod_cp_interval
+            settings.solvent_equil_output_settings.checkpoint_interval = equil_cp_interval
+            settings.complex_equil_output_settings.checkpoint_interval = equil_cp_interval
+
+            # --- Protocol repeats ---
+            try:
                 settings.protocol_repeats = protocol_repeats
-                logger.info(f"  - Updated protocol_repeats: {old_val} -> {protocol_repeats}")
-            
-            if phases_updated == 0:
-                logger.warning("Could not find solvent/complex simulation settings to modify!")
-            
-            # Configure restraint settings for Boresch restraints
-            # These settings control how host (protein) atoms are found for restraints
-            if hasattr(settings, 'restraint_settings'):
-                # Get user-specified restraint settings or use improved defaults
-                restraint_cfg = simulation_settings.get('restraint_settings', {}) if simulation_settings else {}
-                
-                # Widen the host atom search distance (default 0.5-1.5 nm is often too narrow)
-                # This is the distance from the ligand center of mass to search for host atoms
-                host_min_nm = restraint_cfg.get('host_min_distance_nm', 0.3)
-                host_max_nm = restraint_cfg.get('host_max_distance_nm', 3.0)
-                settings.restraint_settings.host_min_distance = host_min_nm * unit.nanometer
-                settings.restraint_settings.host_max_distance = host_max_nm * unit.nanometer
-                logger.info(f"  - Host search distance: {host_min_nm}-{host_max_nm} nm")
-                
-                # Disable DSSP filter - it requires proper secondary structure assignment
-                # which may not be present in all PDB structures
-                dssp_filter = restraint_cfg.get('dssp_filter', False)
-                settings.restraint_settings.dssp_filter = dssp_filter
-                logger.info(f"  - DSSP filter: {dssp_filter}")
-                
-                # Use broader host selection - 'protein' includes all protein atoms
-                # 'backbone' is more restrictive and may miss atoms in some structures
-                host_selection = restraint_cfg.get('host_selection', 'protein')
-                settings.restraint_settings.host_selection = host_selection
-                logger.info(f"  - Host selection: {host_selection}")
-                
-                # RMSF cutoff for filtering flexible atoms (default 0.1 nm)
-                rmsf_cutoff_nm = restraint_cfg.get('rmsf_cutoff_nm', 0.15)
-                settings.restraint_settings.rmsf_cutoff = rmsf_cutoff_nm * unit.nanometer
-                logger.info(f"  - RMSF cutoff: {rmsf_cutoff_nm} nm")
-            
-            # Create protocol with modified settings
+            except (AttributeError, TypeError) as e:
+                logger.warning(f"Could not set protocol_repeats: {e}")
+
+            # --- Ligand forcefield ---
+            if 'ligand_forcefield' in cfg:
+                settings.forcefield_settings.small_molecule_forcefield = cfg['ligand_forcefield']
+
+            # --- Environment: temperature & pressure ---
+            if 'temperature' in cfg:
+                settings.thermo_settings.temperature = float(cfg['temperature']) * unit.kelvin
+            if 'pressure' in cfg:
+                settings.thermo_settings.pressure = float(cfg['pressure']) * unit.bar
+
+            # --- Environment: solvent model & box shape ---
+            solvent_model = cfg.get('solvent_model')
+            box_shape = cfg.get('box_shape')
+            solvent_padding_nm = cfg.get('solvent_padding_nm')
+            for solvation in [settings.complex_solvation_settings, settings.solvent_solvation_settings]:
+                if solvent_model:
+                    solvation.solvent_model = solvent_model
+                if box_shape:
+                    solvation.box_shape = box_shape
+                if solvent_padding_nm is not None:
+                    solvation.solvent_padding = float(solvent_padding_nm) * unit.nanometer
+
+            # --- Advanced: n_replicas ---
+            if 'n_replicas_complex' in cfg:
+                settings.complex_simulation_settings.n_replicas = int(cfg['n_replicas_complex'])
+            if 'n_replicas_solvent' in cfg:
+                settings.solvent_simulation_settings.n_replicas = int(cfg['n_replicas_solvent'])
+
+            # --- Advanced: minimization steps ---
+            if 'minimization_steps' in cfg:
+                min_steps = int(cfg['minimization_steps'])
+                settings.complex_simulation_settings.minimization_steps = min_steps
+                settings.solvent_simulation_settings.minimization_steps = min_steps
+
+            # --- Advanced: integrator timestep ---
+            if 'timestep_fs' in cfg:
+                settings.integrator_settings.timestep = float(cfg['timestep_fs']) * unit.femtosecond
+
+            # --- Fast mode: reduce pre-equilibration to speed up Boresch restraint search ---
+            if fast_mode:
+                settings.complex_equil_simulation_settings.production_length = 0.5 * unit.nanosecond
+                settings.complex_equil_simulation_settings.equilibration_length = 0.2 * unit.nanosecond
+                settings.complex_equil_simulation_settings.equilibration_length_nvt = 0.1 * unit.nanosecond
+                settings.solvent_equil_simulation_settings.production_length = 0.25 * unit.nanosecond
+                settings.solvent_equil_simulation_settings.equilibration_length = 0.1 * unit.nanosecond
+                settings.solvent_equil_simulation_settings.equilibration_length_nvt = 0.05 * unit.nanosecond
+                logger.info("  - Reduced pre-equil lengths for fast mode")
+
+            # --- Restraint settings (Boresch) ---
+            # Only override OpenFE defaults when the user explicitly provides values.
+            restraint_cfg = cfg.get('restraint_settings', {})
+            if hasattr(settings, 'restraint_settings') and restraint_cfg:
+                if 'host_min_distance_nm' in restraint_cfg:
+                    settings.restraint_settings.host_min_distance = float(restraint_cfg['host_min_distance_nm']) * unit.nanometer
+                if 'host_max_distance_nm' in restraint_cfg:
+                    settings.restraint_settings.host_max_distance = float(restraint_cfg['host_max_distance_nm']) * unit.nanometer
+                if 'dssp_filter' in restraint_cfg:
+                    settings.restraint_settings.dssp_filter = restraint_cfg['dssp_filter']
+                if 'host_selection' in restraint_cfg:
+                    settings.restraint_settings.host_selection = restraint_cfg['host_selection']
+                if 'rmsf_cutoff_nm' in restraint_cfg:
+                    settings.restraint_settings.rmsf_cutoff = float(restraint_cfg['rmsf_cutoff_nm']) * unit.nanometer
+                if 'anchor_finding_strategy' in restraint_cfg and hasattr(settings.restraint_settings, 'anchor_finding_strategy'):
+                    settings.restraint_settings.anchor_finding_strategy = restraint_cfg['anchor_finding_strategy']
+
+            # --- Log final configuration ---
+            logger.info(f"Protocol settings:")
+            logger.info(f"  Production: {prod_len}, Equilibration: {equil_len}")
+            logger.info(f"  Prod checkpoints: {prod_cp_interval}, Equil checkpoints: {equil_cp_interval}")
+            logger.info(f"  Repeats: {protocol_repeats}")
+            logger.info(f"  Temperature: {settings.thermo_settings.temperature}, Pressure: {settings.thermo_settings.pressure}")
+            logger.info(f"  Solvent: {settings.complex_solvation_settings.solvent_model}, Box: {settings.complex_solvation_settings.box_shape}")
+            logger.info(f"  Complex replicas: {settings.complex_simulation_settings.n_replicas}, Solvent replicas: {settings.solvent_simulation_settings.n_replicas}")
+            logger.info(f"  Ligand FF: {settings.forcefield_settings.small_molecule_forcefield}")
+            logger.info(f"  Timestep: {settings.integrator_settings.timestep}")
+            logger.info(f"  Restraints: host={settings.restraint_settings.host_selection}, "
+                        f"dist={settings.restraint_settings.host_min_distance}-{settings.restraint_settings.host_max_distance}, "
+                        f"rmsf={settings.restraint_settings.rmsf_cutoff}, dssp={settings.restraint_settings.dssp_filter}")
+
             protocol = AbsoluteBindingProtocol(settings=settings)
-            
             logger.info("ABFE protocol configured successfully")
             return protocol
-            
+
         except Exception as e:
             logger.error(f"Error setting up ABFE protocol: {str(e)}")
             logger.error(traceback.format_exc())
@@ -638,7 +639,7 @@ class ABFEService:
             # Step 4: Set up protocol
             logger.info("Step 4: Setting up ABFE protocol...")
             protocol = self.setup_abfe_protocol(simulation_settings)
-            
+
             # Step 5: Create ProtocolDAG
             logger.info("Step 5: Creating protocol DAG...")
             dag = protocol.create(
@@ -650,21 +651,59 @@ class ABFEService:
             # Update job status
             self._update_job_status(job_id, {'status': 'running'})
             
-            # Step 6: Execute DAG
+            # Step 6: Execute DAG with timeout guard
             logger.info("Step 6: Executing simulation DAG...")
-            logger.warning("Note: This can take a very long time for production settings!")
-            
-            # Execute the DAG
-            # keep_shared=True preserves the shared directories containing analysis files
-            # (overlap matrices, convergence plots, YAML analysis data, etc.)
-            # keep_scratch=False (default) removes scratch directories to save disk space
-            dag_results = execute_DAG(
-                dag,
-                scratch_basedir=job_dir,
-                shared_basedir=job_dir,
-                n_retries=3,
-                keep_shared=True
+
+            timeout_seconds, timeout_details = self._estimate_dag_timeout_seconds(simulation_settings)
+            timeout_hours = timeout_seconds / 3600.0
+            logger.info(
+                "DAG execution timeout: %.2fh (source=%s, mode=%s, prod=%.3f ns, equil=%.3f ns, repeats=%d, scale=%.2f)",
+                timeout_hours,
+                timeout_details.get('source'),
+                'fast' if timeout_details.get('fast_mode') else 'production',
+                timeout_details.get('production_length_ns', 0.0),
+                timeout_details.get('equilibration_length_ns', 0.0),
+                timeout_details.get('protocol_repeats', 0),
+                timeout_details.get('scale_factor', 1.0),
             )
+
+            dag_start = time.monotonic()
+            def _timeout_handler(signum, frame):
+                elapsed_seconds = max(0.0, time.monotonic() - dag_start)
+                elapsed_hours = elapsed_seconds / 3600.0
+                early_phase = elapsed_seconds < 20 * 60
+                if early_phase:
+                    context_hint = (
+                        "Timeout happened early in execution, so Boresch restraint "
+                        "search/setup may be the bottleneck."
+                    )
+                else:
+                    context_hint = (
+                        "Timeout happened after substantial runtime, which usually means "
+                        "the timeout budget is too low for the requested repeats and/or "
+                        "simulation lengths."
+                    )
+                raise TimeoutError(
+                    f"ABFE DAG execution exceeded timeout ({timeout_hours:.2f}h, elapsed {elapsed_hours:.2f}h). "
+                    f"{context_hint} "
+                    "Try one or more of: set fast_mode=false, increase simulation_settings.dag_timeout_hours, "
+                    "reduce protocol_repeats/production_length_ns, or adjust restraint_settings "
+                    "(e.g. wider host_max_distance_nm or different host_selection)."
+                )
+            
+            prev_handler = signal.signal(signal.SIGALRM, _timeout_handler)
+            signal.alarm(timeout_seconds)
+            try:
+                dag_results = execute_DAG(
+                    dag,
+                    scratch_basedir=job_dir,
+                    shared_basedir=job_dir,
+                    n_retries=3,
+                    keep_shared=True
+                )
+            finally:
+                signal.alarm(0)
+                signal.signal(signal.SIGALRM, prev_handler)
             
             # Step 7: Extract results
             logger.info("Step 7: Extracting results...")
@@ -676,14 +715,23 @@ class ABFEService:
                     logger.info("Attempting to save ProtocolResult to JSON for future reference...")
                     
                     # Helper to make objects serializable
+                    import numpy as np
                     def _make_serializable(obj):
-                        if hasattr(obj, 'm'):  # OpenMM/OpenFF Quantity
+                        if isinstance(obj, np.ndarray):
+                            return obj.tolist()
+                        elif isinstance(obj, (np.integer,)):
+                            return int(obj)
+                        elif isinstance(obj, (np.floating,)):
+                            return float(obj)
+                        elif hasattr(obj, 'm'):  # OpenMM/OpenFF Quantity
                             return obj.m
                         elif hasattr(obj, 'to_dict'):
                             return _make_serializable(obj.to_dict())
                         elif isinstance(obj, dict):
                             return {k: _make_serializable(v) for k, v in obj.items()}
                         elif isinstance(obj, list):
+                            return [_make_serializable(item) for item in obj]
+                        elif isinstance(obj, tuple):
                             return [_make_serializable(item) for item in obj]
                         elif isinstance(obj, (str, int, float, bool, type(None))):
                             return obj
@@ -1712,39 +1760,33 @@ class ABFEService:
             leg_results = {}
             
             for repeat_num in range(num_repeats):
-                # Process complex leg for this repeat (if exists)
-                if repeat_num < len(complex_dirs):
-                    leg_dir = complex_dirs[repeat_num]
-                    leg_analysis = self._analyze_leg('complex', leg_dir, job_id, repeat_num)
-                    result['legs'].append(leg_analysis)
-                    
-                    # Collect convergence checkpoints
-                    if leg_analysis.get('convergence_checkpoints'):
-                        convergence_checkpoints.extend(leg_analysis['convergence_checkpoints'])
-                    
-                    # Store for thermodynamic cycle calculation (use first repeat for cycle)
-                    if repeat_num == 0 and leg_analysis.get('mbar_analysis'):
-                        leg_results['complex'] = leg_analysis['mbar_analysis']
-                    
-                    # Collect output files with repeat number
-                    self._collect_output_files(leg_dir, 'complex', result['output_files'], repeat_num)
-                
-                # Process solvent leg for this repeat (if exists)
+                # Process solvent leg first (OpenFE runs solvent before complex)
                 if repeat_num < len(solvent_dirs):
                     leg_dir = solvent_dirs[repeat_num]
                     leg_analysis = self._analyze_leg('solvent', leg_dir, job_id, repeat_num)
                     result['legs'].append(leg_analysis)
                     
-                    # Collect convergence checkpoints
                     if leg_analysis.get('convergence_checkpoints'):
                         convergence_checkpoints.extend(leg_analysis['convergence_checkpoints'])
                     
-                    # Store for thermodynamic cycle calculation (use first repeat for cycle)
                     if repeat_num == 0 and leg_analysis.get('mbar_analysis'):
                         leg_results['solvent'] = leg_analysis['mbar_analysis']
                     
-                    # Collect output files with repeat number
                     self._collect_output_files(leg_dir, 'solvent', result['output_files'], repeat_num)
+                
+                # Then complex leg
+                if repeat_num < len(complex_dirs):
+                    leg_dir = complex_dirs[repeat_num]
+                    leg_analysis = self._analyze_leg('complex', leg_dir, job_id, repeat_num)
+                    result['legs'].append(leg_analysis)
+                    
+                    if leg_analysis.get('convergence_checkpoints'):
+                        convergence_checkpoints.extend(leg_analysis['convergence_checkpoints'])
+                    
+                    if repeat_num == 0 and leg_analysis.get('mbar_analysis'):
+                        leg_results['complex'] = leg_analysis['mbar_analysis']
+                    
+                    self._collect_output_files(leg_dir, 'complex', result['output_files'], repeat_num)
             
             # Build convergence data
             if convergence_checkpoints:
@@ -1776,6 +1818,43 @@ class ABFEService:
                         'dg_binding': dg_result['dg_kcal_mol'],
                         'dg_binding_error': dg_result['uncertainty_kcal_mol']
                     }
+            
+            # Fallback: build thermodynamic cycle from leg MBAR data + stored job results
+            if not result.get('thermodynamic_cycle'):
+                complex_leg = next((l for l in result['legs'] if l['leg_type'] == 'complex' and l.get('free_energy_kcal_mol') is not None), None)
+                solvent_leg = next((l for l in result['legs'] if l['leg_type'] == 'solvent' and l.get('free_energy_kcal_mol') is not None), None)
+                
+                if complex_leg and solvent_leg:
+                    dg_complex = complex_leg['free_energy_kcal_mol']
+                    dg_complex_err = complex_leg.get('uncertainty_kcal_mol', 0)
+                    dg_solvent = solvent_leg['free_energy_kcal_mol']
+                    dg_solvent_err = solvent_leg.get('uncertainty_kcal_mol', 0)
+                    
+                    # Try to get the overall binding free energy from stored job results
+                    dg_binding = None
+                    job_results = job_status.get('result', {}).get('results', {}) if isinstance(job_status.get('result'), dict) else {}
+                    if not job_results:
+                        job_results = job_status.get('results', {})
+                    if isinstance(job_results, dict):
+                        dg_binding = job_results.get('binding_free_energy_kcal_mol')
+                    
+                    if dg_binding is None:
+                        # Calculate from legs: binding = complex - solvent
+                        dg_binding = dg_complex - dg_solvent
+                    
+                    import math
+                    dg_binding_err = math.sqrt(dg_complex_err**2 + dg_solvent_err**2)
+                    
+                    result['thermodynamic_cycle'] = {
+                        'dg_complex': dg_complex,
+                        'dg_complex_error': dg_complex_err,
+                        'dg_solvent': dg_solvent,
+                        'dg_solvent_error': dg_solvent_err,
+                        'dg_restraint_correction': 0,
+                        'dg_binding': dg_binding,
+                        'dg_binding_error': dg_binding_err
+                    }
+                    logger.info(f"Built thermodynamic cycle from leg MBAR data for job {job_id}")
             
             return result
             

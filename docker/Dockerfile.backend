@@ -113,7 +113,7 @@ ENTRYPOINT ["/app/entrypoint.sh"]
 # --- Structure Service (lightweight) ---
 FROM env-base AS service-structure
 # Install fpocket (pocket detection) — structure service only, not in shared base
-RUN mamba install -n biochem-base -c conda-forge fpocket -y && mamba clean -afy
+RUN mamba install -n biochem-base -c conda-forge fpocket rdkit -y && mamba clean -afy
 ENV PATH="/opt/conda/envs/biochem-base/bin:${PATH}"
 COPY --chown=appuser:appuser services/structure/ /app/services/structure/
 COPY --chown=appuser:appuser entrypoint.sh /app/entrypoint.sh

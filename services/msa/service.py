@@ -299,6 +299,7 @@ class MMSeqs2LocalBackend(MSABackend):
             }
         
         # TODO: Implement local MMSeqs2 MSA generation
+        # See: https://github.com/kon-218/ligand-x/issues (feature request: local MMSeqs2 support)
         return {
             'success': False,
             'error': "Local MMSeqs2 support not yet implemented",

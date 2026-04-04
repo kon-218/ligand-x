@@ -900,6 +900,7 @@ services:
     build:
       context: .
       dockerfile: docker/Dockerfile.frontend
+    command: ["bun", "run", "start"]
     networks:
       - frontend
     ports:
@@ -908,7 +909,8 @@ services:
       - NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL:-http://localhost:8000}
       - NODE_ENV=${NODE_ENV:-production}
     depends_on:
-      - gateway
+      gateway:
+        condition: service_healthy
     healthcheck:
       test: ["CMD", "wget", "--spider", "-q", "http://localhost:3000"]
       interval: 30s

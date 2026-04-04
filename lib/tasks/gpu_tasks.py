@@ -520,29 +520,25 @@ def rbfe_calculate(self, job_data: Dict[str, Any]) -> Dict[str, Any]:
     base=LigandXTask,
     name='ligandx_tasks.rbfe_mapping_preview',
     soft_time_limit=600,   # 10 minutes
-    time_limit=660,
+    time_limit=660
 )
 def rbfe_mapping_preview(self, job_data: Dict[str, Any]) -> Dict[str, Any]:
     """
-    Run RBFE atom mapping preview (CPU-only, no simulation).
+    Run a lightweight RBFE atom mapping preview (no protein, no simulation).
 
-    Computes all pairwise atom mappings for the supplied ligands using the
-    selected atom mapper and returns per-pair highlight SVGs and quality scores.
-    No protein structure or simulation is required.
+    Computes all pairwise atom mappings for the provided ligands using the
+    selected mapper (Kartograf or LOMAP), and returns per-pair mapping data
+    with highlight SVGs for visualization.
 
-    Runs on gpu-short queue so the biochem-md conda environment (which includes
-    OpenFE and RDKit) is available.
+    Routes to the gpu-short queue (worker has biochem-md env with OpenFE/Kartograf).
 
     Args:
-        job_data: Dictionary containing:
-            - ligands: List of ligand data dicts (id, data, format)
-            - atom_mapper: 'kartograf', 'lomap', or 'lomap_relaxed'
-            - atom_map_hydrogens: bool (Kartograf)
-            - lomap_max3d: float (LOMAP)
-            - charge_method: ignored (no charges needed for mapping)
+        job_data: Dict with keys: ligands, atom_mapper, atom_map_hydrogens,
+                  lomap_max3d, charge_method.
 
     Returns:
-        Dictionary with pairwise mapping results and SVGs.
+        Dict with status, job_id, and result containing: pairs, num_ligands,
+        atom_mapper, success.
     """
     job_id = self.request.id
     logger.info(f"Starting RBFE mapping preview job {job_id}")
@@ -554,50 +550,55 @@ def rbfe_mapping_preview(self, job_data: Dict[str, Any]) -> Dict[str, Any]:
 
         job_data_with_id = {**job_data, 'job_id': job_id}
 
-        self.update_progress(10, 'Mapping', 'Running atom mapper')
-
         result = None
-        for update in call_service_with_progress('rbfe_mapping_preview', job_data_with_id, timeout=600):
+        for update in call_service_with_progress(
+            'rbfe_mapping_preview', job_data_with_id, timeout=600
+        ):
             if update['type'] == 'progress':
                 progress_data = update['data']
-                self.update_progress(
-                    progress_data.get('progress', 10),
-                    'mapping',
-                    progress_data.get('status', 'Running'),
-                )
+                progress = progress_data.get('progress', 0)
+                status = progress_data.get('status', 'Running')
+                self.update_progress(progress, 'running', status)
             elif update['type'] == 'result':
                 result = update['data']
             elif update['type'] == 'error':
-                raise Exception(update['data'].get('error', 'Unknown error'))
+                raise Exception(update['data'].get('error', 'Unknown error from mapping preview service'))
 
-        self.update_progress(100, 'Completed', 'Mapping preview finished')
+        if result is None:
+            raise RuntimeError("Mapping preview service returned no result")
+
+        # Normalize: unwrap {success, result: {...}} envelope so frontend sees result.pairs directly
+        if isinstance(result, dict) and 'result' in result:
+            inner = result['result']
+            if isinstance(inner, dict) and 'pairs' in inner:
+                result = inner
 
         return {
             'status': 'COMPLETED',
             'job_id': job_id,
             'job_type': 'rbfe_mapping_preview',
             'result': result,
-            'completed_at': datetime.now().isoformat(),
+            'completed_at': datetime.now().isoformat()
         }
 
     except SoftTimeLimitExceeded:
-        logger.error(f"RBFE mapping preview job {job_id} exceeded time limit")
+        logger.error(f"Mapping preview job {job_id} exceeded time limit")
         return {
             'status': 'FAILED',
             'job_id': job_id,
             'job_type': 'rbfe_mapping_preview',
             'error': 'Job exceeded time limit (10 minutes)',
-            'completed_at': datetime.now().isoformat(),
+            'completed_at': datetime.now().isoformat()
         }
 
     except Exception as e:
-        logger.error(f"RBFE mapping preview job {job_id} failed: {e}", exc_info=True)
+        logger.error(f"Mapping preview job {job_id} failed: {e}", exc_info=True)
         return {
             'status': 'FAILED',
             'job_id': job_id,
             'job_type': 'rbfe_mapping_preview',
             'error': str(e),
-            'completed_at': datetime.now().isoformat(),
+            'completed_at': datetime.now().isoformat()
         }
 
 

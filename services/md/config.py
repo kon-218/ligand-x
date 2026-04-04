@@ -32,6 +32,9 @@ class MDOptimizationConfig:
     box_shape: str = "dodecahedron"
     nvt_steps: int = 25000
     npt_steps: int = 175000
+    # Thermal heating protocol runs as 6 temperature stages (50K increments) with 1 fs timestep.
+    # Total heating duration (ps) = 6 * heating_steps_per_stage * 0.001
+    heating_steps_per_stage: int = 2500
     production_steps: int = 0
     production_report_interval: int = 2500
     temperature: float = 300.0
@@ -115,6 +118,7 @@ class MDOptimizationConfig:
             box_shape=data.get('box_shape', 'dodecahedron'),
             nvt_steps=data.get('nvt_steps', 25000),
             npt_steps=data.get('npt_steps', 175000),
+            heating_steps_per_stage=data.get('heating_steps_per_stage', 2500),
             production_steps=data.get('production_steps', 0),
             production_report_interval=data.get('production_report_interval', 2500),
             temperature=data.get('temperature', 300.0),
